@@ -2,10 +2,12 @@ import type { CustomEntry, MessageRenderer, Theme } from "@earendil-works/pi-cod
 import {
 	Box,
 	Container,
+	Markdown,
 	Spacer,
 	Text,
 	truncateToWidth,
 	type Component,
+	type MarkdownTheme,
 } from "@earendil-works/pi-tui";
 
 import type { AdviceDelivery, AdviceSeverity, MemorySuggestionQueueState } from "./advice.js";
@@ -99,6 +101,109 @@ function sanitizeTerminalText(input: string): string {
 		output += allowedWhitespace || !control ? character : "\uFFFD";
 	}
 	return output;
+}
+
+const INLINE_PAREN_NUMBERED_MARKER = /(?:^|[\t\n ;:])(\d{1,2}\))[ \t]+(?=\S)/gu;
+const INLINE_DOT_NUMBERED_MARKER = /(?:^|[\t\n;:])(\d{1,2}\.)[ \t]+(?=\S)/gu;
+
+function cleanAdviceListItem(text: string): string {
+	return text
+		.replace(/[,;]?\s+and\s*$/iu, "")
+		.replace(/[,;:]\s*$/u, "")
+		.trim();
+}
+
+function hasAlternativeConjunction(text: string): boolean {
+	return /(?:^|[,;:\s])or\s*$/iu.test(text.trim());
+}
+
+function hasExistingMarkdownList(block: string): boolean {
+	return /^(?: {0,3}(?:\d+[.)]|[-*+])\s+\S)/mu.test(block) && block.includes("\n");
+}
+
+function splitInlineNumberedItems(
+	block: string,
+	pattern: RegExp,
+): { intro: string; items: { marker: string; text: string }[] } | undefined {
+	const matches = [...block.matchAll(pattern)];
+	if (matches.length < 2) return undefined;
+	const items: { marker: string; text: string }[] = [];
+	for (const [index, match] of matches.entries()) {
+		const marker = match[1];
+		if (marker === undefined) return undefined;
+		const previous = items.at(-1);
+		const number = Number.parseInt(marker, 10);
+		if (
+			!Number.isInteger(number) ||
+			number !== index + 1 ||
+			(previous !== undefined && number !== Number.parseInt(previous.marker, 10) + 1)
+		) {
+			return undefined;
+		}
+		const textStart = match.index + match[0].length;
+		const nextMatch = matches[index + 1];
+		const textEnd = nextMatch === undefined ? block.length : nextMatch.index;
+		const rawText = block.slice(textStart, textEnd);
+		if (nextMatch !== undefined && hasAlternativeConjunction(rawText)) return undefined;
+		const text = cleanAdviceListItem(rawText);
+		if (text.length === 0) return undefined;
+		items.push({ marker, text });
+	}
+	const first = matches[0];
+	if (first === undefined) return undefined;
+	const intro = block.slice(0, first.index).trim();
+	if (hasAlternativeConjunction(intro)) return undefined;
+	return { intro, items };
+}
+
+export function formatAdviceCardMarkdown(input: string): string {
+	const sanitized = sanitizeTerminalText(input).trim();
+	if (sanitized.length === 0) return sanitized;
+	return sanitized
+		.split(/\n{2,}/u)
+		.map((block) => {
+			const normalized = block.trim();
+			if (normalized.length === 0 || hasExistingMarkdownList(normalized)) return normalized;
+			const split =
+				splitInlineNumberedItems(normalized, INLINE_PAREN_NUMBERED_MARKER) ??
+				splitInlineNumberedItems(normalized, INLINE_DOT_NUMBERED_MARKER);
+			if (split === undefined) return normalized;
+			const list = split.items.map((item) => `${item.marker} ${item.text}`).join("\n");
+			const intro = cleanAdviceListItem(split.intro);
+			return intro.length === 0 ? list : `${intro}\n\n${list}`;
+		})
+		.filter((block) => block.length > 0)
+		.join("\n\n");
+}
+
+function markdownThemeFrom(theme: Theme): MarkdownTheme {
+	return {
+		heading: (text) => theme.fg("mdHeading", text),
+		link: (text) => theme.fg("mdLink", text),
+		linkUrl: (text) => theme.fg("mdLinkUrl", text),
+		code: (text) => theme.fg("mdCode", text),
+		codeBlock: (text) => theme.fg("mdCodeBlock", text),
+		codeBlockBorder: (text) => theme.fg("mdCodeBlockBorder", text),
+		quote: (text) => theme.fg("mdQuote", text),
+		quoteBorder: (text) => theme.fg("mdQuoteBorder", text),
+		hr: (text) => theme.fg("mdHr", text),
+		listBullet: (text) => theme.fg("mdListBullet", text),
+		bold: (text) => theme.bold(text),
+		italic: (text) => theme.italic(text),
+		underline: (text) => theme.underline(text),
+		strikethrough: (text) => theme.strikethrough(text),
+	};
+}
+
+function renderAdviceCardMarkdown(text: string, theme: Theme): Component {
+	return new Markdown(
+		formatAdviceCardMarkdown(text),
+		0,
+		0,
+		markdownThemeFrom(theme),
+		{ color: (value) => theme.fg("customMessageText", value) },
+		{ preserveOrderedListMarkers: true },
+	);
 }
 
 function isAdviceSeverity(value: unknown): value is AdviceSeverity {
@@ -262,13 +367,11 @@ export function renderAdviceCards(
 		const heading = `${theme.fg(color, theme.bold("Advisor"))} ${theme.fg(color, label)}`;
 		box.addChild(new Text(heading, 0, 0));
 		box.addChild(new Spacer(1));
-		box.addChild(new Text(theme.fg("customMessageText", sanitizeTerminalText(note.note)), 0, 0));
+		box.addChild(renderAdviceCardMarkdown(note.note, theme));
 		if (note.intent === "memory-suggestion") {
 			box.addChild(new Spacer(1));
 			box.addChild(new Text(theme.fg("muted", "Proposed memory"), 0, 0));
-			box.addChild(
-				new Text(theme.fg("customMessageText", sanitizeTerminalText(note.memory.text)), 0, 0),
-			);
+			box.addChild(renderAdviceCardMarkdown(note.memory.text, theme));
 		}
 		const metadata = [
 			formatDeliveryLabel(note.delivery),

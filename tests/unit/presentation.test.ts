@@ -6,9 +6,11 @@ import {
 	DEFAULT_ADVISOR_CONFIG,
 	escapeXmlAttribute,
 	escapeXmlText,
+	formatAdviceCardMarkdown,
 	formatAdviceForDelivery,
 	formatAdvisorDiagnosticsDump,
 	formatAdvisorFooterStatus,
+	shouldAnimateAdvisorFooter,
 	HARD_LIMITS,
 	MAX_ADVISOR_DUMP_BYTES,
 	MAX_DEFERRED_DELIVERY_BYTES,
@@ -68,6 +70,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		model: "fixture/model",
 		effort: "high",
 		backlog: false,
+		reviewing: false,
 		pendingTranscriptBytes: 0,
 		maxPendingTranscriptBytesObserved: 0,
 		retryPending: false,
@@ -128,7 +131,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 }
 
 describe("Advisor presentation and diagnostics through Slice 5", () => {
-	it("renders a compact active, queued, paused, or hidden footer status", () => {
+	it("renders a compact active, queued, reviewing, paused, or hidden footer status", () => {
 		const status = runtimeStatus();
 		expect(formatAdvisorFooterStatus(status)).toBe("Advisor active");
 		expect(formatAdvisorFooterStatus({ ...status, modelName: "Grok 4.5" })).toBe(
@@ -148,6 +151,30 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 		expect(
 			formatAdvisorFooterStatus({ ...status, backlog: true, pendingTranscriptBytes: 2048 }),
 		).toBe("Advisor active · 2048 bytes queued");
+		expect(
+			formatAdvisorFooterStatus({
+				...status,
+				reviewing: true,
+				backlog: true,
+				pendingTranscriptBytes: 2048,
+			}),
+		).toBe("Advisor reviewing");
+		expect(
+			formatAdvisorFooterStatus({
+				...status,
+				modelName: "Grok 4.5",
+				reviewing: true,
+			}),
+		).toBe("Advisor reviewing (Grok 4.5)");
+		expect(
+			formatAdvisorFooterStatus({
+				...status,
+				active: false,
+				paused: true,
+				reviewing: true,
+				backlog: true,
+			}),
+		).toBe("Advisor paused · 0 bytes queued");
 		expect(formatAdvisorFooterStatus({ ...status, active: false, paused: true })).toBe(
 			"Advisor paused",
 		);
@@ -160,6 +187,14 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 			}),
 		).toBe("Advisor paused (Grok 4.5)");
 		expect(formatAdvisorFooterStatus({ ...status, enabled: false, active: false })).toBeUndefined();
+		expect(shouldAnimateAdvisorFooter({ ...status, reviewing: true }, "tui")).toBe(true);
+		expect(shouldAnimateAdvisorFooter({ ...status, reviewing: true }, "rpc")).toBe(false);
+		expect(
+			shouldAnimateAdvisorFooter(
+				{ ...status, active: false, paused: true, reviewing: true },
+				"tui",
+			),
+		).toBe(false);
 	});
 
 	it("escapes XML text, attributes, and invalid XML control characters", () => {
@@ -188,6 +223,50 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 		const rendered = lines.join("\n");
 		expect(rendered).not.toContain("\r");
 		expect(rendered).toContain("safe text\uFFFDoverwrite attempt");
+	});
+
+	it("formats inline numbered actions as a Markdown list without inventing lists", () => {
+		expect(
+			formatAdviceCardMarkdown(
+				"Avoid printing `gh auth token` output; 1) redact the whole helper line, and 2) treat exposed prefixes as rotation candidates.",
+			),
+		).toBe(
+			[
+				"Avoid printing `gh auth token` output",
+				"",
+				"1) redact the whole helper line",
+				"2) treat exposed prefixes as rotation candidates.",
+			].join("\n"),
+		);
+		expect(
+			formatAdviceCardMarkdown("Version 1. 2 extra files remain after the failed publish."),
+		).toBe("Version 1. 2 extra files remain after the failed publish.");
+		expect(
+			formatAdviceCardMarkdown(
+				"Either 1) keep the current cache, or 2) rebuild it from the source files.",
+			),
+		).toBe("Either 1) keep the current cache, or 2) rebuild it from the source files.");
+	});
+
+	it("renders numbered actions on separate card lines", () => {
+		const rendered = renderAdviceCards(
+			[
+				presentationNote({
+					note: "Secret hygiene: 1) avoid printing `gh auth token` output, and 2) redact the whole helper line.",
+				}),
+			],
+			false,
+			fixtureTheme(false),
+			1_700_000_000_000,
+		)
+			.render(80)
+			.join("\n");
+		expect(rendered).toContain("1) avoid printing");
+		expect(rendered).toContain("2) redact the whole helper line.");
+		expect(rendered.indexOf("1) avoid printing")).toBeLessThan(
+			rendered.indexOf("2) redact the whole helper line."),
+		);
+		expect(rendered).not.toMatch(/1\) avoid printing.*2\) redact/u);
 	});
 
 	it.each([

@@ -220,6 +220,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		paused: false,
 		effort: "high",
 		backlog: false,
+		reviewing: false,
 		pendingTranscriptBytes: 0,
 		maxPendingTranscriptBytesObserved: 0,
 		retryPending: false,
@@ -378,6 +379,7 @@ describe("Slice 1 configuration and emission policy", () => {
 		);
 		expect(output).toContain("Session tokens: 155 total");
 		expect(output).toContain("cap off");
+		expect(output).toContain("Reviewing: no");
 		expect(output).toContain("Reviews: 4 requests, 3 completed");
 		expect(output).toContain("Governor skips: 2, latest Advisor turn limit reached");
 		expect(output).toContain("7 suppressed");
