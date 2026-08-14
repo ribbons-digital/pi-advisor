@@ -2459,7 +2459,11 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		update = queuedUpdateFromPersisted(this.activeReview);
 		this.persistState();
 		this.applySessionSoftCaps();
-		if (this.status.paused) return;
+		if (this.status.paused) {
+			this.updateBacklogStatus();
+			return;
+		}
+		this.updateBacklogStatus();
 		if (this.submittedProjectContext !== this.projectContext) {
 			session.state.messages = [];
 			this.submittedProjectContext = this.projectContext;

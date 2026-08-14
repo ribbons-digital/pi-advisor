@@ -8,9 +8,12 @@ import {
 	createPiAdvisorExtension,
 	createProtectedAdvisorTools,
 	DEFAULT_ADVISOR_CONFIG,
+	formatAdvisorFooterStatus,
 	ProtectedPathPolicy,
+	shouldAnimateAdvisorFooter,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type AdvisorRuntimeStatus,
 } from "../../src/index.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
@@ -35,11 +38,26 @@ function configFor(
 function advisorExtension(
 	config: AdvisorConfig,
 	onRuntime: (runtime: AdvisorRuntime) => void,
+	onStatus?: (status: AdvisorRuntimeStatus) => void,
 ): InlineExtension {
 	return {
 		name: "pi-advisor-under-test",
-		factory: createPiAdvisorExtension({ config, hooks: { onRuntime } }),
+		factory: createPiAdvisorExtension({
+			config,
+			hooks: {
+				onRuntime,
+				...(onStatus === undefined ? {} : { onStatus }),
+			},
+		}),
 	};
+}
+
+function createBarrier(): { promise: Promise<void>; release: () => void } {
+	let release: () => void = () => undefined;
+	const promise = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	return { promise, release };
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -91,6 +109,59 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 				failedReviews: 0,
 			});
 		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("publishes reviewing status while a nested review is in flight", async () => {
+		const advisorBarrier = createBarrier();
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "primary answer" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{
+				waitFor: advisorBarrier.promise,
+				content: [{ type: "text", text: "private silent review" }],
+			},
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const published: AdvisorRuntimeStatus[] = [];
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				advisorExtension(
+					configFor(advisor),
+					(value) => (runtime = value),
+					(status) => {
+						published.push(status);
+					},
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			const turn = harness.session.prompt("review this ordinary turn");
+			await waitFor(() => advisor.activeRequests === 1);
+			const inFlight = published.find((status) => status.reviewing);
+			if (inFlight === undefined)
+				throw new Error("Expected reviewing status while Advisor is in flight");
+			expect(inFlight).toMatchObject({
+				enabled: true,
+				active: true,
+				paused: false,
+				reviewing: true,
+			});
+			expect(formatAdvisorFooterStatus(inFlight)).toMatch(/^Advisor reviewing(?: \(.+\))?$/u);
+			expect(shouldAnimateAdvisorFooter(inFlight, "tui")).toBe(true);
+			expect(shouldAnimateAdvisorFooter(inFlight, "rpc")).toBe(false);
+			advisorBarrier.release();
+			await turn;
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			expect(runtime?.getStatus().reviewing).toBe(false);
+		} finally {
+			advisorBarrier.release();
 			await harness.dispose();
 		}
 	});
