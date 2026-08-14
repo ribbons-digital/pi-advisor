@@ -3,7 +3,7 @@ set -euo pipefail
 
 pi_version="${1:?usage: verify-pi-compat.sh <Pi version>}"
 case "$pi_version" in
-	0.81.1) ;;
+	0.81.1 | 0.83.0 | 0.84.1) ;;
 	*)
 		echo "Unsupported compatibility target: $pi_version" >&2
 		exit 2

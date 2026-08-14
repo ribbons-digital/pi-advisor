@@ -42,7 +42,7 @@ function runPi(args: string[], cwd: string, env: NodeJS.ProcessEnv, input?: stri
 
 describe("packed Pi package", () => {
 	it("uses the intended installed Pi version", () => {
-		expect(expectedPiVersion).toMatch(/^0\.8[12]\.\d+$/);
+		expect(expectedPiVersion).toMatch(/^0\.8[1-4]\.\d+$/);
 		const installedManifest = JSON.parse(
 			readFileSync(
 				join(projectRoot, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),

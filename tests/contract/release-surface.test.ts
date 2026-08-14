@@ -59,22 +59,22 @@ describe("public release surface", () => {
 			"@earendil-works/pi-coding-agent",
 			"@earendil-works/pi-tui",
 		]) {
-			expect(manifest.peerDependencies?.[packageName], packageName).toBe(">=0.81.1 <0.83.0");
+			expect(manifest.peerDependencies?.[packageName], packageName).toBe(">=0.81.1 <0.85.0");
 		}
 		for (const document of compatibilityDocs) {
 			expect(document.content, document.path).toContain(">=22.19.0");
-			expect(document.content, document.path).toContain(">=0.81.1 <0.83.0");
+			expect(document.content, document.path).toContain(">=0.81.1 <0.85.0");
 			expect(document.content, document.path).toContain(
 				"Pi 0.82.0 is the primary tested Pi release",
 			);
 			expect(document.content, document.path).toContain(
-				"compatibility coverage retained for Pi 0.81.1",
+				"compatibility coverage retained for Pi 0.81.1, Pi 0.83.0, and Pi 0.84.1",
 			);
 		}
 		expect(readme).toContain("Pi Advisor 0.2.3 requires Pi");
-		expect(readme).toContain("Declared compatibility range: >=0.81.1 <0.83.0");
+		expect(readme).toContain("Declared compatibility range: >=0.81.1 <0.85.0");
 		expect(readme).toContain("Primary tested Pi release: 0.82.0");
-		expect(readme).toContain("Compatibility-tested Pi release: 0.81.1");
+		expect(readme).toContain("Compatibility-tested Pi releases: 0.81.1, 0.83.0, and 0.84.1");
 		expect(readme).toContain("Pi Advisor 0.1.3 is the legacy release for Pi 0.80.7");
 		expect(readme).toContain(
 			"unverifiable provider parity leave Advisor inactive without fallback",
