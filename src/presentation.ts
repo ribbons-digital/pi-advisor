@@ -130,6 +130,14 @@ function isSentenceBoundary(prefix: string, remainder: string): boolean {
 	return !SENTENCE_ABBREVIATION.test(prefix);
 }
 
+function hasUnbalancedInlineCode(text: string): boolean {
+	let ticks = 0;
+	for (const character of text) {
+		if (character === "`") ticks++;
+	}
+	return ticks % 2 === 1;
+}
+
 function splitLeadFromBody(block: string): string {
 	if (block.includes("\n") || hasExistingMarkdownList(block)) return block;
 	const colon = /^([^:\n]{8,80}):\s+([A-Za-z`"'(].{19,})$/u.exec(block);
@@ -137,14 +145,15 @@ function splitLeadFromBody(block: string): string {
 		colon?.[1] !== undefined &&
 		colon[2] !== undefined &&
 		!colon[1].includes("//") &&
-		!/\d$/u.test(colon[1])
+		!/\d$/u.test(colon[1]) &&
+		!hasUnbalancedInlineCode(colon[1])
 	) {
 		return `${colon[1]}:\n\n${colon[2]}`;
 	}
 	const match = /^([\s\S]+?[.?!])\s+([\s\S]+)$/u.exec(block);
 	if (match?.[1] === undefined || match[2] === undefined) return block;
 	if (match[1].length > 140 || match[2].length < 24) return block;
-	if (!isSentenceBoundary(match[1], match[2])) return block;
+	if (!isSentenceBoundary(match[1], match[2]) || hasUnbalancedInlineCode(match[1])) return block;
 	return `${match[1]}\n\n${match[2]}`;
 }
 

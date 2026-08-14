@@ -276,6 +276,9 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 				"Use e.g. a fixture path rather than a live token when the helper must be tested.",
 			),
 		).toBe("Use e.g. a fixture path rather than a live token when the helper must be tested.");
+		expect(
+			formatAdviceCardMarkdown("Fix the `mode: primary` flag so reviewers can override it now."),
+		).toBe("Fix the `mode: primary` flag so reviewers can override it now.");
 	});
 
 	it("renders numbered actions on separate card lines", () => {
