@@ -76,7 +76,7 @@ describe("packed Pi package", () => {
 				}),
 			) as PackResult;
 			const paths = pack.files.map((file) => file.path);
-			expect(pack).toMatchObject({ name: "@ribbons-digital/pi-advisor", version: "0.2.3" });
+			expect(pack).toMatchObject({ name: "@ribbons-digital/pi-advisor", version: "0.3.0" });
 			expect(paths).toContain("src/index.ts");
 			expect(paths).toContain("docs/configuration.md");
 			expect(paths).toContain("docs/assets/advisor-in-action.png");

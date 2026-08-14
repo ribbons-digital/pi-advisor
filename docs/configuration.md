@@ -48,7 +48,7 @@ Protected paths, activation, limits, Memory suggestions, persistence, and other 
 | `/advisor off`         | Disables this session   | Disables this session   | Available only where commands are processed | Available only where commands are processed | None               |
 
 Activation never chooses a model automatically.
-Pi Advisor 0.2.3 requires Node.js `>=22.19.0` and Pi `>=0.81.1 <0.85.0`.
+Pi Advisor 0.3.0 requires Node.js `>=22.19.0` and Pi `>=0.81.1 <0.85.0`.
 Pi 0.82.0 is the primary tested Pi release, with compatibility coverage retained for Pi 0.81.1, Pi 0.83.0, and Pi 0.84.1.
 Pi Advisor 0.1.3 remains the legacy release for Pi 0.80.7.
 A missing model, unavailable model, missing credentials, incompatible critical Pi API, or provider parity that cannot be verified leaves Advisor inactive without fallback.

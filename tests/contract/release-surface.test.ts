@@ -26,10 +26,10 @@ const publicDocs = [
 ].map((path) => ({ path, content: readFileSync(path, "utf8") }));
 
 describe("public release surface", () => {
-	it("declares discoverable publishable 0.2.3 metadata", () => {
+	it("declares discoverable publishable 0.3.0 metadata", () => {
 		expect(manifest).toMatchObject({
 			name: "@ribbons-digital/pi-advisor",
-			version: "0.2.3",
+			version: "0.3.0",
 			publishConfig: { access: "public", provenance: true },
 			pi: {
 				extensions: ["./src/index.ts"],
@@ -71,7 +71,7 @@ describe("public release surface", () => {
 				"compatibility coverage retained for Pi 0.81.1, Pi 0.83.0, and Pi 0.84.1",
 			);
 		}
-		expect(readme).toContain("Pi Advisor 0.2.3 requires Pi");
+		expect(readme).toContain("Pi Advisor 0.3.0 requires Pi");
 		expect(readme).toContain("Declared compatibility range: >=0.81.1 <0.85.0");
 		expect(readme).toContain("Primary tested Pi release: 0.82.0");
 		expect(readme).toContain("Compatibility-tested Pi releases: 0.81.1, 0.83.0, and 0.84.1");
