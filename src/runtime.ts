@@ -346,6 +346,7 @@ export interface AdvisorRuntimeStatus {
 	adviseSchemaMode?: AdviseSchemaMode;
 	effort: AdvisorConfig["effort"];
 	backlog: boolean;
+	reviewing: boolean;
 	pendingTranscriptBytes: number;
 	maxPendingTranscriptBytesObserved: number;
 	retryPending: boolean;
@@ -670,6 +671,7 @@ export function formatAdvisorDiagnosticsDump(
 		adviseSchemaMode: status.adviseSchemaMode ?? null,
 		effort: status.effort,
 		backlog: status.backlog,
+		reviewing: status.reviewing,
 		pendingTranscriptBytes: status.pendingTranscriptBytes,
 		maxPendingTranscriptBytesObserved: status.maxPendingTranscriptBytesObserved,
 		retryPending: status.retryPending,
@@ -857,6 +859,7 @@ Silence remains the correct result when current evidence supports no material is
 When concrete risk and historical commentary compete, advise on the concrete risk.
 For each finding, choose a concise findingKey that identifies exactly one concrete defect by affected component and failure mode. Reuse it for paraphrases or severity changes of that defect. Use a different findingKey for every materially different defect. The findingKey is authoritative for repeat suppression regardless of note wording or severity.
 At most one Advisory note may be accepted per update.
+When a note contains more than one concrete action, write a short Markdown list.
 ${config.instructions.length > 0 ? `\nUser review instructions:\n${config.instructions}` : ""}
 ${
 	projectInstructions.length > 0
@@ -939,6 +942,7 @@ export class AdvisorRuntime {
 			paused: false,
 			effort: this.config.effort,
 			backlog: false,
+			reviewing: false,
 			pendingTranscriptBytes: 0,
 			maxPendingTranscriptBytesObserved: 0,
 			retryPending: false,
@@ -1004,6 +1008,7 @@ export class AdvisorRuntime {
 	getStatus(): AdvisorRuntimeStatus {
 		this.refreshMemorySuggestionCapability();
 		this.refreshDeferredAdviceStatus();
+		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
 		return structuredClone(this.status);
 	}
 
@@ -3363,6 +3368,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			Buffer.byteLength(pending?.text ?? "", "utf8") +
 			utf8TextSetBytes(pending?.successfulMemoryTexts ?? new Set());
 		this.status.pendingTranscriptBytes = bytes;
+		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
 		this.status.backlog = bytes > 0 || this.activeReview !== undefined || this.status.retryPending;
 		this.status.maxPendingTranscriptBytesObserved = Math.max(
 			this.status.maxPendingTranscriptBytesObserved,
@@ -3390,11 +3396,21 @@ export function formatAdvisorEnableStatus(
 	return `Previous Advisor budget before reset: ${String(previous.usage.total)} tokens, $${previous.usage.costUsd.toFixed(4)}${previous.pauseReason ? `, paused: ${previous.pauseReason}` : ""}\n${status}`;
 }
 
+export function shouldAnimateAdvisorFooter(
+	status: AdvisorRuntimeStatus,
+	mode: string | undefined,
+): boolean {
+	return mode === "tui" && status.enabled && status.active && !status.paused && status.reviewing;
+}
+
 export function formatAdvisorFooterStatus(status: AdvisorRuntimeStatus): string | undefined {
 	if (!status.enabled) return undefined;
-	const state = status.paused ? "paused" : status.active ? "active" : "inactive";
 	const modelLabel =
 		status.modelName !== undefined && status.modelName.length > 0 ? ` (${status.modelName})` : "";
+	if (!status.paused && status.active && status.reviewing) {
+		return `Advisor reviewing${modelLabel}`;
+	}
+	const state = status.paused ? "paused" : status.active ? "active" : "inactive";
 	const queuedUnit = status.pendingTranscriptBytes === 1 ? "byte" : "bytes";
 	return `Advisor ${state}${modelLabel}${status.backlog ? ` · ${String(status.pendingTranscriptBytes)} ${queuedUnit} queued` : ""}`;
 }
@@ -3413,6 +3429,7 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Advise schema: ${status.adviseSchemaMode ?? "unavailable"}`,
 		`Effort: ${status.effort}`,
 		`Backlog: ${String(status.pendingTranscriptBytes)} bytes${status.retryPending ? `, retry pending for ${String(status.retryDelayMs)} ms` : ""}`,
+		`Reviewing: ${status.reviewing ? "yes" : "no"}`,
 		`Context estimate: ${String(status.contextEstimateTokens)}/${String(status.contextLimitTokens)} tokens (${String(status.contextUsageTokens)} reported + ${String(status.contextTrailingEstimateTokens)} estimated, ${status.contextEstimateSource})`,
 		`Context compaction: ${String(status.compactionsCompleted)} completed, ${String(status.compactionFailures)} failed, ${String(status.compactionUsageUnavailable)} operations with usage unavailable through Pi public APIs`,
 		`Context re-prime: ${String(status.contextReprimesCompleted)} completed, ${String(status.contextReprimeFailures)} failed`,

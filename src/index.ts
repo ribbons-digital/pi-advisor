@@ -30,6 +30,7 @@ import {
 	formatAdvisorEnableStatus,
 	formatAdvisorFooterStatus,
 	formatAdvisorStatus,
+	shouldAnimateAdvisorFooter,
 	type AdvisorRuntimeHooks,
 } from "./runtime.js";
 
@@ -247,21 +248,68 @@ export function hasAdvisorCommandCollision(commands: readonly { name: string }[]
 	);
 }
 
+const ADVISOR_FOOTER_STATUS_KEY = "pi-advisor";
+const ADVISOR_REVIEW_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+const ADVISOR_REVIEW_SPINNER_INTERVAL_MS = 80;
+
+function publishAdvisorFooterStatus(
+	ctx: Parameters<AdvisorRuntime["startSession"]>[0] | undefined,
+	status: Parameters<typeof formatAdvisorFooterStatus>[0],
+	frame?: string,
+): void {
+	if (ctx?.hasUI !== true) return;
+	try {
+		const text = formatAdvisorFooterStatus(status);
+		if (text === undefined) {
+			ctx.ui.setStatus(ADVISOR_FOOTER_STATUS_KEY, undefined);
+			return;
+		}
+		const prefix = frame === undefined ? "" : `${ctx.ui.theme.fg("accent", frame)} `;
+		ctx.ui.setStatus(ADVISOR_FOOTER_STATUS_KEY, `${prefix}${text}`);
+	} catch {
+		// Keep runtime status publication independent from optional TUI rendering.
+	}
+}
+
 function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions): void {
 	const fallbackUserConfig = normalizeAdvisorConfig(
 		structuredClone(options.config ?? DEFAULT_ADVISOR_CONFIG),
 	);
 	let statusContext: Parameters<AdvisorRuntime["startSession"]>[0] | undefined;
+	let latestFooterStatus: Parameters<typeof formatAdvisorFooterStatus>[0] | undefined;
+	let reviewSpinnerTimer: NodeJS.Timeout | undefined;
+	let reviewSpinnerFrame = 0;
+	const stopReviewSpinner = (): void => {
+		if (reviewSpinnerTimer === undefined) return;
+		clearInterval(reviewSpinnerTimer);
+		reviewSpinnerTimer = undefined;
+		reviewSpinnerFrame = 0;
+	};
+	const startReviewSpinner = (): void => {
+		if (reviewSpinnerTimer !== undefined) return;
+		reviewSpinnerTimer = setInterval(() => {
+			if (latestFooterStatus === undefined) return;
+			reviewSpinnerFrame = (reviewSpinnerFrame + 1) % ADVISOR_REVIEW_SPINNER_FRAMES.length;
+			publishAdvisorFooterStatus(
+				statusContext,
+				latestFooterStatus,
+				ADVISOR_REVIEW_SPINNER_FRAMES[reviewSpinnerFrame],
+			);
+		}, ADVISOR_REVIEW_SPINNER_INTERVAL_MS);
+		reviewSpinnerTimer.unref();
+	};
 	const runtime = new AdvisorRuntime(pi, fallbackUserConfig, {
 		...options.hooks,
 		onStatus: (status) => {
-			if (statusContext?.hasUI) {
-				try {
-					statusContext.ui.setStatus("pi-advisor", formatAdvisorFooterStatus(status));
-				} catch {
-					// Keep runtime status publication independent from optional TUI rendering.
-				}
-			}
+			latestFooterStatus = status;
+			const animate = shouldAnimateAdvisorFooter(status, statusContext?.mode);
+			if (animate) startReviewSpinner();
+			else stopReviewSpinner();
+			publishAdvisorFooterStatus(
+				statusContext,
+				status,
+				animate ? ADVISOR_REVIEW_SPINNER_FRAMES[reviewSpinnerFrame] : undefined,
+			);
 			options.hooks?.onStatus?.(status);
 		},
 	});
@@ -373,7 +421,9 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 	pi.on("session_before_tree", (_event, ctx) => runtime.handleLifecycleHint(ctx));
 	pi.on("session_tree", (_event, ctx) => runtime.handleBranchChange(ctx));
 	pi.on("session_shutdown", async (_event, ctx) => {
-		if (ctx.hasUI) ctx.ui.setStatus("pi-advisor", undefined);
+		stopReviewSpinner();
+		latestFooterStatus = undefined;
+		if (ctx.hasUI) ctx.ui.setStatus(ADVISOR_FOOTER_STATUS_KEY, undefined);
 		statusContext = undefined;
 		await runtime.shutdown();
 	});
