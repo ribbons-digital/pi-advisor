@@ -27,12 +27,7 @@ export async function setRuntimeApiKeyWithoutNetwork(
 		apiKey: string,
 		options?: { allowNetwork?: boolean },
 	) => Promise<void>;
-	const supportsRefreshOptions = runtime.setRuntimeApiKey.length >= 3;
-	if (supportsRefreshOptions) {
-		await apply(providerId, apiKey, { allowNetwork: false });
-		return;
-	}
-	await apply(providerId, apiKey);
+	await apply(providerId, apiKey, { allowNetwork: false });
 }
 
 export class ModelRuntimeCompatibilityError extends Error {

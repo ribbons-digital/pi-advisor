@@ -57,29 +57,25 @@ function expectFieldFailure(error: unknown, field: string): void {
 }
 
 describe("Advisor ModelRuntime compatibility resolver", () => {
-	it("passes allowNetwork:false only when setRuntimeApiKey declares a third parameter", async () => {
-		const refreshCalls: ({ allowNetwork?: boolean } | undefined)[] = [];
-		const authOnlyCalls: number[] = [];
-		const refreshAware = {
+	it("always requests allowNetwork:false on a default-parameter setRuntimeApiKey", async () => {
+		const received: unknown[] = [];
+		const runtime = {
 			setRuntimeApiKey(
 				_providerId: string,
 				_apiKey: string,
-				options?: { allowNetwork?: boolean },
+				options: Record<string, unknown> = {},
 			): Promise<void> {
-				refreshCalls.push(options);
+				received.push(options);
 				return Promise.resolve();
 			},
 		};
-		const authOnly = {
-			setRuntimeApiKey(...args: [string, string]): Promise<void> {
-				authOnlyCalls.push(args.length);
-				return Promise.resolve();
-			},
-		};
-		await setRuntimeApiKeyWithoutNetwork(refreshAware, "scripted", "runtime-secret");
-		await setRuntimeApiKeyWithoutNetwork(authOnly, "scripted", "runtime-secret");
-		expect(refreshCalls).toEqual([{ allowNetwork: false }]);
-		expect(authOnlyCalls).toEqual([2]);
+		expect(runtime.setRuntimeApiKey.length).toBe(2);
+		await setRuntimeApiKeyWithoutNetwork(
+			runtime as Pick<ModelRuntime, "setRuntimeApiKey">,
+			"scripted",
+			"runtime-secret",
+		);
+		expect(received).toEqual([{ allowNetwork: false }]);
 	});
 
 	it("mirrors provider configuration, copies runtime auth, preserves the selected model, and dispatches the custom stream", async () => {
