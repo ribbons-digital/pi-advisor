@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
+import { setRuntimeApiKeyWithoutNetwork } from "../../src/compatibility/model-runtime.js";
 import {
 	createPiAdvisorExtension,
 	DEFAULT_ADVISOR_CONFIG,
@@ -81,9 +82,7 @@ describe("Pi 0.81.1 session replacement spike", () => {
 				allowModelNetwork: false,
 			});
 			registerScriptedProvider(modelRuntime, provider);
-			await modelRuntime.setRuntimeApiKey(provider.model.provider, "scripted-key", {
-				allowNetwork: false,
-			});
+			await setRuntimeApiKeyWithoutNetwork(modelRuntime, provider.model.provider, "scripted-key");
 			const settingsManager = SettingsManager.inMemory({
 				compaction: { enabled: false },
 				retry: { enabled: false },
@@ -202,12 +201,12 @@ describe("Pi 0.81.1 session replacement spike", () => {
 			});
 			registerScriptedProvider(modelRuntime, primary);
 			registerScriptedProvider(modelRuntime, advisor);
-			await modelRuntime.setRuntimeApiKey(primary.model.provider, "scripted-key", {
-				allowNetwork: false,
-			});
-			await modelRuntime.setRuntimeApiKey(advisor.model.provider, "scripted-advisor-key", {
-				allowNetwork: false,
-			});
+			await setRuntimeApiKeyWithoutNetwork(modelRuntime, primary.model.provider, "scripted-key");
+			await setRuntimeApiKeyWithoutNetwork(
+				modelRuntime,
+				advisor.model.provider,
+				"scripted-advisor-key",
+			);
 			const settingsManager = SettingsManager.inMemory({
 				compaction: { enabled: false },
 				retry: { enabled: false },

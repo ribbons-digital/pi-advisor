@@ -17,6 +17,27 @@ export interface ResolvedAdvisorModelRuntime {
 	model: Model<Api>;
 }
 
+export async function setRuntimeApiKeyWithoutNetwork(
+	runtime: Pick<ModelRuntime, "setRuntimeApiKey">,
+	providerId: string,
+	apiKey: string,
+): Promise<void> {
+	const apply = runtime.setRuntimeApiKey.bind(runtime) as (
+		providerId: string,
+		apiKey: string,
+		options?: { allowNetwork?: boolean },
+	) => Promise<void>;
+	try {
+		await apply(providerId, apiKey, { allowNetwork: false });
+	} catch (error) {
+		if (error instanceof TypeError) {
+			await apply(providerId, apiKey);
+			return;
+		}
+		throw error;
+	}
+}
+
 export class ModelRuntimeCompatibilityError extends Error {
 	constructor(
 		readonly field: string,
@@ -193,9 +214,7 @@ export async function resolveAdvisorModelRuntime(
 			throw new ModelRuntimeCompatibilityError("runtime credential copy");
 		}
 		try {
-			await modelRuntime.setRuntimeApiKey(options.model.provider, runtimeApiKey, {
-				allowNetwork: false,
-			});
+			await setRuntimeApiKeyWithoutNetwork(modelRuntime, options.model.provider, runtimeApiKey);
 		} catch {
 			throw new ModelRuntimeCompatibilityError("runtime credential copy");
 		}

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	ModelRuntimeCompatibilityError,
 	resolveAdvisorModelRuntime,
+	setRuntimeApiKeyWithoutNetwork,
 } from "../../src/compatibility/model-runtime.js";
 import {
 	createAdvisorProvider,
@@ -44,9 +45,7 @@ async function createHost(provider: ScriptedProvider): Promise<{
 		allowModelNetwork: false,
 	});
 	registerScriptedProvider(runtime, provider, parityRegistrationOptions);
-	await runtime.setRuntimeApiKey(provider.model.provider, "runtime-secret", {
-		allowNetwork: false,
-	});
+	await setRuntimeApiKeyWithoutNetwork(runtime, provider.model.provider, "runtime-secret");
 	return { runtime, registry: new ModelRegistry(runtime) };
 }
 
@@ -202,7 +201,7 @@ describe("Advisor ModelRuntime compatibility resolver", () => {
 		});
 		await writeFile(
 			authPath,
-			JSON.stringify({ [provider.model.provider]: credential("host-oauth-secret") }),
+			JSON.stringify({ [provider.model.provider]: credential("shared-oauth-secret") }),
 		);
 		const hostRuntime = await ModelRuntime.create({
 			authPath,
@@ -233,14 +232,30 @@ describe("Advisor ModelRuntime compatibility resolver", () => {
 				},
 			],
 		});
-		await writeFile(
-			authPath,
-			JSON.stringify({ [provider.model.provider]: credential("nested-oauth-secret") }),
+		const registry = new ModelRegistry(hostRuntime);
+		const original = registry.getProviderAuth.bind(registry);
+		registry.getProviderAuth = async (providerId) => {
+			const result = await original(providerId);
+			return result === undefined
+				? result
+				: { ...result, auth: { ...result.auth, apiKey: "host-oauth-secret" } };
+		};
+
+		const resolved = await resolveAdvisorModelRuntime({
+			modelRegistry: new ModelRegistry(hostRuntime),
+			model: provider.model,
+			agentDir,
+		});
+		expect(resolved.modelRuntime.getProviderAuthStatus(provider.model.provider).source).toBe(
+			"stored",
+		);
+		expect((await resolved.modelRuntime.getAuth(provider.model))?.auth.apiKey).toBe(
+			"shared-oauth-secret",
 		);
 
 		try {
 			await resolveAdvisorModelRuntime({
-				modelRegistry: new ModelRegistry(hostRuntime),
+				modelRegistry: registry,
 				model: provider.model,
 				agentDir,
 			});
@@ -280,9 +295,7 @@ describe("Advisor ModelRuntime compatibility resolver", () => {
 			allowModelNetwork: false,
 		});
 		hostRuntime.registerNativeProvider(native);
-		await hostRuntime.setRuntimeApiKey(scripted.model.provider, "runtime-secret", {
-			allowNetwork: false,
-		});
+		await setRuntimeApiKeyWithoutNetwork(hostRuntime, scripted.model.provider, "runtime-secret");
 
 		const resolved = await resolveAdvisorModelRuntime({
 			modelRegistry: new ModelRegistry(hostRuntime),

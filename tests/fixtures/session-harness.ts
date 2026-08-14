@@ -14,6 +14,7 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
+import { setRuntimeApiKeyWithoutNetwork } from "../../src/compatibility/model-runtime.js";
 import { registerScriptedProvider, type ScriptedProvider } from "./scripted-provider.js";
 
 export interface SessionHarnessOptions {
@@ -56,15 +57,17 @@ export async function createSessionHarness(
 			allowModelNetwork: false,
 		});
 		registerScriptedProvider(modelRuntime, options.provider);
-		await modelRuntime.setRuntimeApiKey(options.provider.model.provider, "scripted-key", {
-			allowNetwork: false,
-		});
+		await setRuntimeApiKeyWithoutNetwork(
+			modelRuntime,
+			options.provider.model.provider,
+			"scripted-key",
+		);
 		if (options.advisorProvider !== undefined) {
 			registerScriptedProvider(modelRuntime, options.advisorProvider);
-			await modelRuntime.setRuntimeApiKey(
+			await setRuntimeApiKeyWithoutNetwork(
+				modelRuntime,
 				options.advisorProvider.model.provider,
 				"scripted-advisor-key",
-				{ allowNetwork: false },
 			);
 		}
 		await options.beforeBind?.(modelRuntime);
