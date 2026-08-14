@@ -176,7 +176,7 @@ The memory remains pending until the user approves or rejects it through the mem
 If compatible capability is absent, no Memory suggestion is produced and ordinary review is unchanged; if capability is lost before idle dispatch, no follow-up starts and the accepted suggestion is marked `could-not-queue` for bounded later presentation.
 Advice is marked potentially stale when the Executor has advanced beyond the reviewed window, and restored advice requires fresh verification.
 Every Advisor card has a severity-colored left border so it remains visually distinct from native tool-call cards; Memory suggestion cards use the Advisor accent color.
-Cards render compact Markdown so numbered or bullet actions stay on separate lines.
+Cards render compact Markdown so a short lead stays above the supporting detail, and numbered or bullet actions stay on separate lines.
 While a review is in flight, the TUI footer shows a spinner next to `Advisor reviewing`.
 Queued work stays static.
 

@@ -248,6 +248,39 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 		).toBe("Either 1) keep the current cache, or 2) rebuild it from the source files.");
 	});
 
+	it("splits a long note into a short lead and supporting body", () => {
+		expect(
+			formatAdviceCardMarkdown(
+				"Secret hygiene: the debug command printed live OAuth token prefixes into the transcript. Avoid echoing `gh auth token` output and redact the whole helper line.",
+			),
+		).toBe(
+			[
+				"Secret hygiene:",
+				"",
+				"the debug command printed live OAuth token prefixes into the transcript. Avoid echoing `gh auth token` output and redact the whole helper line.",
+			].join("\n"),
+		);
+		expect(
+			formatAdviceCardMarkdown(
+				"The drafted response ends in a repetition loop. The same closing paragraph is duplicated several times and would deliver a broken proposal.",
+			),
+		).toBe(
+			[
+				"The drafted response ends in a repetition loop.",
+				"",
+				"The same closing paragraph is duplicated several times and would deliver a broken proposal.",
+			].join("\n"),
+		);
+		expect(
+			formatAdviceCardMarkdown(
+				"Use e.g. a fixture path rather than a live token when the helper must be tested.",
+			),
+		).toBe("Use e.g. a fixture path rather than a live token when the helper must be tested.");
+		expect(
+			formatAdviceCardMarkdown("Fix the `mode: primary` flag so reviewers can override it now."),
+		).toBe("Fix the `mode: primary` flag so reviewers can override it now.");
+	});
+
 	it("renders numbered actions on separate card lines", () => {
 		const rendered = renderAdviceCards(
 			[

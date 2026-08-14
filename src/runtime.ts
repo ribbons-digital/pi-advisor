@@ -859,7 +859,7 @@ Silence remains the correct result when current evidence supports no material is
 When concrete risk and historical commentary compete, advise on the concrete risk.
 For each finding, choose a concise findingKey that identifies exactly one concrete defect by affected component and failure mode. Reuse it for paraphrases or severity changes of that defect. Use a different findingKey for every materially different defect. The findingKey is authoritative for repeat suppression regardless of note wording or severity.
 At most one Advisory note may be accepted per update.
-When a note contains more than one concrete action, write a short Markdown list.
+Write each note as a short lead sentence, then a blank line, then the supporting detail. When the detail has more than one concrete action, use a short Markdown list.
 ${config.instructions.length > 0 ? `\nUser review instructions:\n${config.instructions}` : ""}
 ${
 	projectInstructions.length > 0

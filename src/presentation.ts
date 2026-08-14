@@ -121,6 +121,42 @@ function hasExistingMarkdownList(block: string): boolean {
 	return /^(?: {0,3}(?:\d+[.)]|[-*+])\s+\S)/mu.test(block) && block.includes("\n");
 }
 
+const SENTENCE_ABBREVIATION = /(?:^|\s)(?:e\.g|i\.e|vs|etc|mr|ms|mrs|dr|fig|no|v)\.$/iu;
+
+function isSentenceBoundary(prefix: string, remainder: string): boolean {
+	if (!/^[A-Z`"'(]/u.test(remainder)) return false;
+	if (/(?:^|\s)\d\.$/u.test(prefix)) return false;
+	if (prefix.endsWith("..")) return false;
+	return !SENTENCE_ABBREVIATION.test(prefix);
+}
+
+function hasUnbalancedInlineCode(text: string): boolean {
+	let ticks = 0;
+	for (const character of text) {
+		if (character === "`") ticks++;
+	}
+	return ticks % 2 === 1;
+}
+
+function splitLeadFromBody(block: string): string {
+	if (block.includes("\n") || hasExistingMarkdownList(block)) return block;
+	const colon = /^([^:\n]{8,80}):\s+([A-Za-z`"'(].{19,})$/u.exec(block);
+	if (
+		colon?.[1] !== undefined &&
+		colon[2] !== undefined &&
+		!colon[1].includes("//") &&
+		!/\d$/u.test(colon[1]) &&
+		!hasUnbalancedInlineCode(colon[1])
+	) {
+		return `${colon[1]}:\n\n${colon[2]}`;
+	}
+	const match = /^([\s\S]+?[.?!])\s+([\s\S]+)$/u.exec(block);
+	if (match?.[1] === undefined || match[2] === undefined) return block;
+	if (match[1].length > 140 || match[2].length < 24) return block;
+	if (!isSentenceBoundary(match[1], match[2]) || hasUnbalancedInlineCode(match[1])) return block;
+	return `${match[1]}\n\n${match[2]}`;
+}
+
 function splitInlineNumberedItems(
 	block: string,
 	pattern: RegExp,
@@ -167,9 +203,9 @@ export function formatAdviceCardMarkdown(input: string): string {
 			const split =
 				splitInlineNumberedItems(normalized, INLINE_PAREN_NUMBERED_MARKER) ??
 				splitInlineNumberedItems(normalized, INLINE_DOT_NUMBERED_MARKER);
-			if (split === undefined) return normalized;
+			if (split === undefined) return splitLeadFromBody(normalized);
 			const list = split.items.map((item) => `${item.marker} ${item.text}`).join("\n");
-			const intro = cleanAdviceListItem(split.intro);
+			const intro = splitLeadFromBody(cleanAdviceListItem(split.intro));
 			return intro.length === 0 ? list : `${intro}\n\n${list}`;
 		})
 		.filter((block) => block.length > 0)
