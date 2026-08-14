@@ -1,6 +1,6 @@
 {
 	"name": "@ribbons-digital/pi-advisor",
-	"version": "0.2.3",
+	"version": "0.3.0",
 	"description": "Automatic isolated secondary review for Pi coding agent sessions",
 	"license": "MIT",
 	"author": "Ribbons Digital",
