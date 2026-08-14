@@ -9,5 +9,6 @@ pack.json
 # Private planning and development continuity documents
 docs/internal/
 .pi-subagents/
+.pi/
 .memory-lane/
 .memory-lane-scope
