@@ -1,4 +1,5 @@
 import { validateToolArguments } from "@earendil-works/pi-ai";
+import { Compile } from "typebox/compile";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -231,6 +232,27 @@ describe("strict advise wire contract", () => {
 				},
 			}),
 		).not.toThrow();
+	});
+
+	it("pins the TypeBox [object, null] compile workaround on the pinned TypeBox version", () => {
+		// Pinned TypeBox 1.1.38 compiles the object member of ["object", "null"] without a
+		// null guard, so a raw null memory throws during compiled validation instead of
+		// validating. prepareStrictAdviseArguments substitutes an equivalent
+		// { text: null, category: null, basis: null } encoding to keep Pi validation safe.
+		// When TypeBox fixes the compile behavior, this expectation fails and the workaround
+		// in src/advice.ts can be removed together with this test.
+		const compiled = Compile(STRICT_ADVISE_WIRE_SCHEMA);
+		const nullMemory = {
+			note: "Verify the rollback path.",
+			intent: null,
+			severity: null,
+			findingKey: null,
+			memory: null,
+		};
+		expect(() => compiled.Check(nullMemory)).toThrow();
+		expect(
+			compiled.Check({ ...nullMemory, memory: { text: null, category: null, basis: null } }),
+		).toBe(true);
 	});
 
 	it("normalizes nulls and omissions to existing review defaults through the shared path", async () => {

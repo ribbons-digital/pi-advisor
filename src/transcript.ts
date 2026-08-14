@@ -404,8 +404,7 @@ export function renderAdvisorDelta(
 }
 
 /**
- * Serialize a bounded current-branch snapshot for Slice 4 re-prime consumers.
- * Slice 4A establishes the redaction and serialization boundary; fallback invocation is Batch B.
+ * Serialize a redacted, bounded current-branch snapshot for lifecycle and configuration Re-prime.
  */
 export function renderAdvisorReprimeSnapshot(
 	entries: SessionEntry[],

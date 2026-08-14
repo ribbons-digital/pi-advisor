@@ -713,8 +713,11 @@ function prepareStrictAdviseArguments(raw: unknown): unknown {
 		throw new Error("Advise arguments did not match the internal schema");
 	}
 
-	// TypeBox 1.1.38 compiles [object, null] property checks without a null guard.
-	// The local gate above is authoritative; this equivalent encoding keeps Pi validation safe.
+	// TypeBox 1.1.38 compiles [object, null] property checks without a null guard, so a raw
+	// null memory throws during compiled Pi validation. The local gate above is authoritative;
+	// this equivalent encoding keeps Pi validation safe. Pinned by the TypeBox compile workaround
+	// test in tests/unit/advise-strict.test.ts; when that test fails on an upgraded TypeBox,
+	// this substitution and the pinned expectation can be removed together.
 	return memory === null
 		? { ...prepared, memory: { text: null, category: null, basis: null } }
 		: prepared;

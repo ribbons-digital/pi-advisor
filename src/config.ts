@@ -126,7 +126,9 @@ export const DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze(
 	structuredClone(CANONICAL_DEFAULT_ADVISOR_CONFIG),
 );
 
-/** @deprecated Use DEFAULT_ADVISOR_CONFIG. */
+/**
+ * @deprecated Use DEFAULT_ADVISOR_CONFIG. Removed in 0.4.0.
+ */
 export const PROPOSED_ADVISOR_CONFIG: AdvisorConfig = structuredClone(
 	CANONICAL_DEFAULT_ADVISOR_CONFIG,
 );
