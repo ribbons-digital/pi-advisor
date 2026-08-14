@@ -57,6 +57,31 @@ function expectFieldFailure(error: unknown, field: string): void {
 }
 
 describe("Advisor ModelRuntime compatibility resolver", () => {
+	it("passes allowNetwork:false only when setRuntimeApiKey declares a third parameter", async () => {
+		const refreshCalls: ({ allowNetwork?: boolean } | undefined)[] = [];
+		const authOnlyCalls: number[] = [];
+		const refreshAware = {
+			setRuntimeApiKey(
+				_providerId: string,
+				_apiKey: string,
+				options?: { allowNetwork?: boolean },
+			): Promise<void> {
+				refreshCalls.push(options);
+				return Promise.resolve();
+			},
+		};
+		const authOnly = {
+			setRuntimeApiKey(...args: [string, string]): Promise<void> {
+				authOnlyCalls.push(args.length);
+				return Promise.resolve();
+			},
+		};
+		await setRuntimeApiKeyWithoutNetwork(refreshAware, "scripted", "runtime-secret");
+		await setRuntimeApiKeyWithoutNetwork(authOnly, "scripted", "runtime-secret");
+		expect(refreshCalls).toEqual([{ allowNetwork: false }]);
+		expect(authOnlyCalls).toEqual([2]);
+	});
+
 	it("mirrors provider configuration, copies runtime auth, preserves the selected model, and dispatches the custom stream", async () => {
 		const provider = createAdvisorProvider([{ content: [{ type: "text", text: "nested" }] }]);
 		const { registry } = await createHost(provider);
