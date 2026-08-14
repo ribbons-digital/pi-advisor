@@ -141,12 +141,13 @@ function hasUnbalancedInlineCode(text: string): boolean {
 function splitLeadFromBody(block: string): string {
 	if (block.includes("\n") || hasExistingMarkdownList(block)) return block;
 	const colon = /^([^:\n]{8,80}):\s+([A-Za-z`"'(].{19,})$/u.exec(block);
+	const colon = /^([^:\n]{8,80}):\s+([A-Za-z`"'(].{19,})$/u.exec(block);
 	if (
 		colon?.[1] !== undefined &&
 		colon[2] !== undefined &&
 		!colon[1].includes("//") &&
 		!/\d$/u.test(colon[1]) &&
-		!hasUnbalancedInlineCode(colon[1])
+		(colon[1].match(/`/gu)?.length ?? 0) % 2 === 0
 	) {
 		return `${colon[1]}:\n\n${colon[2]}`;
 	}
