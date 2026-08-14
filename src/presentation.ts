@@ -108,9 +108,13 @@ const INLINE_DOT_NUMBERED_MARKER = /(?:^|[\t\n;:])(\d{1,2}\.)[ \t]+(?=\S)/gu;
 
 function cleanAdviceListItem(text: string): string {
 	return text
-		.replace(/[,;]?\s+(?:or|and)\s*$/iu, "")
-		.replace(/[;:]\s*$/u, "")
+		.replace(/[,;]?\s+and\s*$/iu, "")
+		.replace(/[,;:]\s*$/u, "")
 		.trim();
+}
+
+function hasAlternativeConjunction(text: string): boolean {
+	return /(?:^|[,;:\s])or\s*$/iu.test(text.trim());
 }
 
 function hasExistingMarkdownList(block: string): boolean {
@@ -139,13 +143,17 @@ function splitInlineNumberedItems(
 		const textStart = match.index + match[0].length;
 		const nextMatch = matches[index + 1];
 		const textEnd = nextMatch === undefined ? block.length : nextMatch.index;
-		const text = cleanAdviceListItem(block.slice(textStart, textEnd));
+		const rawText = block.slice(textStart, textEnd);
+		if (nextMatch !== undefined && hasAlternativeConjunction(rawText)) return undefined;
+		const text = cleanAdviceListItem(rawText);
 		if (text.length === 0) return undefined;
 		items.push({ marker, text });
 	}
 	const first = matches[0];
 	if (first === undefined) return undefined;
-	return { intro: block.slice(0, first.index).trim(), items };
+	const intro = block.slice(0, first.index).trim();
+	if (hasAlternativeConjunction(intro)) return undefined;
+	return { intro, items };
 }
 
 export function formatAdviceCardMarkdown(input: string): string {

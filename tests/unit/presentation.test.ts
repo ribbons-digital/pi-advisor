@@ -241,6 +241,11 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 		expect(
 			formatAdviceCardMarkdown("Version 1. 2 extra files remain after the failed publish."),
 		).toBe("Version 1. 2 extra files remain after the failed publish.");
+		expect(
+			formatAdviceCardMarkdown(
+				"Either 1) keep the current cache, or 2) rebuild it from the source files.",
+			),
+		).toBe("Either 1) keep the current cache, or 2) rebuild it from the source files.");
 	});
 
 	it("renders numbered actions on separate card lines", () => {

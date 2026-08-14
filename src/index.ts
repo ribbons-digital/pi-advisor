@@ -254,20 +254,23 @@ const ADVISOR_REVIEW_SPINNER_INTERVAL_MS = 80;
 
 function publishAdvisorFooterStatus(
 	ctx: Parameters<AdvisorRuntime["startSession"]>[0] | undefined,
-	status: Parameters<typeof formatAdvisorFooterStatus>[0],
+	status: Parameters<typeof formatAdvisorFooterStatus>[0] | undefined,
 	frame?: string,
-): void {
-	if (ctx?.hasUI !== true) return;
+): boolean {
+	if (ctx === undefined || status === undefined) return false;
 	try {
+		if (!ctx.hasUI) return false;
 		const text = formatAdvisorFooterStatus(status);
 		if (text === undefined) {
 			ctx.ui.setStatus(ADVISOR_FOOTER_STATUS_KEY, undefined);
-			return;
+			return true;
 		}
 		const prefix = frame === undefined ? "" : `${ctx.ui.theme.fg("accent", frame)} `;
 		ctx.ui.setStatus(ADVISOR_FOOTER_STATUS_KEY, `${prefix}${text}`);
+		return true;
 	} catch {
 		// Keep runtime status publication independent from optional TUI rendering.
+		return false;
 	}
 }
 
@@ -288,13 +291,13 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 	const startReviewSpinner = (): void => {
 		if (reviewSpinnerTimer !== undefined) return;
 		reviewSpinnerTimer = setInterval(() => {
-			if (latestFooterStatus === undefined) return;
 			reviewSpinnerFrame = (reviewSpinnerFrame + 1) % ADVISOR_REVIEW_SPINNER_FRAMES.length;
-			publishAdvisorFooterStatus(
+			const published = publishAdvisorFooterStatus(
 				statusContext,
 				latestFooterStatus,
 				ADVISOR_REVIEW_SPINNER_FRAMES[reviewSpinnerFrame],
 			);
+			if (!published) stopReviewSpinner();
 		}, ADVISOR_REVIEW_SPINNER_INTERVAL_MS);
 		reviewSpinnerTimer.unref();
 	};
