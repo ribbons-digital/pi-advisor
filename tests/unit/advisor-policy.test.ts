@@ -1390,4 +1390,25 @@ describe("Quality Slice Q5 dedupe rollback restoration", () => {
 		expect(dedupe.size).toBe(0);
 		expect(dedupe.decide(first, 9, POLICY)).toEqual({ outcome: "deliver" });
 	});
+
+	it("back-fills metadata onto an entry inserted without a turn", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		dedupe.add(first);
+		expect(dedupe.decide(finding(first.note, "blocker"), 5, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+		expect(dedupe.add(first, 1)).toBe(false);
+		expect(dedupe.decide(finding(first.note, "blocker"), 5, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "re-raised",
+		});
+		const distinct = finding(
+			"Feature flags are read after the configuration file is closed, so values always come back empty.",
+		);
+		expect(dedupe.decide(distinct, 2, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "possible-duplicate",
+		});
+	});
 });

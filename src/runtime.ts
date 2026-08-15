@@ -1636,7 +1636,7 @@ export class AdvisorRuntime {
 				const advice = this.acceptedAdviceFromDetails(visible.details);
 				this.status.notesDelivered++;
 				if (advice !== undefined) {
-					this.adviceDedupe.add(advice);
+					this.adviceDedupe.add(advice, active.turnNumber);
 					if (advice.intent === "memory-suggestion") {
 						this.recordMemorySuggestionAdmission(advice, active.turnNumber);
 						this.status.memorySuggestionsDelivered++;
@@ -3218,7 +3218,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			stale: isStale(value),
 			formatted: rendered,
 		}));
-		for (const { advice } of pending) this.adviceDedupe.add(advice);
+		for (const { advice } of pending) this.adviceDedupe.add(advice, this.meaningfulTurnCount);
 
 		this.refreshDeferredAdviceStatus();
 		this.status.notesDelivered += pending.length;
@@ -3277,7 +3277,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			this.activeAdvice.length,
 		);
 		this.status.notesDelivered++;
-		this.adviceDedupe.add(removed.value.advice);
+		this.adviceDedupe.add(removed.value.advice, removed.value.turnNumber);
 		if (this.activeReview?.reviewId === removed.value.reviewId) {
 			delete this.activeReview;
 			this.status.restoredActiveReviewPending = false;

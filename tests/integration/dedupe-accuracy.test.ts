@@ -1,16 +1,24 @@
 import { createHash } from "node:crypto";
 
-import { type ExtensionAPI, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import {
+	SessionManager,
+	type ExtensionAPI,
+	type InlineExtension,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+	ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
+	ADVISOR_RUNTIME_STATE_VERSION,
 	adviceDedupeKey,
 	createPiAdvisorExtension,
+	cursorAtTail,
 	DEFAULT_ADVISOR_CONFIG,
 	noteSignature,
 	type AdvisorConfig,
 	type AdvisorRuntime,
 	type BoundedAdviceDedupe,
+	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
@@ -76,6 +84,33 @@ function reviewAdvice(
 
 async function waitFor(predicate: () => boolean): Promise<void> {
 	await expect.poll(predicate, { timeout: 5_000, interval: 10 }).toBe(true);
+}
+
+function persistedState(
+	manager: SessionManager,
+	overrides: Partial<PersistedAdvisorRuntimeState> = {},
+): PersistedAdvisorRuntimeState {
+	return {
+		version: ADVISOR_RUNTIME_STATE_VERSION,
+		sessionId: manager.getSessionId(),
+		savedAt: Date.now(),
+		cursor: cursorAtTail(manager.getBranch()),
+		activeDeliveries: [],
+		deferredAdvice: [],
+		dedupeHashes: [],
+		memorySuggestions: {
+			meaningfulTurnCount: 0,
+			admittedCount: 0,
+			deliveredCount: 0,
+			sessionCapReached: false,
+		},
+		notesDelivered: 0,
+		...overrides,
+	};
+}
+
+function appendState(manager: SessionManager, state: PersistedAdvisorRuntimeState): void {
+	manager.appendCustomEntry(ADVISOR_RUNTIME_STATE_ENTRY_TYPE, state);
 }
 
 describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
@@ -355,6 +390,84 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 				notesSuppressed: 1,
 			});
 			expect(JSON.stringify(primary.requests[3]?.context)).not.toContain('tag=\\"re-raised\\"');
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("gives a finding key delivered after resume the full Q5 metadata", async () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const findingHash = createHash("sha256").update(`review-finding:${ROLLBACK_KEY}`).digest("hex");
+		const restoredAdvice = {
+			intent: "review" as const,
+			note: ROLLBACK_NOTE,
+			severity: "concern" as const,
+			findingKeyHash: findingHash,
+			truncated: false,
+			originalCharacters: ROLLBACK_NOTE.length,
+			originalEstimatedTokens: Math.ceil(ROLLBACK_NOTE.length / 4),
+			createdAt: Date.now(),
+		};
+		appendState(
+			manager,
+			persistedState(manager, {
+				// The key is intentionally absent from dedupeHashes: transient identities
+				// are excluded from snapshots, exactly like a pre-restart pending note.
+				dedupeHashes: [],
+				deferredAdvice: [
+					{
+						advice: restoredAdvice,
+						stale: true,
+						branchWindow: cursorAtTail(manager.getBranch()),
+						displayedInEntry: false,
+					},
+				],
+				memorySuggestions: {
+					meaningfulTurnCount: 1,
+					admittedCount: 0,
+					deliveredCount: 0,
+					sessionCapReached: false,
+				},
+			}),
+		);
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "first" }] },
+			{ content: [{ type: "text", text: "second" }] },
+			{ content: [{ type: "text", text: "third" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{ content: [] },
+			reviewAdvice(DISTINCT_NOTE, ROLLBACK_KEY),
+			{ content: [] },
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			sessionManager: manager,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			expect(runtime.getStatus().deferredNotesPending).toBe(1);
+			await harness.session.prompt("resume one");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			expect(JSON.stringify(primary.requests[0]?.context)).toContain(ROLLBACK_NOTE);
+			await harness.session.prompt("resume two");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+			await harness.session.prompt("resume three");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 3);
+
+			const afterResume = JSON.stringify(primary.requests[2]?.context);
+			expect(afterResume).toContain(DISTINCT_NOTE);
+			expect(afterResume).toContain('tag=\\"possible-duplicate\\"');
+			expect(runtime.getStatus()).toMatchObject({
+				notesDelivered: 2,
+				notesSuppressed: 0,
+			});
 		} finally {
 			await harness.dispose();
 		}

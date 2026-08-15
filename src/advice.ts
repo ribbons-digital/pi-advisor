@@ -516,6 +516,12 @@ export class BoundedAdviceDedupe {
 					signature: metadata.signature,
 					lastDeliveryTurn: metadata.lastDeliveryTurn,
 				};
+			} else if (metadata !== undefined) {
+				// Back-fill metadata onto an entry inserted without a turn (for example a
+				// restored pending note emitted before its finding key carried metadata),
+				// so the key gains similarity and re-raise behavior instead of staying
+				// permanently metadata-free.
+				existing.metadata = metadata;
 			}
 			return false;
 		}
