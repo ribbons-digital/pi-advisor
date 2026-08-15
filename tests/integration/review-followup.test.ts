@@ -78,12 +78,55 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 	await expect.poll(predicate, { timeout: 5_000, interval: 10 }).toBe(true);
 }
 
+async function waitForStable(predicate: () => boolean, stableMs = 300): Promise<void> {
+	await expect
+		.poll(
+			async () => {
+				if (!predicate()) return false;
+				await new Promise((resolve) => setTimeout(resolve, stableMs));
+				return predicate();
+			},
+			{ timeout: 5_000, interval: 50 },
+		)
+		.toBe(true);
+}
+
 describe.sequential("Q3 severity-aware idle review dispatch", () => {
 	it("triggers exactly one automatic continuation per eligible idle blocker and never chains", async () => {
+		let settledCount = 0;
+		const settleProbe: InlineExtension = {
+			name: "q3-settle-probe",
+			factory: (pi) => {
+				pi.on("agent_end", () => {
+					settledCount++;
+				});
+			},
+		};
+		const inspect = defineTool({
+			name: "inspect",
+			label: "inspect",
+			description: "Produce material Executor evidence in the follow-up continuation.",
+			parameters: Type.Object({}),
+			execute: () =>
+				Promise.resolve({
+					content: [{ type: "text" as const, text: "inspected" }],
+					details: {},
+				}),
+		});
+		// The follow-up continuations make a non-read-only tool call so the turn is
+		// meaningful; only the no-chain guard can keep it from being reviewed.
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "terminal answer" }] },
+			{
+				content: [{ type: "toolCall", id: "inspect-c1", name: "inspect", arguments: {} }],
+				stopReason: "toolUse",
+			},
 			{ content: [{ type: "text", text: "follow-up continuation answer" }] },
 			{ content: [{ type: "text", text: "second prompt answer" }] },
+			{
+				content: [{ type: "toolCall", id: "inspect-c2", name: "inspect", arguments: {} }],
+				stopReason: "toolUse",
+			},
 			{ content: [{ type: "text", text: "second follow-up continuation answer" }] },
 		]);
 		const advisor = createAdvisorProvider([
@@ -94,30 +137,37 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 		const harness = await createSessionHarness({
 			provider: primary,
 			advisorProvider: advisor,
-			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
-			tools: [],
+			extensions: [settleProbe, extensionFor(configFor(advisor), (value) => (runtime = value))],
+			customTools: [inspect],
+			tools: ["inspect"],
 			mode: "rpc",
 		});
 		try {
 			await harness.session.prompt("finish the first turn");
-			await waitFor(() => primary.requests.length === 2);
-			expect(runtime?.getStatus()).toMatchObject({
-				reviewFollowUpsTriggered: 1,
-				notesDelivered: 1,
-				activeNotesPending: 0,
-				deferredNotesPending: 0,
-			});
+			// The follow-up dispatch settles before the continuation run starts.
+			await waitFor(() => runtime?.getStatus().reviewFollowUpsTriggered === 1);
+			await waitFor(() => settledCount === 2);
 			expect(JSON.stringify(primary.requests[1]?.context)).toContain('delivery=\\"active\\"');
 			expect(JSON.stringify(primary.requests[1]?.context)).toContain('severity=\\"blocker\\"');
-			expect(advisor.requests).toHaveLength(1);
+			// Stability gate: the continuation made a material non-read-only tool call,
+			// so with a broken no-chain guard its review would dispatch its own
+			// follow-up within milliseconds; a counter and advisor count that stay put
+			// prove the continuation was not reviewed.
+			await waitForStable(
+				() =>
+					runtime?.getStatus().reviewFollowUpsTriggered === 1 &&
+					runtime.getStatus().notesDelivered === 1 &&
+					advisor.requests.length === 1,
+			);
 
 			await harness.session.prompt("second user turn");
-			await waitFor(() => primary.requests.length === 4);
-			expect(runtime?.getStatus()).toMatchObject({
-				reviewFollowUpsTriggered: 2,
-				notesDelivered: 2,
-			});
-			expect(advisor.requests).toHaveLength(2);
+			await waitFor(() => settledCount === 4);
+			await waitForStable(
+				() =>
+					runtime?.getStatus().reviewFollowUpsTriggered === 2 &&
+					runtime.getStatus().notesDelivered === 2 &&
+					advisor.requests.length === 2,
+			);
 		} finally {
 			await harness.dispose();
 		}
@@ -158,6 +208,15 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 	});
 
 	it("falls back to deferred delivery after the fixed session cap of five follow-ups", async () => {
+		let settledCount = 0;
+		const settleProbe: InlineExtension = {
+			name: "q3-settle-probe",
+			factory: (pi) => {
+				pi.on("agent_end", () => {
+					settledCount++;
+				});
+			},
+		};
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "answer 1" }] },
 			{ content: [{ type: "text", text: "continuation 1" }] },
@@ -183,14 +242,22 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 		const harness = await createSessionHarness({
 			provider: primary,
 			advisorProvider: advisor,
-			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			extensions: [settleProbe, extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
 		});
 		try {
 			for (let turn = 1; turn <= 5; turn++) {
 				await harness.session.prompt(`user turn ${String(turn)}`);
-				await waitFor(() => primary.requests.length === turn * 2);
+				await waitFor(() => settledCount === turn * 2);
+				expect(primary.requests).toHaveLength(turn * 2);
+				// Stability gate: the follow-up counter and advisor request count stay
+				// put only when no chain review of the continuation ran.
+				await waitForStable(
+					() =>
+						runtime?.getStatus().reviewFollowUpsTriggered === turn &&
+						advisor.requests.length === turn,
+				);
 			}
 			expect(runtime?.getStatus()).toMatchObject({
 				reviewFollowUpsTriggered: 5,
@@ -199,6 +266,7 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 			});
 			await harness.session.prompt("user turn 6");
 			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);
+			await waitFor(() => advisor.requests.length === 6);
 			expect(runtime?.getStatus()).toMatchObject({
 				reviewFollowUpsTriggered: 5,
 				notesDelivered: 5,
