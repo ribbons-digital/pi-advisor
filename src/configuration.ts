@@ -684,11 +684,21 @@ export function serializeUserConfiguration(
 	config: AdvisorConfig,
 	unknownTopLevel?: Record<string, unknown>,
 ): string {
-	const document = {
+	const normalized = normalizeAdvisorConfig(structuredClone(config));
+	const merged = {
 		...(unknownTopLevel ?? {}),
-		...normalizeAdvisorConfig(structuredClone(config)),
+		...normalized,
 	};
-	return stringify(document, { lineWidth: 0 });
+	const serialized = stringify(merged, { lineWidth: 0 });
+	if (
+		Buffer.byteLength(serialized, "utf8") > MAX_WATCHDOG_YAML_BYTES &&
+		unknownTopLevel !== undefined
+	) {
+		// Never write a file the next load would reject as oversized; drop the
+		// preserved unknown top-level fields instead of failing the whole save.
+		return stringify(normalized, { lineWidth: 0 });
+	}
+	return serialized;
 }
 
 export async function saveUserConfigurationAtomic(

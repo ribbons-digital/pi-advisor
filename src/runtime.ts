@@ -2919,6 +2919,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			const previousAt = this.lastMemorySuggestionAt;
 			this.adviceDedupe.add(advice);
 			this.recordMemorySuggestionAdmission(advice, turnNumber);
+			if (dispatch === "followUp" && advice.intent === "review") {
+				this.automaticReviewFollowUpDeliveryId = deliveryId;
+				this.status.reviewFollowUpsTriggered++;
+			}
 			this.persistState();
 			const queueState = this.memoryQueueState(advice);
 			if (dispatch === "followUp" && queueState === "could-not-queue") {
@@ -2950,10 +2954,6 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				this.persistState();
 			}
 			if (dispatch === "followUp") this.automaticMemoryFollowUpDeliveryId = deliveryId;
-			if (dispatch === "followUp" && advice.intent === "review") {
-				this.automaticReviewFollowUpDeliveryId = deliveryId;
-				this.status.reviewFollowUpsTriggered++;
-			}
 			try {
 				this.pi.sendMessage(
 					{

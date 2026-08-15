@@ -12,11 +12,13 @@ import {
 	hasAdvisorCommandCollision,
 	loadAdvisorConfiguration,
 	MAX_WATCHDOG_MARKDOWN_BYTES,
+	MAX_WATCHDOG_YAML_BYTES,
 	mergeProjectConfiguration,
 	pickAdvisorInteractiveConfiguration,
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
 	saveUserConfigurationAtomic,
+	serializeUserConfiguration,
 } from "../../src/index.js";
 
 const roots: string[] = [];
@@ -757,6 +759,16 @@ describe("WATCHDOG configuration", () => {
 		expect(loaded.warnings.some(({ message }) => message.includes("preservation limit"))).toBe(
 			true,
 		);
+	});
+
+	it("drops preserved unknown fields when the merged save would exceed the YAML limit", () => {
+		const serialized = serializeUserConfiguration(DEFAULT_ADVISOR_CONFIG, {
+			futureKnob: "keep-me",
+			hugeFuture: "x".repeat(MAX_WATCHDOG_YAML_BYTES),
+		});
+		expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(MAX_WATCHDOG_YAML_BYTES);
+		expect(serialized).not.toContain("hugeFuture");
+		expect(serialized).not.toContain("futureKnob");
 	});
 
 	it("ignores Project files when trust is inactive", async () => {

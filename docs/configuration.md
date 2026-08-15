@@ -181,6 +181,7 @@ While the Executor is idle, an accepted review note whose severity is listed in 
 The release default admits only `blocker`, so an idle `blocker` reaches the Executor through one bounded automatic continuation while `concern` and `nit` keep deferred delivery.
 The same newer-instruction-input guard that protects Memory suggestion follow-ups applies, and a fixed session cap of five automatic review follow-ups bounds cost with deferred fallback at the cap.
 A review follow-up cannot chain: while it is pending, its own Executor continuation is not reviewed and no new review follow-up can dispatch.
+A stale review follow-up reuses the Memory supersession rules: it discards the queued ordinary Advisor review of the intervening Executor continuation, whose activity the no-chain guard would suppress anyway.
 `nit` is structurally excluded because validation accepts only the values below.
 Empty `activeIdleSeverities: []` preserves pre-Q3 behavior (all idle review notes deferred).
 
