@@ -1,10 +1,14 @@
-import { defineTool, SessionManager, type InlineExtension } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import {
+	SessionManager,
+	type CustomEntry,
+	type InlineExtension,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
 	ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 	ADVISOR_RUNTIME_STATE_VERSION,
+	ADVISOR_TRANSCRIPT_ENTRY_TYPE,
 	createPiAdvisorExtension,
 	cursorAtTail,
 	DEFAULT_ADVISOR_CONFIG,
@@ -72,17 +76,6 @@ function acceptedAdvice(note: string, id = "freshness-advice") {
 		],
 		stopReason: "toolUse" as const,
 	};
-}
-
-function mutatingEditTool() {
-	return defineTool({
-		name: "edit",
-		label: "edit",
-		description: "Mutating edit used only to produce material Executor activity.",
-		parameters: Type.Object({}),
-		execute: () =>
-			Promise.resolve({ content: [{ type: "text" as const, text: "edited" }], details: {} }),
-	});
 }
 
 function persistedState(
@@ -310,11 +303,7 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "CHAT-ONE" }] },
 			{ content: [{ type: "text", text: "CHAT-TWO" }] },
-			{
-				content: [{ type: "toolCall", id: "edit-1", name: "edit", arguments: {} }],
-				stopReason: "toolUse",
-			},
-			{ content: [{ type: "text", text: "AFTER-EDIT" }] },
+			{ content: [{ type: "text", text: "MATERIAL-THREE" }] },
 		]);
 		const advisor = createAdvisorProvider([{ content: [] }]);
 		let runtime: AdvisorRuntime | undefined;
@@ -329,8 +318,7 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 					(value) => (runtime = value),
 				),
 			],
-			customTools: [mutatingEditTool()],
-			tools: ["edit"],
+			tools: [],
 			mode: "rpc",
 		});
 		try {
@@ -344,6 +332,15 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			).toBe(true);
 			expect(latestRuntimeState(harness.sessionManager)?.queuedReview).toBeUndefined();
 
+			harness.sessionManager.appendMessage({
+				role: "bashExecution",
+				command: "pnpm run typecheck",
+				output: "",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				timestamp: Date.now(),
+			});
 			await harness.session.prompt("please edit the file");
 			await waitFor(
 				() => runtime?.getStatus().reviewsCompleted === 1 || advisor.requests.length === 1,
@@ -582,6 +579,94 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 				poisonReviewDrops: 0,
 			});
 		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("does not supersede an in-flight review for held turns and joins them into the next material window", async () => {
+		const firstReview = createBarrier();
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "MATERIAL-ONE" }] },
+			{ content: [{ type: "text", text: "CHAT-HELD-ONE" }] },
+			{ content: [{ type: "text", text: "CHAT-HELD-TWO" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{ content: [], waitFor: firstReview.promise },
+			{ content: [] },
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.review.skipNonMaterialTurns = true;
+						config.persistence.transcript = true;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			harness.sessionManager.appendMessage({
+				role: "bashExecution",
+				command: "pnpm run typecheck",
+				output: "",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				timestamp: Date.now(),
+			});
+			void harness.session.prompt("material first window");
+			await waitFor(() => advisor.activeRequests === 1);
+			await harness.session.prompt("chat-only window while the review is in flight");
+			await waitFor(
+				() =>
+					(
+						Reflect.get(runtime as object, "throttledUpdate") as
+							| { heldForMaterialTurn?: boolean; text: string }
+							| undefined
+					)?.heldForMaterialTurn === true,
+			);
+			expect(advisor.requests).toHaveLength(1);
+			expect(runtime?.getStatus().reviewsSuperseded).toBe(0);
+			harness.sessionManager.appendMessage({
+				role: "bashExecution",
+				command: "pnpm run build",
+				output: "",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				timestamp: Date.now(),
+			});
+			await harness.session.prompt("material third window joins the held chat");
+			await waitFor(() => advisor.requests.length === 2);
+			firstReview.release();
+			await waitFor(
+				() => runtime?.getStatus().reviewsCompleted === 1 && !runtime.getStatus().backlog,
+			);
+			expect(runtime?.getStatus().reviewsSuperseded).toBe(1);
+			const submitted = JSON.stringify(advisor.requests[1]?.context.messages);
+			expect(submitted).toContain("CHAT-HELD-ONE");
+			expect(submitted).toContain("CHAT-HELD-TWO");
+			expect(submitted).toContain("MATERIAL-ONE");
+			const records = harness.sessionManager
+				.getBranch()
+				.filter(
+					(entry): entry is CustomEntry =>
+						entry.type === "custom" && entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE,
+				)
+				.map((entry) => entry.data as { kind?: string; outcome?: string });
+			expect(
+				records.some(
+					(record) => record.kind === "review-outcome" && record.outcome === "superseded",
+				),
+			).toBe(true);
+		} finally {
+			firstReview.release();
 			await harness.dispose();
 		}
 	});

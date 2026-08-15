@@ -944,9 +944,10 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 		});
 		try {
 			await harness.session.prompt("already queue this durable fact");
-			await waitFor(
-				() => runtime?.getStatus().reviewsCompleted === 1 && !runtime.getStatus().backlog,
-			);
+			await waitFor(() => {
+				const status = runtime?.getStatus();
+				return status !== undefined && status.reviewsCompleted >= 1 && !status.backlog;
+			});
 			expect(submit).toHaveBeenCalledTimes(1);
 			expect(runtime?.getStatus()).toMatchObject({
 				memorySuggestionsDelivered: 0,

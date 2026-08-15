@@ -186,7 +186,7 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 		});
 		try {
 			await harness.session.prompt("produce a large tool result");
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) >= 1);
 			const submitted = JSON.stringify(advisor.requests[0]?.context.messages);
 			expect(submitted).toContain("[Tool result truncated to per-result limit]");
 			expect(submitted).toContain("[REDACTED]");

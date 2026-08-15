@@ -194,7 +194,9 @@ Empty `activeIdleSeverities: []` preserves pre-Q3 behavior (all idle review note
 
 In-flight review supersession is always on and has no configuration field.
 When a newer meaningful update is scheduled while a review attempt is in flight and no `advise` execution has started, Advisor aborts that nested prompt, rolls the attempt back, coalesces the superseded window, and submits one replacement review.
+Supersession applies only to an attempt actually aborted for that reason; a failed, governed, silent, or accepted attempt is classified normally even when a newer update is queued, and the queued update is processed afterward by the drain loop.
 A superseded attempt is not a failed review.
+Held-for-material-turn updates never trigger supersession and wait for the next material window instead.
 Session soft caps win over supersession.
 
 When `review.skipNonMaterialTurns` is enabled, a Meaningful Executor turn with no Materially newer Executor activity is held and coalesced until a later material turn joins it.

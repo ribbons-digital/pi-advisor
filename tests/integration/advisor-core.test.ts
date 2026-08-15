@@ -280,8 +280,8 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 		]);
 		const advisor = createAdvisorProvider([
 			{ delayMs: 100, content: [{ type: "text", text: "silent first" }] },
-			{ content: [{ type: "text", text: "silent coalesced" }] },
-			{ content: [{ type: "text", text: "silent extra" }] },
+			{ delayMs: 100, content: [{ type: "text", text: "silent second" }] },
+			{ delayMs: 100, content: [{ type: "text", text: "silent third" }] },
 		]);
 		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({

@@ -369,6 +369,9 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			await waitFor(() => runtime?.getStatus().consecutiveFailures === 2);
 			await harness.session.prompt("third active update reaches final failure");
 			await waitFor(() => advisor.requests.length === 6 && advisor.activeRequests === 1);
+			// Simulate advise-started immunity so the failing final attempt is not
+			// superseded by the queued evidence: Q4 supersession only aborts attempts
+			// that have not started advise.
 			const currentRun = Reflect.get(runtime as object, "currentRun") as
 				| { adviseExecutionStartedCallIds?: Set<string> }
 				| undefined;
@@ -544,12 +547,12 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			expect(formatAdvisorStatus(pending)).toContain("0 consecutive failed updates");
 
 			await waitFor(
-				() => runtime?.getStatus().reviewsCompleted === 1 && !runtime.getStatus().backlog,
+				() => runtime?.getStatus().reviewsCompleted === 2 && !runtime.getStatus().backlog,
 			);
 			expect(JSON.stringify(advisor.requests.at(-1)?.context.messages)).toContain(
 				"SECOND-EXECUTOR-ANSWER",
 			);
-			expect(runtime?.getStatus().reviewsSuperseded).toBeGreaterThan(0);
+			expect(runtime?.getStatus().reviewsSuperseded).toBe(0);
 			expect(runtime?.getStatus()).toMatchObject({
 				backlog: false,
 				retryPending: false,

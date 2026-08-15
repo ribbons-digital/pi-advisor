@@ -429,6 +429,7 @@ interface CurrentRun {
 	toolFailure?: string;
 	adviseToolCalls: number;
 	adviseExecutionStartedCallIds: Set<string>;
+	abortedForSupersession?: boolean;
 	usage: AdvisorUsageTotals;
 	stopReason: string;
 	transcriptRecords: PersistedAdvisorToolAttempt[];
@@ -2210,8 +2211,23 @@ export class AdvisorRuntime {
 	}
 
 	private enqueue(update: QueuedAdvisorUpdate): void {
+		if (update.heldForMaterialTurn === true) {
+			// A held update cannot submit on its own. Keep it waiting in
+			// throttledUpdate so it never supersedes the in-flight review and
+			// instead joins the next material turn.
+			this.throttledUpdate = this.coalescePending(this.throttledUpdate, update);
+			this.updateBacklogStatus();
+			this.persistState();
+			return;
+		}
 		if (this.draining) {
-			this.pendingUpdate = this.coalescePending(this.pendingUpdate, update);
+			let base = this.pendingUpdate;
+			const throttled = this.throttledUpdate;
+			if (throttled?.heldForMaterialTurn === true) {
+				base = this.coalescePending(base, throttled);
+				delete this.throttledUpdate;
+			}
+			this.pendingUpdate = this.coalescePending(base, update);
 			this.updateBacklogStatus();
 			this.requestInFlightSupersession();
 			this.persistState();
@@ -2275,7 +2291,9 @@ export class AdvisorRuntime {
 	}
 
 	private requestInFlightSupersession(): void {
-		if (!this.inFlightReviewCanBeSuperseded()) return;
+		const run = this.currentRun;
+		if (run === undefined || !this.inFlightReviewCanBeSuperseded()) return;
+		run.abortedForSupersession = true;
 		void this.session?.abort();
 	}
 
@@ -2613,7 +2631,8 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			details:
 				| { outcome: "silent" }
 				| { outcome: "accepted"; delivery: "active" | "deferred"; stale: boolean }
-				| { outcome: "governor-skipped" | "failed"; reason: string },
+				| { outcome: "governor-skipped" | "failed"; reason: string }
+				| { outcome: "superseded" },
 			stopReason: string,
 		): void => {
 			this.persistTranscriptDetails({
@@ -2693,11 +2712,12 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				return;
 			}
 			if (
+				run.abortedForSupersession === true &&
 				this.pendingUpdate !== undefined &&
-				run.adviseExecutionStartedCallIds.size === 0 &&
 				this.activeReviewMatches(reviewId)
 			) {
 				this.rollbackNestedAttempt(session, messagesBeforeAttempt);
+				persistOutcome({ outcome: "superseded" }, "superseded");
 				const coalesced = this.coalescePending(update, this.pendingUpdate);
 				delete this.pendingUpdate;
 				delete this.activeReview;
