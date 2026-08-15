@@ -12,11 +12,13 @@ import {
 	hasAdvisorCommandCollision,
 	loadAdvisorConfiguration,
 	MAX_WATCHDOG_MARKDOWN_BYTES,
+	MAX_WATCHDOG_YAML_BYTES,
 	mergeProjectConfiguration,
 	pickAdvisorInteractiveConfiguration,
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
 	saveUserConfigurationAtomic,
+	serializeUserConfiguration,
 } from "../../src/index.js";
 
 const roots: string[] = [];
@@ -660,6 +662,113 @@ describe("WATCHDOG configuration", () => {
 			persistence: { transcript: false },
 		});
 		expect(loaded.warnings[0]?.message).toContain("could not be read");
+	});
+
+	it("loads delivery.activeIdleSeverities with the approved release default and nit rejection", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(join(agentDir, "WATCHDOG.yml"), ["version: 1"].join("\n"));
+		const defaults = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(defaults.warnings).toEqual([]);
+		expect(defaults.userConfig.delivery).toEqual({ activeIdleSeverities: ["blocker"] });
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [concern, blocker]"].join("\n"),
+		);
+		const widened = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(widened.warnings).toEqual([]);
+		expect(widened.userConfig.delivery).toEqual({
+			activeIdleSeverities: ["concern", "blocker"],
+		});
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [nit]"].join("\n"),
+		);
+		const rejected = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(
+			rejected.warnings.some(({ path }) => path.startsWith("delivery.activeIdleSeverities")),
+		).toBe(true);
+	});
+
+	it("merges trusted Project delivery configuration only by removing severities", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [concern, blocker]"].join("\n"),
+		);
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [blocker]"].join("\n"),
+		);
+		const narrowed = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(narrowed.effectiveConfig.delivery).toEqual({ activeIdleSeverities: ["blocker"] });
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [blocker]"].join("\n"),
+		);
+		const cannotAdd = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(cannotAdd.effectiveConfig.delivery).toEqual({ activeIdleSeverities: ["blocker"] });
+	});
+
+	it("preserves unknown top-level User fields across a configure save round-trip", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"defaultEnabled: true",
+				"model: fixture/advisor",
+				"futureKnob: keep-me",
+				"anotherFuture:",
+				"  nested: [1, 2]",
+			].join("\n"),
+		);
+		const loaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(loaded.warnings.some(({ path }) => path === "futureKnob")).toBe(true);
+		expect(loaded.userUnknownTopLevel).toEqual({
+			futureKnob: "keep-me",
+			anotherFuture: { nested: [1, 2] },
+		});
+
+		const savedPath = join(agentDir, "saved.yml");
+		await saveUserConfigurationAtomic(savedPath, loaded.userConfig, loaded.userUnknownTopLevel);
+		const saved = await readFile(savedPath, "utf8");
+		expect(saved).toContain("futureKnob: keep-me");
+		expect(saved).toContain("anotherFuture:");
+		expect(saved).toContain("nested:");
+
+		await writeFile(agentDir + "/WATCHDOG.yml", saved);
+		const reloaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(reloaded.userUnknownTopLevel).toEqual({
+			futureKnob: "keep-me",
+			anotherFuture: { nested: [1, 2] },
+		});
+		expect(reloaded.userConfig.defaultEnabled).toBe(true);
+	});
+
+	it("drops unknown top-level User fields that exceed the preservation byte limit", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", `hugeFuture: "${"x".repeat(70_000)}"`].join("\n"),
+		);
+		const loaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(loaded.userUnknownTopLevel).toBeUndefined();
+		expect(loaded.warnings.some(({ message }) => message.includes("preservation limit"))).toBe(
+			true,
+		);
+	});
+
+	it("drops preserved unknown fields when the merged save would exceed the YAML limit", () => {
+		const serialized = serializeUserConfiguration(DEFAULT_ADVISOR_CONFIG, {
+			futureKnob: "keep-me",
+			hugeFuture: "x".repeat(MAX_WATCHDOG_YAML_BYTES),
+		});
+		expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(MAX_WATCHDOG_YAML_BYTES);
+		expect(serialized).not.toContain("hugeFuture");
+		expect(serialized).not.toContain("futureKnob");
 	});
 
 	it("ignores Project files when trust is inactive", async () => {

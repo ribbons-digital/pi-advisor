@@ -1,6 +1,10 @@
+import type { ActiveIdleSeverity } from "./config.js";
+import type { AdviceSeverity } from "./advice.js";
+
 export const MAX_PENDING_ADVICE_ITEMS = 4_096;
 export const MAX_PENDING_ADVICE_BYTES = 1_000_000;
 export const MAX_DEFERRED_DELIVERY_BYTES = 64 * 1_024;
+export const REVIEW_FOLLOW_UP_SESSION_CAP = 5;
 
 export type QueueAdmission = "accepted" | "duplicate" | "capacity";
 export type AdviceDispatch = "deferred" | "steer" | "followUp";
@@ -12,12 +16,26 @@ export interface AdviceDispatchState {
 	newerInstructionInput: boolean;
 	memorySuggestion: boolean;
 	memoryCapabilityAvailable: boolean;
+	reviewSeverity?: AdviceSeverity;
+	activeIdleSeverities: readonly ActiveIdleSeverity[];
+	reviewFollowUpPending: boolean;
+	reviewFollowUpCapExhausted: boolean;
 }
 
 export function selectAdviceDispatch(state: AdviceDispatchState): AdviceDispatch {
 	if (state.forceDeferred || state.aborted) return "deferred";
 	if (!state.idle) return "steer";
 	if (state.memorySuggestion && !state.newerInstructionInput && state.memoryCapabilityAvailable) {
+		return "followUp";
+	}
+	if (
+		!state.memorySuggestion &&
+		state.reviewSeverity !== undefined &&
+		!state.reviewFollowUpPending &&
+		!state.reviewFollowUpCapExhausted &&
+		!state.newerInstructionInput &&
+		state.activeIdleSeverities.some((severity) => severity === state.reviewSeverity)
+	) {
 		return "followUp";
 	}
 	return "deferred";

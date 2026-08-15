@@ -18,6 +18,12 @@ export interface AdvisorContextConfig {
 
 export type AdvisorSessionCap = number | "off";
 
+export type ActiveIdleSeverity = "concern" | "blocker";
+
+export interface AdvisorDeliveryConfig {
+	activeIdleSeverities: ActiveIdleSeverity[];
+}
+
 export interface AdvisorLimitConfig {
 	maxAdviceCharacters: number;
 	maxAdviceTokens: number;
@@ -54,6 +60,7 @@ export interface AdvisorUserConfig {
 		additionalProtectedPaths: string[];
 		protectedPathExceptions: string[];
 	};
+	delivery: AdvisorDeliveryConfig;
 	memorySuggestions: MemorySuggestionConfig;
 	persistence: {
 		transcript: boolean;
@@ -69,6 +76,9 @@ export interface AdvisorProjectConfig {
 	limits?: Partial<AdvisorLimitConfig>;
 	security?: {
 		additionalProtectedPaths?: string[];
+	};
+	delivery?: {
+		activeIdleSeverities?: ActiveIdleSeverity[];
 	};
 	memorySuggestions?: {
 		enabled?: false;
@@ -109,6 +119,9 @@ const CANONICAL_DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze({
 		additionalProtectedPaths: [],
 		protectedPathExceptions: [],
 	},
+	delivery: {
+		activeIdleSeverities: ["blocker"],
+	},
 	memorySuggestions: {
 		enabled: true,
 		minTurnsBetweenSuggestions: 8,
@@ -146,6 +159,10 @@ export const HARD_LIMITS = {
 
 function finiteAtLeast(value: number, minimum: number, fallback: number): number {
 	return Number.isFinite(value) ? Math.max(minimum, value) : fallback;
+}
+
+function isActiveIdleSeverity(value: unknown): value is ActiveIdleSeverity {
+	return value === "concern" || value === "blocker";
 }
 
 function finiteClamped(value: number, minimum: number, maximum: number, fallback: number): number {
@@ -242,6 +259,12 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 		security: {
 			additionalProtectedPaths: [...input.security.additionalProtectedPaths],
 			protectedPathExceptions: [...input.security.protectedPathExceptions],
+		},
+		delivery: {
+			activeIdleSeverities: input.delivery.activeIdleSeverities.filter(
+				(severity, index, values) =>
+					isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
+			),
 		},
 		memorySuggestions: {
 			enabled: input.memorySuggestions.enabled,

@@ -219,7 +219,11 @@ export async function configureAdvisor(
 	);
 	if (!confirmed) return;
 	try {
-		await saveUserConfigurationAtomic(loaded.paths.userYaml, nextUserConfig);
+		await saveUserConfigurationAtomic(
+			loaded.paths.userYaml,
+			nextUserConfig,
+			loaded.userUnknownTopLevel,
+		);
 	} catch {
 		ctx.ui.notify(
 			`Advisor configuration could not be saved to ${loaded.paths.userYaml}. The prior configuration remains active.`,

@@ -168,6 +168,7 @@ export interface PersistedAdvisorRuntimeState {
 	deferredAdvice: PersistedDeferredAdvice[];
 	dedupeHashes: string[];
 	memorySuggestions: PersistedMemorySuggestionState;
+	reviewFollowUpsTriggered?: number;
 	notesDelivered: number;
 }
 
@@ -478,6 +479,7 @@ export function parsePersistedAdvisorRuntimeState(
 				"deferredAdvice",
 				"dedupeHashes",
 				"memorySuggestions",
+				"reviewFollowUpsTriggered",
 				"notesDelivered",
 			];
 	if (
@@ -499,6 +501,8 @@ export function parsePersistedAdvisorRuntimeState(
 		!state.dedupeHashes.every((hash) => typeof hash === "string" && /^[a-f0-9]{64}$/u.test(hash)) ||
 		new Set(state.dedupeHashes).size !== state.dedupeHashes.length ||
 		!isMemoryState(state.memorySuggestions) ||
+		(state.reviewFollowUpsTriggered !== undefined &&
+			!isFiniteInteger(state.reviewFollowUpsTriggered)) ||
 		!isFiniteInteger(state.notesDelivered)
 	) {
 		return undefined;

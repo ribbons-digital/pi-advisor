@@ -23,6 +23,7 @@ export const WATCHDOG_YAML_NAME = "WATCHDOG.yml";
 export const WATCHDOG_MARKDOWN_NAME = "WATCHDOG.md";
 export const MAX_WATCHDOG_YAML_BYTES = 1_048_576;
 export const MAX_WATCHDOG_MARKDOWN_BYTES = 65_536;
+export const MAX_PRESERVED_UNKNOWN_CONFIG_BYTES = 65_536;
 
 const effortValues = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const toolValues = ["read", "grep", "find", "ls"] as const;
@@ -89,6 +90,14 @@ const MemorySchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const DeliverySchema = Type.Object(
+	{
+		activeIdleSeverities: Type.Optional(
+			Type.Array(Type.Union([Type.Literal("concern"), Type.Literal("blocker")])),
+		),
+	},
+	{ additionalProperties: false },
+);
 const UserSchema = Type.Object(
 	{
 		version: Type.Literal(ADVISOR_CONFIG_VERSION),
@@ -100,6 +109,7 @@ const UserSchema = Type.Object(
 		context: Type.Optional(ContextSchema),
 		limits: Type.Optional(LimitsSchema),
 		security: Type.Optional(SecuritySchema),
+		delivery: Type.Optional(DeliverySchema),
 		memorySuggestions: Type.Optional(MemorySchema),
 		persistence: Type.Optional(
 			Type.Object({ transcript: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
@@ -120,6 +130,7 @@ const ProjectSchema = Type.Object(
 				{ additionalProperties: false },
 			),
 		),
+		delivery: Type.Optional(DeliverySchema),
 		memorySuggestions: Type.Optional(MemorySchema),
 	},
 	{ additionalProperties: false },
@@ -138,6 +149,7 @@ const USER_KEYS = new Set([
 	"context",
 	"limits",
 	"security",
+	"delivery",
 	"memorySuggestions",
 	"persistence",
 ]);
@@ -148,12 +160,14 @@ const PROJECT_KEYS = new Set([
 	"context",
 	"limits",
 	"security",
+	"delivery",
 	"memorySuggestions",
 ]);
 const CONTEXT_KEYS = new Set(["maxFraction", "reserveTokens", "maxUpdateTokens"]);
 const LIMIT_KEYS = new Set(Object.keys(DEFAULT_ADVISOR_CONFIG.limits));
 const SECURITY_USER_KEYS = new Set(["additionalProtectedPaths", "protectedPathExceptions"]);
 const SECURITY_PROJECT_KEYS = new Set(["additionalProtectedPaths"]);
+const DELIVERY_KEYS = new Set(["activeIdleSeverities"]);
 const MEMORY_KEYS = new Set(Object.keys(DEFAULT_ADVISOR_CONFIG.memorySuggestions));
 const PERSISTENCE_KEYS = new Set(["transcript"]);
 
@@ -169,6 +183,7 @@ export interface LoadedAdvisorConfiguration {
 	projectInstructions: string;
 	warnings: ConfigurationWarning[];
 	paths: ReturnType<typeof advisorConfigurationPaths>;
+	userUnknownTopLevel?: Record<string, unknown>;
 }
 
 export function advisorConfigurationPaths(agentDir: string, cwd: string) {
@@ -207,6 +222,7 @@ function collectUnknownWarnings(
 		["context", CONTEXT_KEYS],
 		["limits", LIMIT_KEYS],
 		["security", source === "user" ? SECURITY_USER_KEYS : SECURITY_PROJECT_KEYS],
+		["delivery", DELIVERY_KEYS],
 		["memorySuggestions", MEMORY_KEYS],
 	];
 	if (source === "user") nested.push(["persistence", PERSISTENCE_KEYS]);
@@ -259,11 +275,13 @@ function pickKnown(value: unknown, source: "user" | "project"): Record<string, u
 							? source === "user"
 								? SECURITY_USER_KEYS
 								: SECURITY_PROJECT_KEYS
-							: key === "memorySuggestions"
-								? MEMORY_KEYS
-								: key === "persistence"
-									? PERSISTENCE_KEYS
-									: undefined;
+							: key === "delivery"
+								? DELIVERY_KEYS
+								: key === "memorySuggestions"
+									? MEMORY_KEYS
+									: key === "persistence"
+										? PERSISTENCE_KEYS
+										: undefined;
 			if (nestedKeys !== undefined) {
 				output[key] = Object.fromEntries(
 					Object.entries(candidate).filter(
@@ -305,7 +323,7 @@ function parseYamlDocument(
 	source: "user" | "project",
 	path: string,
 	warnings: ConfigurationWarning[],
-): Record<string, unknown> | undefined {
+): { known: Record<string, unknown>; unknownTopLevel: Record<string, unknown> } | undefined {
 	if (Buffer.byteLength(text, "utf8") > MAX_WATCHDOG_YAML_BYTES) {
 		warnings.push({ source, path, message: `${path} exceeds the 1 MiB configuration limit.` });
 		return undefined;
@@ -335,13 +353,18 @@ function parseYamlDocument(
 		}
 		return undefined;
 	}
-	return known;
+	const topKeys = source === "user" ? USER_KEYS : PROJECT_KEYS;
+	const unknownTopLevel = Object.fromEntries(
+		Object.entries(parsed).filter(([key]) => !topKeys.has(key)),
+	);
+	return { known, unknownTopLevel };
 }
 
 function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>): AdvisorConfig {
 	const context = (document.context ?? {}) as Partial<AdvisorConfig["context"]>;
 	const limits = (document.limits ?? {}) as Partial<AdvisorConfig["limits"]>;
 	const security = (document.security ?? {}) as Partial<AdvisorConfig["security"]>;
+	const delivery = (document.delivery ?? {}) as Partial<AdvisorConfig["delivery"]>;
 	const memory = (document.memorySuggestions ?? {}) as Partial<AdvisorConfig["memorySuggestions"]>;
 	const persistence = (document.persistence ?? {}) as Partial<AdvisorConfig["persistence"]>;
 	return normalizeAdvisorConfig({
@@ -362,6 +385,9 @@ function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>)
 				security.additionalProtectedPaths ?? base.security.additionalProtectedPaths,
 			protectedPathExceptions:
 				security.protectedPathExceptions ?? base.security.protectedPathExceptions,
+		},
+		delivery: {
+			activeIdleSeverities: delivery.activeIdleSeverities ?? base.delivery.activeIdleSeverities,
 		},
 		memorySuggestions: { ...base.memorySuggestions, ...memory },
 		persistence: { ...base.persistence, ...persistence },
@@ -469,6 +495,14 @@ export function mergeProjectConfiguration(
 			],
 			protectedPathExceptions: [...userConfig.security.protectedPathExceptions],
 		},
+		delivery: {
+			activeIdleSeverities:
+				project.delivery?.activeIdleSeverities === undefined
+					? [...userConfig.delivery.activeIdleSeverities]
+					: userConfig.delivery.activeIdleSeverities.filter((severity) =>
+							project.delivery?.activeIdleSeverities?.includes(severity),
+						),
+		},
 		memorySuggestions,
 	});
 }
@@ -554,14 +588,30 @@ export async function loadAdvisorConfiguration(options: {
 		structuredClone(options.fallbackUserConfig ?? DEFAULT_ADVISOR_CONFIG),
 	);
 	let userConfig = base;
+	let userUnknownTopLevel: Record<string, unknown> | undefined;
 	try {
 		const text = await readBounded(paths.userYaml, MAX_WATCHDOG_YAML_BYTES + 1);
 		if (text !== undefined) {
-			const document = parseYamlDocument(text, "user", paths.userYaml, warnings);
-			userConfig =
-				document === undefined
-					? inactiveUserConfiguration()
-					: mergeUserConfig(DEFAULT_ADVISOR_CONFIG, document);
+			const parsed = parseYamlDocument(text, "user", paths.userYaml, warnings);
+			if (parsed === undefined) {
+				userConfig = inactiveUserConfiguration();
+			} else {
+				userConfig = mergeUserConfig(DEFAULT_ADVISOR_CONFIG, parsed.known);
+				if (Object.keys(parsed.unknownTopLevel).length > 0) {
+					if (
+						Buffer.byteLength(stringify(parsed.unknownTopLevel, { lineWidth: 0 }), "utf8") >
+						MAX_PRESERVED_UNKNOWN_CONFIG_BYTES
+					) {
+						warnings.push({
+							source: "user",
+							path: paths.userYaml,
+							message: `Unknown top-level User fields exceeded the ${String(MAX_PRESERVED_UNKNOWN_CONFIG_BYTES)}-byte preservation limit and were not preserved on the next save.`,
+						});
+					} else {
+						userUnknownTopLevel = parsed.unknownTopLevel;
+					}
+				}
+			}
 		}
 	} catch {
 		warnings.push({
@@ -593,9 +643,9 @@ export async function loadAdvisorConfiguration(options: {
 		try {
 			const text = await readBounded(paths.projectYaml, MAX_WATCHDOG_YAML_BYTES + 1);
 			if (text !== undefined) {
-				const document = parseYamlDocument(text, "project", paths.projectYaml, warnings);
-				if (document !== undefined) {
-					project = document as unknown as AdvisorProjectConfig;
+				const parsed = parseYamlDocument(text, "project", paths.projectYaml, warnings);
+				if (parsed !== undefined) {
+					project = parsed.known as unknown as AdvisorProjectConfig;
 					projectInstructions = boundInstructions(
 						project.instructions ?? "",
 						"project",
@@ -626,21 +676,40 @@ export async function loadAdvisorConfiguration(options: {
 		projectInstructions,
 		warnings,
 		paths,
+		...(userUnknownTopLevel === undefined ? {} : { userUnknownTopLevel }),
 	};
 }
 
-export function serializeUserConfiguration(config: AdvisorConfig): string {
-	return stringify(normalizeAdvisorConfig(structuredClone(config)), { lineWidth: 0 });
+export function serializeUserConfiguration(
+	config: AdvisorConfig,
+	unknownTopLevel?: Record<string, unknown>,
+): string {
+	const normalized = normalizeAdvisorConfig(structuredClone(config));
+	const merged = {
+		...(unknownTopLevel ?? {}),
+		...normalized,
+	};
+	const serialized = stringify(merged, { lineWidth: 0 });
+	if (
+		Buffer.byteLength(serialized, "utf8") > MAX_WATCHDOG_YAML_BYTES &&
+		unknownTopLevel !== undefined
+	) {
+		// Never write a file the next load would reject as oversized; drop the
+		// preserved unknown top-level fields instead of failing the whole save.
+		return stringify(normalized, { lineWidth: 0 });
+	}
+	return serialized;
 }
 
 export async function saveUserConfigurationAtomic(
 	path: string,
 	config: AdvisorConfig,
+	unknownTopLevel?: Record<string, unknown>,
 ): Promise<void> {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 	const temporary = join(dirname(path), `.${WATCHDOG_YAML_NAME}.${randomUUID()}.tmp`);
 	try {
-		await writeFile(temporary, serializeUserConfiguration(config), {
+		await writeFile(temporary, serializeUserConfiguration(config, unknownTopLevel), {
 			encoding: "utf8",
 			mode: 0o600,
 		});

@@ -257,6 +257,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		memorySuggestionsPolicySuppressed: 0,
 		memorySuggestionsLimitSuppressed: 0,
 		memorySuggestionsRemaining: 5,
+		reviewFollowUpsTriggered: 0,
 		memorySuggestionNextEligibleTurn: 0,
 		memorySuggestionNextEligibleAt: 0,
 		redactions: 0,
