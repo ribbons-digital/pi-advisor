@@ -99,7 +99,8 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 				pathToFileURL(join(unpacked, "package", "src", "index.ts")).href
 			)) as PackedAdvisorModule;
 
-			const advisorBarrier = createBarrier();
+			const adviseStarted = createBarrier();
+			const afterAdvise = createBarrier();
 			const executorBarrier = createBarrier();
 			const submit = vi.fn();
 			const inspectTool = defineTool({
@@ -155,7 +156,7 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 				{ content: [{ type: "text", text: "Queued the pending memory." }] },
 			]);
 			const advisor = createAdvisorProvider([
-				{ ...packedMemorySuggestion(), waitFor: advisorBarrier.promise },
+				packedMemorySuggestion(),
 				{ content: [] },
 				{ content: [] },
 				{ content: [] },
@@ -169,7 +170,13 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 						name: "packed-pi-advisor",
 						factory: packed.createPiAdvisorExtension({
 							config: packedConfig(`${advisor.model.provider}/${advisor.model.id}`),
-							hooks: { onRuntime: (value) => (runtime = value) },
+							hooks: {
+								onRuntime: (value) => (runtime = value),
+								onAdviseExecutionStart: async () => {
+									adviseStarted.release();
+									await afterAdvise.promise;
+								},
+							},
 						}),
 					},
 				],
@@ -179,15 +186,11 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 			});
 			try {
 				const executorTurn = harness.session.prompt("produce a late durable suggestion");
-				await waitFor(
-					() =>
-						advisor.activeRequests === 1 &&
-						primary.activeRequests === 1 &&
-						primary.requests.length === 2,
-				);
+				await adviseStarted.promise;
+				await waitFor(() => primary.activeRequests === 1 && primary.requests.length === 2);
 				executorBarrier.release();
 				await executorTurn;
-				advisorBarrier.release();
+				afterAdvise.release();
 				await expect.poll(() => primary.requests.length, { timeout: 5_000, interval: 10 }).toBe(4);
 				await waitFor(() => submit.mock.calls.length === 1);
 				await waitFor(() => advisor.requests.length === 4);
@@ -218,7 +221,7 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 				});
 			} finally {
 				executorBarrier.release();
-				advisorBarrier.release();
+				afterAdvise.release();
 				await harness.dispose();
 			}
 

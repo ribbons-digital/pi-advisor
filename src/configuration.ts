@@ -98,6 +98,28 @@ const DeliverySchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const AdaptiveCadenceSchema = Type.Object(
+	{
+		enabled: Type.Optional(Type.Boolean()),
+		silentReviewsBeforeBackOff: Type.Optional(
+			Type.Number({ minimum: 1, maximum: HARD_LIMITS.silentReviewsBeforeBackOff }),
+		),
+		backOffTurnStep: Type.Optional(
+			Type.Number({ minimum: 1, maximum: HARD_LIMITS.backOffTurnStep }),
+		),
+		maxMinTurnsBetweenReviews: Type.Optional(
+			Type.Number({ minimum: 1, maximum: HARD_LIMITS.maxMinTurnsBetweenReviews }),
+		),
+	},
+	{ additionalProperties: false },
+);
+const ReviewSchema = Type.Object(
+	{
+		skipNonMaterialTurns: Type.Optional(Type.Boolean()),
+		adaptiveCadence: Type.Optional(AdaptiveCadenceSchema),
+	},
+	{ additionalProperties: false },
+);
 const UserSchema = Type.Object(
 	{
 		version: Type.Literal(ADVISOR_CONFIG_VERSION),
@@ -110,6 +132,7 @@ const UserSchema = Type.Object(
 		limits: Type.Optional(LimitsSchema),
 		security: Type.Optional(SecuritySchema),
 		delivery: Type.Optional(DeliverySchema),
+		review: Type.Optional(ReviewSchema),
 		memorySuggestions: Type.Optional(MemorySchema),
 		persistence: Type.Optional(
 			Type.Object({ transcript: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
@@ -131,6 +154,7 @@ const ProjectSchema = Type.Object(
 			),
 		),
 		delivery: Type.Optional(DeliverySchema),
+		review: Type.Optional(ReviewSchema),
 		memorySuggestions: Type.Optional(MemorySchema),
 	},
 	{ additionalProperties: false },
@@ -150,6 +174,7 @@ const USER_KEYS = new Set([
 	"limits",
 	"security",
 	"delivery",
+	"review",
 	"memorySuggestions",
 	"persistence",
 ]);
@@ -161,6 +186,7 @@ const PROJECT_KEYS = new Set([
 	"limits",
 	"security",
 	"delivery",
+	"review",
 	"memorySuggestions",
 ]);
 const CONTEXT_KEYS = new Set(["maxFraction", "reserveTokens", "maxUpdateTokens"]);
@@ -168,6 +194,13 @@ const LIMIT_KEYS = new Set(Object.keys(DEFAULT_ADVISOR_CONFIG.limits));
 const SECURITY_USER_KEYS = new Set(["additionalProtectedPaths", "protectedPathExceptions"]);
 const SECURITY_PROJECT_KEYS = new Set(["additionalProtectedPaths"]);
 const DELIVERY_KEYS = new Set(["activeIdleSeverities"]);
+const REVIEW_KEYS = new Set(["skipNonMaterialTurns", "adaptiveCadence"]);
+const ADAPTIVE_CADENCE_KEYS = new Set([
+	"enabled",
+	"silentReviewsBeforeBackOff",
+	"backOffTurnStep",
+	"maxMinTurnsBetweenReviews",
+]);
 const MEMORY_KEYS = new Set(Object.keys(DEFAULT_ADVISOR_CONFIG.memorySuggestions));
 const PERSISTENCE_KEYS = new Set(["transcript"]);
 
@@ -223,6 +256,7 @@ function collectUnknownWarnings(
 		["limits", LIMIT_KEYS],
 		["security", source === "user" ? SECURITY_USER_KEYS : SECURITY_PROJECT_KEYS],
 		["delivery", DELIVERY_KEYS],
+		["review", REVIEW_KEYS],
 		["memorySuggestions", MEMORY_KEYS],
 	];
 	if (source === "user") nested.push(["persistence", PERSISTENCE_KEYS]);
@@ -242,6 +276,19 @@ function collectUnknownWarnings(
 					"Project field memorySuggestions.enabled cannot re-enable User-disabled behavior and was ignored.",
 			});
 		}
+		if (
+			source === "project" &&
+			name === "review" &&
+			Object.hasOwn(candidate, "skipNonMaterialTurns") &&
+			candidate.skipNonMaterialTurns !== true
+		) {
+			warnings.push({
+				source,
+				path: "review.skipNonMaterialTurns",
+				message:
+					"Project field review.skipNonMaterialTurns cannot disable User-enabled behavior and was ignored.",
+			});
+		}
 		for (const key of Object.keys(candidate)) {
 			if (!keys.has(key)) {
 				const path = `${name}.${key}`;
@@ -253,6 +300,38 @@ function collectUnknownWarnings(
 							? `Project field ${path} is not permitted and was ignored.`
 							: `Unknown User field ${path} was ignored.`,
 				});
+			}
+		}
+		if (name === "review" && isRecord(candidate.adaptiveCadence)) {
+			const adaptive = candidate.adaptiveCadence;
+			if (source === "project" && Object.hasOwn(adaptive, "enabled") && adaptive.enabled !== true) {
+				warnings.push({
+					source,
+					path: "review.adaptiveCadence.enabled",
+					message:
+						"Project field review.adaptiveCadence.enabled cannot disable User-enabled behavior and was ignored.",
+				});
+			}
+			if (source === "project" && Object.hasOwn(adaptive, "backOffTurnStep")) {
+				warnings.push({
+					source,
+					path: "review.adaptiveCadence.backOffTurnStep",
+					message:
+						"Project field review.adaptiveCadence.backOffTurnStep is not permitted and was ignored.",
+				});
+			}
+			for (const key of Object.keys(adaptive)) {
+				if (!ADAPTIVE_CADENCE_KEYS.has(key)) {
+					const path = `review.adaptiveCadence.${key}`;
+					warnings.push({
+						source,
+						path,
+						message:
+							source === "project"
+								? `Project field ${path} is not permitted and was ignored.`
+								: `Unknown User field ${path} was ignored.`,
+					});
+				}
 			}
 		}
 	}
@@ -277,24 +356,46 @@ function pickKnown(value: unknown, source: "user" | "project"): Record<string, u
 								: SECURITY_PROJECT_KEYS
 							: key === "delivery"
 								? DELIVERY_KEYS
-								: key === "memorySuggestions"
-									? MEMORY_KEYS
-									: key === "persistence"
-										? PERSISTENCE_KEYS
-										: undefined;
+								: key === "review"
+									? REVIEW_KEYS
+									: key === "memorySuggestions"
+										? MEMORY_KEYS
+										: key === "persistence"
+											? PERSISTENCE_KEYS
+											: undefined;
 			if (nestedKeys !== undefined) {
-				output[key] = Object.fromEntries(
-					Object.entries(candidate).filter(
-						([nestedKey, nestedValue]) =>
-							nestedKeys.has(nestedKey) &&
-							!(
-								source === "project" &&
-								key === "memorySuggestions" &&
-								nestedKey === "enabled" &&
-								nestedValue !== false
-							),
-					),
+				const picked = Object.fromEntries(
+					Object.entries(candidate).filter(([nestedKey, nestedValue]) => {
+						if (!nestedKeys.has(nestedKey)) return false;
+						if (
+							source === "project" &&
+							key === "memorySuggestions" &&
+							nestedKey === "enabled" &&
+							nestedValue !== false
+						) {
+							return false;
+						}
+						if (
+							source === "project" &&
+							key === "review" &&
+							nestedKey === "skipNonMaterialTurns" &&
+							nestedValue !== true
+						) {
+							return false;
+						}
+						return true;
+					}),
 				);
+				if (key === "review" && isRecord(picked.adaptiveCadence)) {
+					picked.adaptiveCadence = Object.fromEntries(
+						Object.entries(picked.adaptiveCadence).filter(([nestedKey, nestedValue]) => {
+							if (!ADAPTIVE_CADENCE_KEYS.has(nestedKey)) return false;
+							if (source === "project" && nestedKey === "backOffTurnStep") return false;
+							return !(source === "project" && nestedKey === "enabled" && nestedValue !== true);
+						}),
+					);
+				}
+				output[key] = picked;
 				continue;
 			}
 		}
@@ -365,6 +466,10 @@ function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>)
 	const limits = (document.limits ?? {}) as Partial<AdvisorConfig["limits"]>;
 	const security = (document.security ?? {}) as Partial<AdvisorConfig["security"]>;
 	const delivery = (document.delivery ?? {}) as Partial<AdvisorConfig["delivery"]>;
+	const review = (document.review ?? {}) as Partial<AdvisorConfig["review"]>;
+	const adaptive = (review.adaptiveCadence ?? {}) as Partial<
+		AdvisorConfig["review"]["adaptiveCadence"]
+	>;
 	const memory = (document.memorySuggestions ?? {}) as Partial<AdvisorConfig["memorySuggestions"]>;
 	const persistence = (document.persistence ?? {}) as Partial<AdvisorConfig["persistence"]>;
 	return normalizeAdvisorConfig({
@@ -389,6 +494,13 @@ function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>)
 		delivery: {
 			activeIdleSeverities: delivery.activeIdleSeverities ?? base.delivery.activeIdleSeverities,
 		},
+		review: {
+			skipNonMaterialTurns: review.skipNonMaterialTurns ?? base.review.skipNonMaterialTurns,
+			adaptiveCadence: {
+				...base.review.adaptiveCadence,
+				...adaptive,
+			},
+		},
 		memorySuggestions: { ...base.memorySuggestions, ...memory },
 		persistence: { ...base.persistence, ...persistence },
 		version: ADVISOR_CONFIG_VERSION,
@@ -404,6 +516,37 @@ const PROJECT_LOWER_LIMIT_KEYS = [
 	"maxReprimeTokens",
 	"deferredAdviceRetentionHours",
 ] as const;
+
+function mergeProjectReviewConfiguration(
+	userConfig: AdvisorConfig,
+	project: AdvisorProjectConfig,
+): AdvisorConfig["review"] {
+	const userReview = userConfig.review;
+	const projectReview = project.review;
+	const userAdaptive = userReview.adaptiveCadence;
+	const projectAdaptive = projectReview?.adaptiveCadence;
+	const silentReviewsBeforeBackOff = Math.min(
+		userAdaptive.silentReviewsBeforeBackOff,
+		projectAdaptive?.silentReviewsBeforeBackOff ?? userAdaptive.silentReviewsBeforeBackOff,
+	);
+	const maxMinTurnsBetweenReviews = Math.max(
+		userAdaptive.maxMinTurnsBetweenReviews,
+		projectAdaptive?.maxMinTurnsBetweenReviews ?? userAdaptive.maxMinTurnsBetweenReviews,
+	);
+	return {
+		skipNonMaterialTurns:
+			userReview.skipNonMaterialTurns || projectReview?.skipNonMaterialTurns === true,
+		adaptiveCadence: {
+			enabled: userAdaptive.enabled || projectAdaptive?.enabled === true,
+			silentReviewsBeforeBackOff,
+			backOffTurnStep: userAdaptive.backOffTurnStep,
+			maxMinTurnsBetweenReviews: Math.max(
+				maxMinTurnsBetweenReviews,
+				userConfig.limits.minTurnsBetweenReviews,
+			),
+		},
+	};
+}
 
 function narrowerSessionCap(
 	userCap: AdvisorConfig["limits"]["sessionTokenSoftCap"],
@@ -503,6 +646,7 @@ export function mergeProjectConfiguration(
 							project.delivery?.activeIdleSeverities?.includes(severity),
 						),
 		},
+		review: mergeProjectReviewConfiguration(userConfig, project),
 		memorySuggestions,
 	});
 }

@@ -770,7 +770,10 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 		try {
 			await harness.session.prompt("prepare a Memory suggestion");
 			await waitFor(
-				() => submit.mock.calls.length === 1 && runtime?.getStatus().reviewsCompleted === 3,
+				() =>
+					submit.mock.calls.length === 1 &&
+					runtime?.getStatus().memorySuggestionsDelivered === 1 &&
+					!runtime.getStatus().backlog,
 			);
 			expect(submit).toHaveBeenCalledWith({
 				text: revised,
@@ -855,7 +858,10 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 		try {
 			await harness.session.prompt("prepare a proposal whose queue call fails");
 			await waitFor(
-				() => primary.requests.length === 3 && runtime?.getStatus().reviewsCompleted === 3,
+				() =>
+					primary.requests.length === 3 &&
+					runtime?.getStatus().reviewing === false &&
+					!runtime.getStatus().backlog,
 			);
 			expect(submit).toHaveBeenCalledTimes(1);
 			expect(primary.requests).toHaveLength(3);
@@ -924,8 +930,8 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 			{ content: [{ type: "text", text: "Queued the requested memory." }] },
 		]);
 		const advisor = createAdvisorProvider([
-			memorySuggestion(proposed, "duplicate-current-update"),
 			{ content: [] },
+			memorySuggestion(proposed, "duplicate-current-update"),
 		]);
 		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({
@@ -938,7 +944,10 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 		});
 		try {
 			await harness.session.prompt("already queue this durable fact");
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+			await waitFor(() => {
+				const status = runtime?.getStatus();
+				return status !== undefined && status.reviewsCompleted >= 1 && !status.backlog;
+			});
 			expect(submit).toHaveBeenCalledTimes(1);
 			expect(runtime?.getStatus()).toMatchObject({
 				memorySuggestionsDelivered: 0,

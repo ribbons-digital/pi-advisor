@@ -66,22 +66,23 @@ Private generated `advise` arguments are not added to diagnostics, activity reco
 
 ## Ownership and merge rules
 
-| Area                      | User authority                     | Trusted Project authority                | Project attempt outside authority                                        |
-| ------------------------- | ---------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
-| Schema version            | Must be `1`                        | Must be `1`                              | Invalid document is ignored                                              |
-| Activation and model      | Full                               | None                                     | Warned and ignored                                                       |
-| Reasoning effort          | Full                               | None                                     | Warned and ignored                                                       |
-| Tools                     | Approves a read-only set           | Intersects and therefore only removes    | Unknown or mutating tools invalidate the document                        |
-| Instructions              | Adds User instructions             | Adds lower-authority tagged instructions | Cannot replace fixed policy                                              |
-| Maximum limits            | Sets within package bounds         | May lower                                | Higher values are clamped to User values                                 |
-| Minimum cadence           | Sets                               | May increase                             | Lower values are clamped to User values                                  |
-| Context fraction          | Sets                               | May lower                                | Higher values are clamped to User values                                 |
-| Response reserve          | Sets                               | May increase                             | Lower values are clamped to User values                                  |
-| Protected paths           | May add                            | May add                                  | No removal mechanism exists                                              |
-| Protected-path exceptions | May create exact exceptions        | None                                     | Warned and ignored                                                       |
-| Memory suggestions        | May enable, disable, or set limits | May disable or narrow                    | Re-enabling or broadening is ignored or clamped                          |
-| Local activity recording  | May enable or disable              | None                                     | Warned and ignored                                                       |
-| Spending increases        | May set                            | None beyond lowering caps                | Activation, model, effort, and persistence fields are warned and ignored |
+| Area                      | User authority                                             | Trusted Project authority                                                                                      | Project attempt outside authority                                                                                                                     |
+| ------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Schema version            | Must be `1`                                                | Must be `1`                                                                                                    | Invalid document is ignored                                                                                                                           |
+| Activation and model      | Full                                                       | None                                                                                                           | Warned and ignored                                                                                                                                    |
+| Reasoning effort          | Full                                                       | None                                                                                                           | Warned and ignored                                                                                                                                    |
+| Tools                     | Approves a read-only set                                   | Intersects and therefore only removes                                                                          | Unknown or mutating tools invalidate the document                                                                                                     |
+| Instructions              | Adds User instructions                                     | Adds lower-authority tagged instructions                                                                       | Cannot replace fixed policy                                                                                                                           |
+| Maximum limits            | Sets within package bounds                                 | May lower                                                                                                      | Higher values are clamped to User values                                                                                                              |
+| Minimum cadence           | Sets                                                       | May increase                                                                                                   | Lower values are clamped to User values                                                                                                               |
+| Context fraction          | Sets                                                       | May lower                                                                                                      | Higher values are clamped to User values                                                                                                              |
+| Response reserve          | Sets                                                       | May increase                                                                                                   | Lower values are clamped to User values                                                                                                               |
+| Protected paths           | May add                                                    | May add                                                                                                        | No removal mechanism exists                                                                                                                           |
+| Protected-path exceptions | May create exact exceptions                                | None                                                                                                           | Warned and ignored                                                                                                                                    |
+| Memory suggestions        | May enable, disable, or set limits                         | May disable or narrow                                                                                          | Re-enabling or broadening is ignored or clamped                                                                                                       |
+| Review freshness and cost | May enable skip or adaptive cadence and set cadence bounds | May enable skip or adaptive cadence, lower `silentReviewsBeforeBackOff`, and raise `maxMinTurnsBetweenReviews` | Disabling a User-enabled option, raising `silentReviewsBeforeBackOff`, lowering `maxMinTurnsBetweenReviews`, or changing `backOffTurnStep` is ignored |
+| Local activity recording  | May enable or disable                                      | None                                                                                                           | Warned and ignored                                                                                                                                    |
+| Spending increases        | May set                                                    | None beyond lowering caps                                                                                      | Activation, model, effort, and persistence fields are warned and ignored                                                                              |
 
 Malformed User configuration falls back to safe inactive behavior with persisted activation and local activity recording off.
 Malformed Project configuration is ignored.
@@ -189,6 +190,34 @@ Empty `activeIdleSeverities: []` preserves pre-Q3 behavior (all idle review note
 | ------------------------------- | ------------------------------- | --------------- | ------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `delivery.activeIdleSeverities` | Array of `concern` or `blocker` | `[blocker]`     | None         | User sets; Project may only remove values | Lists severities that may start one automatic Executor follow-up while the Executor is idle. |
 
+### Review freshness and cost fields
+
+In-flight review supersession is always on and has no configuration field.
+When a newer meaningful update is scheduled while a review attempt is in flight and no `advise` execution has started, Advisor aborts that nested prompt, rolls the attempt back, coalesces the superseded window, and submits one replacement review.
+Supersession applies only to an attempt actually aborted for that reason; a failed, governed, silent, or accepted attempt is classified normally even when a newer update is queued, and the queued update is processed afterward by the drain loop.
+A superseded attempt is not a failed review.
+Held-for-material-turn updates never trigger supersession and wait for the next material window instead.
+Session soft caps win over supersession.
+
+When `review.skipNonMaterialTurns` is enabled, a Meaningful Executor turn with no Materially newer Executor activity is held and coalesced until a later material turn joins it.
+Neither ordinary turn cadence nor the elapsed-time cadence timer can submit that held update by itself.
+Held-for-material-turn updates stay inside the existing pending-transcript byte bounds and are excluded from persisted `queuedReview` snapshots.
+Their loss across restart is a documented bounded cost of enabling the option.
+
+When `review.adaptiveCadence.enabled` is true, each completed run of `silentReviewsBeforeBackOff` consecutive silent reviews increases the effective minimum turn distance by `backOffTurnStep`, never above `maxMinTurnsBetweenReviews` and never below `limits.minTurnsBetweenReviews`.
+Any accepted Advisory note resets that effective distance to the floor.
+Failed and governor-skipped reviews neither extend nor reset the back-off.
+Adaptive cadence state is in-memory only and is not restored on resume.
+`/advisor status` reports the effective cadence.
+
+| YAML path                                           | Type                                                     | Release default | Hard maximum   | Scope and Project merge                | Effect                                                                      |
+| --------------------------------------------------- | -------------------------------------------------------- | --------------- | -------------- | -------------------------------------- | --------------------------------------------------------------------------- |
+| `review.skipNonMaterialTurns`                       | Boolean                                                  | `false`         | Not applicable | User sets; Project may set only `true` | Holds non-material Meaningful turns until a later material turn joins them. |
+| `review.adaptiveCadence.enabled`                    | Boolean                                                  | `false`         | Not applicable | User sets; Project may set only `true` | Enables silent-review back-off of the effective minimum turn distance.      |
+| `review.adaptiveCadence.silentReviewsBeforeBackOff` | Number from `1` through `32`                             | `3`             | `32`           | User sets; Project may lower           | Silent reviews required before one back-off step.                           |
+| `review.adaptiveCadence.backOffTurnStep`            | Number from `1` through `8`                              | `1`             | `8`            | User only                              | Turns added to the effective minimum distance after each silent run.        |
+| `review.adaptiveCadence.maxMinTurnsBetweenReviews`  | Number from `limits.minTurnsBetweenReviews` through `64` | `4`             | `64`           | User sets; Project may raise           | Cap on the effective minimum turn distance.                                 |
+
 ### Memory suggestion fields
 
 Memory suggestions activate only while ordinary Advisor is active and Pi exposes a schema-compatible active `memory_suggest` tool.
@@ -264,6 +293,8 @@ No diagnostic or persisted record is exported automatically.
 | Legacy version 1 record  | Written by an earlier Pi Advisor release                               | The strict bounded content-bearing shape documented by that earlier release, including possible update, tool-result, or accepted-note bodies                                                                                                                                  | Invalid, oversized, wrong-session, unredacted-secret, and unsupported-version records are ignored                                                                         | Remains in the Pi session until that session file is deleted.                             |
 
 Lifecycle state format version `3` atomically stores the observed cursor with at most one active review, one later queued review, restored replay accounting, cadence submission fields, and accepted active deliveries awaiting acknowledgement.
+Held-for-material-turn updates are excluded from persisted `queuedReview` snapshots.
+A restored pre-Q4-shape `queuedReview` keeps its existing cadence-scheduled behavior.
 Version `2` added the optional opaque semantic finding hash to deferred review advice.
 Versions `1` and `2` remain accepted and migrate in memory without losing compatible deferred advice, delivery counters, or Memory cadence state, but migration cannot reconstruct review evidence already lost by an older snapshot.
 Version `1` dedupe hashes cannot be recalculated into the newer semantic identity, so their previously delivered suppression history starts fresh after migration.
@@ -351,6 +382,12 @@ limits:
   minIntervalMs: 60000
   sessionTokenSoftCap: 100000
   sessionCostSoftCapUsd: 1
+review:
+  skipNonMaterialTurns: true
+  adaptiveCadence:
+    enabled: true
+    silentReviewsBeforeBackOff: 3
+    maxMinTurnsBetweenReviews: 6
 persistence:
   transcript: false
 ```

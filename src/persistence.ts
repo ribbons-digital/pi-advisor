@@ -104,6 +104,7 @@ export type PersistedAdvisorReviewOutcome = PersistedAdvisorReviewOutcomeBase &
 		| { outcome: "accepted"; delivery: "active" | "deferred"; stale: boolean }
 		| { outcome: "governor-skipped"; reason: string }
 		| { outcome: "failed"; reason: string }
+		| { outcome: "superseded" }
 	);
 
 export type PersistedAdvisorTranscriptRecordV2 =
@@ -776,7 +777,7 @@ function parseActivityTranscriptRecord(
 				isFiniteNonNegative(record.total) &&
 				isFiniteNonNegative(record.costUsd) &&
 				isSafePersistedText(record.stopReason);
-			if (record.outcome === "silent") {
+			if (record.outcome === "silent" || record.outcome === "superseded") {
 				valid = hasOnlyKeys(record, commonKeys) && validUsage;
 			} else if (record.outcome === "accepted") {
 				valid =

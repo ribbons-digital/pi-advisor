@@ -24,6 +24,18 @@ export interface AdvisorDeliveryConfig {
 	activeIdleSeverities: ActiveIdleSeverity[];
 }
 
+export interface AdvisorAdaptiveCadenceConfig {
+	enabled: boolean;
+	silentReviewsBeforeBackOff: number;
+	backOffTurnStep: number;
+	maxMinTurnsBetweenReviews: number;
+}
+
+export interface AdvisorReviewConfig {
+	skipNonMaterialTurns: boolean;
+	adaptiveCadence: AdvisorAdaptiveCadenceConfig;
+}
+
 export interface AdvisorLimitConfig {
 	maxAdviceCharacters: number;
 	maxAdviceTokens: number;
@@ -61,6 +73,7 @@ export interface AdvisorUserConfig {
 		protectedPathExceptions: string[];
 	};
 	delivery: AdvisorDeliveryConfig;
+	review: AdvisorReviewConfig;
 	memorySuggestions: MemorySuggestionConfig;
 	persistence: {
 		transcript: boolean;
@@ -79,6 +92,14 @@ export interface AdvisorProjectConfig {
 	};
 	delivery?: {
 		activeIdleSeverities?: ActiveIdleSeverity[];
+	};
+	review?: {
+		skipNonMaterialTurns?: true;
+		adaptiveCadence?: {
+			enabled?: true;
+			silentReviewsBeforeBackOff?: number;
+			maxMinTurnsBetweenReviews?: number;
+		};
 	};
 	memorySuggestions?: {
 		enabled?: false;
@@ -122,6 +143,15 @@ const CANONICAL_DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze({
 	delivery: {
 		activeIdleSeverities: ["blocker"],
 	},
+	review: {
+		skipNonMaterialTurns: false,
+		adaptiveCadence: {
+			enabled: false,
+			silentReviewsBeforeBackOff: 3,
+			backOffTurnStep: 1,
+			maxMinTurnsBetweenReviews: 4,
+		},
+	},
 	memorySuggestions: {
 		enabled: true,
 		minTurnsBetweenSuggestions: 8,
@@ -155,6 +185,9 @@ export const HARD_LIMITS = {
 	maxToolCallsPerUpdate: 32,
 	maxPendingTranscriptBytes: 1_000_000,
 	maxReprimeTokens: 128_000,
+	silentReviewsBeforeBackOff: 32,
+	backOffTurnStep: 8,
+	maxMinTurnsBetweenReviews: 64,
 } as const;
 
 function finiteAtLeast(value: number, minimum: number, fallback: number): number {
@@ -167,6 +200,43 @@ function isActiveIdleSeverity(value: unknown): value is ActiveIdleSeverity {
 
 function finiteClamped(value: number, minimum: number, maximum: number, fallback: number): number {
 	return Math.min(maximum, finiteAtLeast(value, minimum, fallback));
+}
+
+function normalizeReviewConfig(
+	input: AdvisorReviewConfig | undefined,
+	minTurnsBetweenReviews: number,
+): AdvisorReviewConfig {
+	const defaults = CANONICAL_DEFAULT_ADVISOR_CONFIG.review;
+	const adaptive = input?.adaptiveCadence;
+	const minTurns = finiteAtLeast(
+		minTurnsBetweenReviews,
+		1,
+		CANONICAL_DEFAULT_ADVISOR_CONFIG.limits.minTurnsBetweenReviews,
+	);
+	return {
+		skipNonMaterialTurns: input?.skipNonMaterialTurns === true,
+		adaptiveCadence: {
+			enabled: adaptive?.enabled === true,
+			silentReviewsBeforeBackOff: finiteClamped(
+				adaptive?.silentReviewsBeforeBackOff ?? defaults.adaptiveCadence.silentReviewsBeforeBackOff,
+				1,
+				HARD_LIMITS.silentReviewsBeforeBackOff,
+				defaults.adaptiveCadence.silentReviewsBeforeBackOff,
+			),
+			backOffTurnStep: finiteClamped(
+				adaptive?.backOffTurnStep ?? defaults.adaptiveCadence.backOffTurnStep,
+				1,
+				HARD_LIMITS.backOffTurnStep,
+				defaults.adaptiveCadence.backOffTurnStep,
+			),
+			maxMinTurnsBetweenReviews: finiteClamped(
+				adaptive?.maxMinTurnsBetweenReviews ?? defaults.adaptiveCadence.maxMinTurnsBetweenReviews,
+				minTurns,
+				HARD_LIMITS.maxMinTurnsBetweenReviews,
+				Math.max(minTurns, defaults.adaptiveCadence.maxMinTurnsBetweenReviews),
+			),
+		},
+	};
 }
 
 function positiveSessionCap(
@@ -266,6 +336,7 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 					isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
 			),
 		},
+		review: normalizeReviewConfig(input.review, input.limits.minTurnsBetweenReviews),
 		memorySuggestions: {
 			enabled: input.memorySuggestions.enabled,
 			minTurnsBetweenSuggestions: finiteAtLeast(

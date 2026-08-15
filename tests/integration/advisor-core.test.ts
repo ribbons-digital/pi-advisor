@@ -280,7 +280,8 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 		]);
 		const advisor = createAdvisorProvider([
 			{ delayMs: 100, content: [{ type: "text", text: "silent first" }] },
-			{ content: [{ type: "text", text: "silent coalesced" }] },
+			{ delayMs: 100, content: [{ type: "text", text: "silent second" }] },
+			{ delayMs: 100, content: [{ type: "text", text: "silent third" }] },
 		]);
 		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({
@@ -294,10 +295,12 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 			await harness.session.prompt("first user turn");
 			await harness.session.prompt("second user turn");
 			await harness.session.prompt("third user turn");
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+			await waitFor(
+				() => runtime?.getStatus().reviewsCompleted === 1 && !runtime.getStatus().backlog,
+			);
 			expect(advisor.maxConcurrentRequests).toBe(1);
-			expect(advisor.requests).toHaveLength(2);
-			const coalesced = JSON.stringify(advisor.requests[1]?.context);
+			expect(runtime?.getStatus().reviewsSuperseded).toBeGreaterThan(0);
+			const coalesced = JSON.stringify(advisor.requests.at(-1)?.context);
 			expect(coalesced).toContain("second user turn");
 			expect(coalesced).toContain("third user turn");
 			expect(runtime?.getStatus().backlog).toBe(false);

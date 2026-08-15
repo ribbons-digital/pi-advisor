@@ -585,14 +585,14 @@ export function formatAdviceForDelivery(
 	return `<advisor-note ${attributes.join(" ")}>\n<note>${escapeXmlText(advice.note)}</note>\n<guidance>${escapeXmlText(`${resumeWarning}${guidance}`)}</guidance>\n</advisor-note>`;
 }
 
-function executeAdviseWireInput(
+async function executeAdviseWireInput(
 	id: string,
 	params: AdviseWireInput,
 	config: AdvisorConfig,
 	collector: AdviceCollector,
-	onExecutionStart?: (toolCallId: string) => void,
+	onExecutionStart?: (toolCallId: string) => void | Promise<void>,
 ) {
-	onExecutionStart?.(id);
+	await onExecutionStart?.(id);
 	collector.validCalls++;
 	const input = parseAdviseWireInput(params);
 	if (input === undefined) {
@@ -622,17 +622,17 @@ function executeAdviseWireInput(
 			...(semanticHash === undefined ? {} : { findingKeyHash: semanticHash }),
 		};
 	}
-	return Promise.resolve({
+	return {
 		content: [{ type: "text" as const, text: "Recorded." }],
 		details: {},
 		terminate: true,
-	});
+	};
 }
 
 export function createAdviseTool(
 	config: AdvisorConfig,
 	collector: AdviceCollector,
-	onExecutionStart?: (toolCallId: string) => void,
+	onExecutionStart?: (toolCallId: string) => void | Promise<void>,
 ): ToolDefinition<typeof ADVISE_WIRE_SCHEMA> {
 	return {
 		name: "advise",
@@ -774,7 +774,7 @@ type StrictAdviseToolDefinition = ToolDefinition<typeof STRICT_ADVISE_WIRE_SCHEM
 export function createStrictAdviseTool(
 	config: AdvisorConfig,
 	collector: AdviceCollector,
-	onExecutionStart?: (toolCallId: string) => void,
+	onExecutionStart?: (toolCallId: string) => void | Promise<void>,
 ): StrictAdviseToolDefinition {
 	return {
 		name: "advise",
