@@ -289,20 +289,24 @@ const materialityEntries: MaterialExpectation[] = [
 	},
 	{
 		label: "a compaction entry",
-		append: (manager) => void manager.appendCompaction("earlier context compacted", "root-id", 1_000),
+		append: (manager) =>
+			void manager.appendCompaction("earlier context compacted", "root-id", 1_000),
 		material: true,
 		instructionInput: false,
 	},
 ];
 
 describe("post-window materially newer Executor activity classification", () => {
-	it.each(materialityEntries)("treats $label as $material for staleness", ({ append, material }) => {
-		const manager = SessionManager.inMemory();
-		manager.appendMessage({ role: "user", content: "review this", timestamp: 1 });
-		const window = cursorAtTail(manager.getBranch());
-		append(manager, "");
-		expect(branchHasMateriallyNewerExecutorActivity(manager.getBranch(), window)).toBe(material);
-	});
+	it.each(materialityEntries)(
+		"treats $label as $material for staleness",
+		({ append, material }) => {
+			const manager = SessionManager.inMemory();
+			const rootId = manager.appendMessage({ role: "user", content: "review this", timestamp: 1 });
+			const window = cursorAtTail(manager.getBranch());
+			append(manager, rootId);
+			expect(branchHasMateriallyNewerExecutorActivity(manager.getBranch(), window)).toBe(material);
+		},
+	);
 
 	it("treats a branch-summary entry as materially newer", () => {
 		const manager = SessionManager.inMemory();
@@ -325,9 +329,9 @@ describe("post-window materially newer Executor activity classification", () => 
 	it("keeps the Memory follow-up instruction guard independent from material staleness", () => {
 		for (const entry of materialityEntries) {
 			const probe = SessionManager.inMemory();
-			probe.appendMessage({ role: "user", content: "review this", timestamp: 1 });
+			const rootId = probe.appendMessage({ role: "user", content: "review this", timestamp: 1 });
 			const probeWindow = cursorAtTail(probe.getBranch());
-			entry.append(probe, "");
+			entry.append(probe, rootId);
 			expect(
 				branchHasNewerInstructionInput(probe.getBranch(), probeWindow),
 				`instruction input after ${entry.label}`,

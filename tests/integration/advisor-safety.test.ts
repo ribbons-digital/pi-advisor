@@ -2150,9 +2150,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			label: "a read-only grep call and result",
 			append: (manager: SessionManager) => {
 				manager.appendMessage(
-					assistantToolCall([
-						{ type: "toolCall", id: "grep-1", name: "grep", arguments: {} },
-					]),
+					assistantToolCall([{ type: "toolCall", id: "grep-1", name: "grep", arguments: {} }]),
 				);
 				manager.appendMessage({
 					role: "toolResult",
@@ -2169,9 +2167,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			label: "a mutating edit call and result",
 			append: (manager: SessionManager) => {
 				manager.appendMessage(
-					assistantToolCall([
-						{ type: "toolCall", id: "edit-1", name: "edit", arguments: {} },
-					]),
+					assistantToolCall([{ type: "toolCall", id: "edit-1", name: "edit", arguments: {} }]),
 				);
 				manager.appendMessage({
 					role: "toolResult",

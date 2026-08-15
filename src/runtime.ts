@@ -2564,10 +2564,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				return;
 			}
 			for (const record of run.transcriptRecords) this.appendTranscriptRecord(record);
-			const stale = branchHasMateriallyNewerExecutorActivity(
-				branchAfterAttempt,
-				update.window,
-			);
+			const stale = branchHasMateriallyNewerExecutorActivity(branchAfterAttempt, update.window);
 			const newerInstructionInput = branchHasNewerInstructionInput(
 				branchAfterAttempt,
 				update.window,
@@ -2977,8 +2974,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		}
 
 		const isStale = (pending: PendingAdvice): boolean =>
-			pending.stale ||
-			branchHasMateriallyNewerExecutorActivity(branch, pending.branchWindow);
+			pending.stale || branchHasMateriallyNewerExecutorActivity(branch, pending.branchWindow);
 		const batch = takeRenderedPrefix(this.pendingAdvice, MAX_DEFERRED_DELIVERY_BYTES, (pending) =>
 			formatAdviceForDelivery(
 				pending.advice,
