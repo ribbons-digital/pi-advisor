@@ -2060,7 +2060,6 @@ export class AdvisorRuntime {
 			return;
 		}
 		delete this.automaticMemoryFollowUpDeliveryId;
-		delete this.automaticReviewFollowUpDeliveryId;
 		if (this.isAutomaticReviewFollowUpStillValid(entries)) {
 			if (event.message.role !== "assistant" || event.message.stopReason !== "toolUse") {
 				delete this.automaticReviewFollowUpDeliveryId;
