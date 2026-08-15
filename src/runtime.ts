@@ -92,6 +92,7 @@ import {
 } from "./persistence.js";
 import {
 	ADVISOR_CUSTOM_TYPE,
+	branchHasMateriallyNewerExecutorActivity,
 	branchHasNewerInstructionInput,
 	cursorAtTail,
 	cursorMatches,
@@ -223,13 +224,6 @@ function lifecycleSnapshotEntries(branch: SessionEntry[]): SessionEntry[] {
 		if (branch[index]?.type === "compaction") return branch.slice(index);
 	}
 	return branch;
-}
-
-function branchHasNewerExecutorState(branch: SessionEntry[], window: AdvisorCursor): boolean {
-	return branch.slice(window.expectedIndex).some((entry) => {
-		if (entry.type === "custom") return false;
-		return !(entry.type === "custom_message" && entry.customType === ADVISOR_CUSTOM_TYPE);
-	});
 }
 
 export interface AdvisorUsageTotals {
@@ -411,10 +405,6 @@ export interface AdvisorRuntimeStatus {
 export interface AdvisorRuntimeHooks {
 	onWarning?(message: string): void;
 	onStatus?(status: AdvisorRuntimeStatus): void;
-}
-
-export interface DeferredAdviceMaterialization {
-	hasNewerExecutorInput: boolean;
 }
 
 interface CurrentRun {
@@ -2574,7 +2564,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				return;
 			}
 			for (const record of run.transcriptRecords) this.appendTranscriptRecord(record);
-			const stale = branchHasNewerExecutorState(branchAfterAttempt, update.window);
+			const stale = branchHasMateriallyNewerExecutorActivity(
+				branchAfterAttempt,
+				update.window,
+			);
 			const newerInstructionInput = branchHasNewerInstructionInput(
 				branchAfterAttempt,
 				update.window,
@@ -2959,10 +2952,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		return dispatch === "deferred" ? "deferred" : "active";
 	}
 
-	takeDeferredAdvice(
-		ctx: ExtensionContext,
-		materialization: DeferredAdviceMaterialization,
-	):
+	takeDeferredAdvice(ctx: ExtensionContext):
 		| {
 				customType: string;
 				content: string;
@@ -2988,8 +2978,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 
 		const isStale = (pending: PendingAdvice): boolean =>
 			pending.stale ||
-			materialization.hasNewerExecutorInput ||
-			branchHasNewerExecutorState(branch, pending.branchWindow);
+			branchHasMateriallyNewerExecutorActivity(branch, pending.branchWindow);
 		const batch = takeRenderedPrefix(this.pendingAdvice, MAX_DEFERRED_DELIVERY_BYTES, (pending) =>
 			formatAdviceForDelivery(
 				pending.advice,

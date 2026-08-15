@@ -470,7 +470,7 @@ describe.sequential("current implementation evidence review policy", () => {
 			const delivered = JSON.stringify(primary.requests[3]?.context);
 			expect(delivered).toContain(concreteDefect);
 			expect(delivered).toContain(
-				'severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"true\\"',
+				'severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"false\\"',
 			);
 			expect(runtime?.getStatus()).toMatchObject({
 				notesDelivered: 1,

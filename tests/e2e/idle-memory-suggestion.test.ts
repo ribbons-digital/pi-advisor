@@ -156,6 +156,9 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 			]);
 			const advisor = createAdvisorProvider([
 				{ ...packedMemorySuggestion(), waitFor: advisorBarrier.promise },
+				{ content: [] },
+				{ content: [] },
+				{ content: [] },
 			]);
 			let runtime: AdvisorRuntime | undefined;
 			const harness = await createSessionHarness({
@@ -187,6 +190,7 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 				advisorBarrier.release();
 				await expect.poll(() => primary.requests.length, { timeout: 5_000, interval: 10 }).toBe(4);
 				await waitFor(() => submit.mock.calls.length === 1);
+				await waitFor(() => advisor.requests.length === 4);
 				expect(submit).toHaveBeenCalledTimes(1);
 				expect(submit).toHaveBeenCalledWith({
 					text: proposed,
@@ -194,7 +198,7 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 					status: "pending",
 				});
 				expect(JSON.stringify(primary.requests[2]?.context)).toContain('delivery=\\"active\\"');
-				expect(JSON.stringify(primary.requests[2]?.context)).toContain('stale=\\"true\\"');
+				expect(JSON.stringify(primary.requests[2]?.context)).toContain('stale=\\"false\\"');
 				const delivered = harness.sessionManager
 					.getEntries()
 					.find(
@@ -202,10 +206,12 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 					);
 				expect(delivered?.type === "custom_message" ? delivered.details : undefined).toMatchObject({
 					delivery: "active",
-					stale: true,
 					intent: "memory-suggestion",
 				});
-				expect(advisor.requests).toHaveLength(1);
+				expect(
+					delivered?.type === "custom_message" ? delivered.details : undefined,
+				).not.toHaveProperty("stale");
+				expect(advisor.requests).toHaveLength(4);
 				expect(runtime?.getStatus()).toMatchObject({
 					memorySuggestionsDelivered: 1,
 					deferredNotesPending: 0,

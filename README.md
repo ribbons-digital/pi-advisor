@@ -164,7 +164,7 @@ Private Advisor reasoning, rejected notes, duplicate notes, content-free respons
 Advice created during an active run reaches Pi's next steering boundary and does not abort a running tool.
 Ordinary late or interruption-time advice waits for the next user-driven turn without triggering another completion.
 An eligible Memory suggestion that arrives while the Executor is idle starts one automatic Executor follow-up when no newer user or instruction-bearing input has superseded its evidence window.
-Newer Executor assistant, tool-call, or tool-result continuation does not by itself prevent that follow-up, even though the suggestion remains marked potentially stale.
+Newer Executor assistant text does not prevent that follow-up, and a continuation with materially newer Executor activity (a non-read-only tool call or its result, a context-included user bash execution, or a compaction or branch-summary entry) still does not prevent it even though the suggestion is then marked potentially stale.
 Any newer user message, instruction-bearing extension message, or bash execution blocks automatic follow-up, including a context-excluded `!!` command.
 The Executor must verify, revise, or decline the suggestion against its latest context and can submit only through a compatible `memory_suggest` tool with explicit `status: "pending"`.
 The automatic follow-up can add one primary-model completion per accepted Memory suggestion, bounded by the configured cadence and session cap.
@@ -174,7 +174,9 @@ A non-stale current-window follow-up still receives ordinary Advisor review, and
 Newer user or instruction-bearing input restores normal review or deferred delivery instead of using stale supersession.
 The memory remains pending until the user approves or rejects it through the memory system's normal review flow.
 If compatible capability is absent, no Memory suggestion is produced and ordinary review is unchanged; if capability is lost before idle dispatch, no follow-up starts and the accepted suggestion is marked `could-not-queue` for bounded later presentation.
-Advice is marked potentially stale when the Executor has advanced beyond the reviewed window, and restored advice requires fresh verification.
+Advice is marked potentially stale only when the Executor produced materially newer activity after the reviewed window: a non-read-only tool call or its result, a context-included user bash execution, or a compaction or branch-summary entry.
+User messages, plain assistant text, read-only tool calls and their results, and extension context never mark advice stale on their own, so the user prompt that triggers deferred materialization does not stale the emitted note.
+Restored advice still requires fresh verification.
 Every Advisor card has a severity-colored left border so it remains visually distinct from native tool-call cards; Memory suggestion cards use the Advisor accent color.
 Cards render compact Markdown so a short lead stays above the supporting detail, and numbered or bullet actions stay on separate lines.
 While a review is in flight, the TUI footer shows a spinner next to `Advisor reviewing`.

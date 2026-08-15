@@ -406,7 +406,7 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 	pi.on("before_agent_start", (event, ctx) => {
 		const contextFiles = event.systemPromptOptions.contextFiles ?? [];
 		runtime.captureContextFiles(contextFiles);
-		const message = runtime.takeDeferredAdvice(ctx, { hasNewerExecutorInput: true });
+		const message = runtime.takeDeferredAdvice(ctx);
 		return message === undefined ? undefined : { message };
 	});
 
