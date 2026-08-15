@@ -242,7 +242,9 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		reviewRequests: 0,
 		reviewsCompleted: 0,
 		silentReviews: 0,
+		reviewsSuperseded: 0,
 		failedReviews: 0,
+		effectiveMinTurnsBetweenReviews: 1,
 		governorSkippedReviews: 0,
 		deliveryFailures: 0,
 		notesDelivered: 0,
@@ -289,6 +291,28 @@ describe("Slice 1 configuration and emission policy", () => {
 		const input = structuredClone(DEFAULT_ADVISOR_CONFIG);
 		input.limits.maxAdviceCharacters = Number.NaN;
 		expect(normalizeAdvisorConfig(input).limits.maxAdviceCharacters).toBe(2_000);
+	});
+
+	it("normalizes a partial review block and keeps User cadence values away from the defaults", () => {
+		const omittedAdaptive = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		omittedAdaptive.review = { skipNonMaterialTurns: true } as typeof omittedAdaptive.review;
+		expect(normalizeAdvisorConfig(omittedAdaptive).review).toEqual({
+			skipNonMaterialTurns: true,
+			adaptiveCadence: {
+				enabled: false,
+				silentReviewsBeforeBackOff: 3,
+				backOffTurnStep: 1,
+				maxMinTurnsBetweenReviews: 4,
+			},
+		});
+
+		const custom = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		custom.limits.minTurnsBetweenReviews = 5;
+		custom.review.adaptiveCadence.silentReviewsBeforeBackOff = 8;
+		custom.review.adaptiveCadence.maxMinTurnsBetweenReviews = 2;
+		const normalized = normalizeAdvisorConfig(custom);
+		expect(normalized.review.adaptiveCadence.silentReviewsBeforeBackOff).toBe(8);
+		expect(normalized.review.adaptiveCadence.maxMinTurnsBetweenReviews).toBe(5);
 	});
 
 	it("floors a fractional Memory suggestion session cap", () => {
@@ -382,6 +406,8 @@ describe("Slice 1 configuration and emission policy", () => {
 		expect(output).toContain("cap off");
 		expect(output).toContain("Reviewing: no");
 		expect(output).toContain("Reviews: 4 requests, 3 completed");
+		expect(output).toContain("0 superseded");
+		expect(output).toContain("Review cadence: every 1 meaningful turn");
 		expect(output).toContain("Governor skips: 2, latest Advisor turn limit reached");
 		expect(output).toContain("7 suppressed");
 		expect(output).toContain("Local redacted activity record: enabled, 9 records available, 1");

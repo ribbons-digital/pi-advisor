@@ -157,6 +157,10 @@ function serializedJsonBytes(value: unknown): number {
 	return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
+function isStaleHostContext(error: unknown): boolean {
+	return error instanceof Error && error.message.includes("This extension ctx is stale");
+}
+
 function persistedUpdateFromQueued(update: QueuedAdvisorUpdate): PersistedAdvisorReviewUpdate {
 	return {
 		text: update.text,
@@ -363,7 +367,9 @@ export interface AdvisorRuntimeStatus {
 	reviewRequests: number;
 	reviewsCompleted: number;
 	silentReviews: number;
+	reviewsSuperseded: number;
 	failedReviews: number;
+	effectiveMinTurnsBetweenReviews: number;
 	governorSkippedReviews: number;
 	deliveryFailures: number;
 	notesDelivered: number;
@@ -407,6 +413,7 @@ export interface AdvisorRuntimeStatus {
 export interface AdvisorRuntimeHooks {
 	onWarning?(message: string): void;
 	onStatus?(status: AdvisorRuntimeStatus): void;
+	onAdviseExecutionStart?(toolCallId: string): void | Promise<void>;
 }
 
 interface CurrentRun {
@@ -452,6 +459,7 @@ interface QueuedAdvisorUpdate {
 	reviewId?: string;
 	restoredReplayCount?: number;
 	restoredQueued?: boolean;
+	heldForMaterialTurn?: boolean;
 }
 
 interface OutstandingAdvice extends PendingAdvice {
@@ -685,7 +693,9 @@ export function formatAdvisorDiagnosticsDump(
 		reviewRequests: status.reviewRequests,
 		reviewsCompleted: status.reviewsCompleted,
 		silentReviews: status.silentReviews,
+		reviewsSuperseded: status.reviewsSuperseded,
 		failedReviews: status.failedReviews,
+		effectiveMinTurnsBetweenReviews: status.effectiveMinTurnsBetweenReviews,
 		governorSkippedReviews: status.governorSkippedReviews,
 		deliveryFailures: status.deliveryFailures,
 		notesDelivered: status.notesDelivered,
@@ -782,6 +792,7 @@ export function formatAdvisorDiagnosticsDump(
 				active: status.active,
 				paused: status.paused,
 				reviewsCompleted: status.reviewsCompleted,
+				reviewsSuperseded: status.reviewsSuperseded,
 				failedReviews: status.failedReviews,
 				governorSkippedReviews: status.governorSkippedReviews,
 				lastGovernorOutcome: status.lastGovernorOutcome ?? null,
@@ -884,6 +895,8 @@ export class AdvisorRuntime {
 	private meaningfulTurnCount = 0;
 	private lastReviewSubmittedTurn?: number;
 	private lastReviewSubmittedAt?: number;
+	private consecutiveSilentReviews = 0;
+	private adaptiveCadenceWidening = 0;
 	private usageAnchorInvalidated = false;
 	private configurationReprimeSnapshot?: {
 		text: string;
@@ -958,7 +971,9 @@ export class AdvisorRuntime {
 			reviewRequests: 0,
 			reviewsCompleted: 0,
 			silentReviews: 0,
+			reviewsSuperseded: 0,
 			failedReviews: 0,
+			effectiveMinTurnsBetweenReviews: this.config.limits.minTurnsBetweenReviews,
 			governorSkippedReviews: 0,
 			deliveryFailures: 0,
 			notesDelivered: 0,
@@ -1004,6 +1019,7 @@ export class AdvisorRuntime {
 		this.refreshMemorySuggestionCapability();
 		this.refreshDeferredAdviceStatus();
 		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
+		this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
 		return structuredClone(this.status);
 	}
 
@@ -1104,6 +1120,7 @@ export class AdvisorRuntime {
 		delete this.throttledUpdate;
 		delete this.lastReviewSubmittedTurn;
 		delete this.lastReviewSubmittedAt;
+		this.resetAdaptiveCadence();
 		delete this.configurationReprimeSnapshot;
 		delete this.collector.accepted;
 		delete this.automaticMemoryFollowUpDeliveryId;
@@ -1362,7 +1379,13 @@ export class AdvisorRuntime {
 		if (this.pendingUpdate !== undefined && this.throttledUpdate !== undefined) {
 			throw new Error("Advisor invariant violated: pending and throttled updates coexist");
 		}
-		const branch = ctx.sessionManager.getBranch();
+		let branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
+		try {
+			branch = ctx.sessionManager.getBranch();
+		} catch (error) {
+			if (isStaleHostContext(error)) return;
+			throw error;
+		}
 		if (validateCursor(branch, this.cursor) !== "valid") {
 			delete this.activeReview;
 			delete this.pendingUpdate;
@@ -1408,8 +1431,10 @@ export class AdvisorRuntime {
 			throw new Error("Advisor invariant violated: active delivery serialized bound exceeded");
 		}
 		const queued = this.pendingUpdate ?? this.throttledUpdate;
+		const persistableQueued = queued?.heldForMaterialTurn === true ? undefined : queued;
 		let activeReview = this.activeReview;
-		let queuedReview = queued === undefined ? undefined : persistedUpdateFromQueued(queued);
+		let queuedReview =
+			persistableQueued === undefined ? undefined : persistedUpdateFromQueued(persistableQueued);
 		if (activeReview !== undefined) {
 			const compacted = compactPersistedUpdate(activeReview);
 			activeReview = compacted.update;
@@ -1424,6 +1449,7 @@ export class AdvisorRuntime {
 				const bounded = {
 					...queuedUpdateFromPersisted(queuedReview),
 					...(queued?.restoredQueued ? { restoredQueued: true } : {}),
+					...(queued?.heldForMaterialTurn === true ? { heldForMaterialTurn: true } : {}),
 				};
 				if (this.pendingUpdate !== undefined) this.pendingUpdate = bounded;
 				else this.throttledUpdate = bounded;
@@ -1818,7 +1844,7 @@ export class AdvisorRuntime {
 			adviseSchemaMode === "strict" ? createStrictAdviseTool : createAdviseTool;
 		const customTools = [
 			...protectedTools,
-			createSelectedAdviseTool(this.config, this.collector, (toolCallId) => {
+			createSelectedAdviseTool(this.config, this.collector, async (toolCallId) => {
 				const run = this.currentRun;
 				if (
 					run !== undefined &&
@@ -1826,6 +1852,7 @@ export class AdvisorRuntime {
 				) {
 					run.adviseExecutionStartedCallIds.add(toolCallId);
 				}
+				await this.hooks.onAdviseExecutionStart?.(toolCallId);
 			}),
 		];
 		const activeTools = [...this.config.tools, "advise"];
@@ -1937,10 +1964,42 @@ export class AdvisorRuntime {
 		);
 	}
 
+	private effectiveMinTurnsBetweenReviews(): number {
+		const floor = this.config.limits.minTurnsBetweenReviews;
+		const adaptive = this.config.review.adaptiveCadence;
+		if (!adaptive.enabled) return floor;
+		return Math.min(adaptive.maxMinTurnsBetweenReviews, floor + this.adaptiveCadenceWidening);
+	}
+
+	private resetAdaptiveCadence(): void {
+		this.consecutiveSilentReviews = 0;
+		this.adaptiveCadenceWidening = 0;
+		this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
+	}
+
+	private recordSilentReviewForCadence(): void {
+		const adaptive = this.config.review.adaptiveCadence;
+		if (!adaptive.enabled) return;
+		this.consecutiveSilentReviews++;
+		if (this.consecutiveSilentReviews < adaptive.silentReviewsBeforeBackOff) return;
+		this.consecutiveSilentReviews = 0;
+		this.adaptiveCadenceWidening = Math.min(
+			adaptive.maxMinTurnsBetweenReviews - this.config.limits.minTurnsBetweenReviews,
+			this.adaptiveCadenceWidening + adaptive.backOffTurnStep,
+		);
+		this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
+	}
+
+	private resetAdaptiveCadenceOnAcceptedNote(): void {
+		this.consecutiveSilentReviews = 0;
+		this.adaptiveCadenceWidening = 0;
+		this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
+	}
+
 	private reviewCadenceEligible(turnNumber: number, now: number): boolean {
 		const turnsEligible =
 			this.lastReviewSubmittedTurn === undefined ||
-			turnNumber - this.lastReviewSubmittedTurn >= this.config.limits.minTurnsBetweenReviews;
+			turnNumber - this.lastReviewSubmittedTurn >= this.effectiveMinTurnsBetweenReviews();
 		const timeEligible =
 			this.lastReviewSubmittedAt === undefined ||
 			now - this.lastReviewSubmittedAt >= this.config.limits.minIntervalMs;
@@ -1973,12 +2032,12 @@ export class AdvisorRuntime {
 		const update = this.throttledUpdate;
 		if (
 			update === undefined ||
+			update.heldForMaterialTurn === true ||
 			this.cadenceTimer !== undefined ||
 			this.status.paused ||
 			this.lastReviewSubmittedAt === undefined ||
 			(this.lastReviewSubmittedTurn !== undefined &&
-				update.turnNumber - this.lastReviewSubmittedTurn <
-					this.config.limits.minTurnsBetweenReviews)
+				update.turnNumber - this.lastReviewSubmittedTurn < this.effectiveMinTurnsBetweenReviews())
 		) {
 			return;
 		}
@@ -2012,6 +2071,7 @@ export class AdvisorRuntime {
 		const update = this.throttledUpdate;
 		if (
 			update === undefined ||
+			update.heldForMaterialTurn === true ||
 			this.draining ||
 			!this.reviewCadenceEligible(update.turnNumber, now)
 		) {
@@ -2032,6 +2092,11 @@ export class AdvisorRuntime {
 			return;
 		}
 		this.throttledUpdate = this.coalescePending(this.throttledUpdate, update);
+		if (this.throttledUpdate.heldForMaterialTurn === true) {
+			this.clearCadenceTimer();
+			this.updateBacklogStatus();
+			return;
+		}
 		if (!this.submitThrottledUpdate(Date.now())) {
 			this.updateBacklogStatus();
 			this.armCadenceTimer();
@@ -2090,6 +2155,9 @@ export class AdvisorRuntime {
 		);
 		this.cursor = nextCursor;
 		this.meaningfulTurnCount++;
+		const material =
+			!this.config.review.skipNonMaterialTurns ||
+			branchHasMateriallyNewerExecutorActivity(entries, { expectedIndex: 0 });
 		this.scheduleCadencedUpdate({
 			text: rendered.text,
 			entryCount: rendered.entryCount,
@@ -2097,6 +2165,7 @@ export class AdvisorRuntime {
 			window: nextCursor,
 			turnNumber: this.meaningfulTurnCount,
 			successfulMemoryTexts,
+			...(material ? {} : { heldForMaterialTurn: true }),
 		});
 		this.persistState();
 	}
@@ -2144,6 +2213,8 @@ export class AdvisorRuntime {
 		if (this.draining) {
 			this.pendingUpdate = this.coalescePending(this.pendingUpdate, update);
 			this.updateBacklogStatus();
+			this.requestInFlightSupersession();
+			this.persistState();
 			return;
 		}
 		this.draining = true;
@@ -2179,6 +2250,9 @@ export class AdvisorRuntime {
 			this.status.maxPendingTranscriptBytesObserved,
 			retainedBytes,
 		);
+		const heldForMaterialTurn =
+			incoming.heldForMaterialTurn === true &&
+			(current === undefined || current.heldForMaterialTurn === true);
 		return {
 			text,
 			entryCount: (current?.entryCount ?? 0) + incoming.entryCount,
@@ -2187,7 +2261,22 @@ export class AdvisorRuntime {
 			turnNumber: incoming.turnNumber,
 			successfulMemoryTexts,
 			restoredQueued: current?.restoredQueued === true || incoming.restoredQueued === true,
+			...(heldForMaterialTurn ? { heldForMaterialTurn: true } : {}),
 		};
+	}
+
+	private sessionIsPaused(): boolean {
+		return this.status.paused;
+	}
+
+	private inFlightReviewCanBeSuperseded(): boolean {
+		const run = this.currentRun;
+		return run?.epoch === this.status.epoch && run.adviseExecutionStartedCallIds.size === 0;
+	}
+
+	private requestInFlightSupersession(): void {
+		if (!this.inFlightReviewCanBeSuperseded()) return;
+		void this.session?.abort();
 	}
 
 	private async drain(initial: QueuedAdvisorUpdate): Promise<void> {
@@ -2209,7 +2298,11 @@ export class AdvisorRuntime {
 				delete this.pendingUpdate;
 				if (update !== undefined) {
 					const now = Date.now();
-					if (this.getStatus().paused || !this.reviewCadenceEligible(update.turnNumber, now)) {
+					if (
+						this.getStatus().paused ||
+						update.heldForMaterialTurn === true ||
+						!this.reviewCadenceEligible(update.turnNumber, now)
+					) {
 						this.throttledUpdate = this.coalescePending(this.throttledUpdate, update);
 						update = undefined;
 					} else {
@@ -2557,6 +2650,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		let epoch = this.status.epoch;
 		let abandonedFailure: string | undefined;
 		let interruptedBeforeTerminal = false;
+		let supersededUpdate: QueuedAdvisorUpdate | undefined;
 		for (let attempt = 0; attempt <= MAX_ADVISOR_RETRIES_PER_UPDATE; attempt++) {
 			this.resetCollectorForAttempt(update, capability);
 			const messagesBeforeAttempt = structuredClone(session.messages);
@@ -2585,18 +2679,53 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			} catch (error) {
 				thrownFailure = boundedReason(error);
 			} finally {
-				run.adviseExecutionStartedCallIds.clear();
 				delete this.currentRun;
 				delete this.collector.memoryPolicy;
 			}
 			addUsageTotals(this.status.usage, run.usage);
 			addUsageTotals(reviewUsage, run.usage);
 			if (this.status.enabled && !this.disposed) this.applySessionSoftCaps();
+			const pausedAfterAttempt = this.sessionIsPaused();
 			if (epoch !== this.status.epoch || !this.status.enabled || this.disposed) return;
 			const branchAfterAttempt = ctx.sessionManager.getBranch();
 			if (!cursorMatches(branchAfterAttempt, update.window)) {
 				await this.resetForBranchMismatch(branchAfterAttempt);
 				return;
+			}
+			if (
+				this.pendingUpdate !== undefined &&
+				run.adviseExecutionStartedCallIds.size === 0 &&
+				this.activeReviewMatches(reviewId)
+			) {
+				this.rollbackNestedAttempt(session, messagesBeforeAttempt);
+				const coalesced = this.coalescePending(update, this.pendingUpdate);
+				delete this.pendingUpdate;
+				delete this.activeReview;
+				this.status.restoredActiveReviewPending = false;
+				this.status.reviewsSuperseded++;
+				const replacement = compactPersistedUpdate<PersistedAdvisorActiveReview>({
+					...persistedUpdateFromQueued(coalesced),
+					reviewId: randomUUID(),
+					restoredReplayCount: 0,
+				});
+				if (pausedAfterAttempt) {
+					this.throttledUpdate = this.coalescePending(
+						this.throttledUpdate,
+						queuedUpdateFromPersisted(replacement.update),
+					);
+					this.persistState();
+					this.updateBacklogStatus();
+					this.publishStatus();
+					return;
+				}
+				this.activeReview = replacement.update;
+				if (replacement.changed) this.status.serializedPersistenceTruncations++;
+				this.lastReviewSubmittedTurn = coalesced.turnNumber;
+				this.lastReviewSubmittedAt = Date.now();
+				this.persistState();
+				this.updateBacklogStatus();
+				supersededUpdate = queuedUpdateFromPersisted(this.activeReview);
+				break;
 			}
 			for (const record of run.transcriptRecords) this.appendTranscriptRecord(record);
 			const stale = branchHasMateriallyNewerExecutorActivity(branchAfterAttempt, update.window);
@@ -2639,6 +2768,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				this.status.memorySuggestionsPolicySuppressed += this.collector.memoryPolicySuppressedCalls;
 				this.status.memorySuggestionsLimitSuppressed += this.collector.memoryLimitSuppressedCalls;
 				if (delivery !== undefined && accepted !== undefined) {
+					this.resetAdaptiveCadenceOnAcceptedNote();
 					persistOutcome(
 						{
 							outcome: "accepted",
@@ -2649,6 +2779,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					);
 				} else {
 					this.status.silentReviews++;
+					this.recordSilentReviewForCadence();
 					persistOutcome({ outcome: "silent" }, run.stopReason);
 				}
 				break;
@@ -2728,6 +2859,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				break;
 			}
 			this.status.retryAttempts++;
+		}
+		if (supersededUpdate !== undefined) {
+			await this.runUpdate(supersededUpdate);
+			return;
 		}
 		if (abandonedFailure !== undefined) this.recordFailedUpdate(abandonedFailure);
 		if (!interruptedBeforeTerminal && this.activeReviewMatches(reviewId)) {
@@ -3301,6 +3436,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		delete this.configurationReprimeSnapshot;
 		delete this.lastReviewSubmittedTurn;
 		delete this.lastReviewSubmittedAt;
+		this.resetAdaptiveCadence();
 		delete this.automaticMemoryFollowUpDeliveryId;
 		delete this.automaticReviewFollowUpDeliveryId;
 		this.pendingAdvice.clear();
@@ -3350,6 +3486,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		delete this.configurationReprimeSnapshot;
 		delete this.lastReviewSubmittedTurn;
 		delete this.lastReviewSubmittedAt;
+		this.resetAdaptiveCadence();
 		delete this.automaticMemoryFollowUpDeliveryId;
 		delete this.automaticReviewFollowUpDeliveryId;
 		this.pendingAdvice.clear();
@@ -3479,7 +3616,8 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Context re-prime: ${String(status.contextReprimesCompleted)} completed, ${String(status.contextReprimeFailures)} failed`,
 		`Session tokens: ${String(status.usage.total)} total (${String(status.usage.input)} input, ${String(status.usage.output)} output, ${String(status.usage.cacheRead)} cache read, ${String(status.usage.cacheWrite)} cache write), cap ${String(status.sessionTokenSoftCap)}`,
 		`Session cost: $${status.usage.costUsd.toFixed(4)}, cap ${String(status.sessionCostSoftCapUsd)}`,
-		`Reviews: ${String(status.reviewRequests)} requests, ${String(status.reviewsCompleted)} completed, ${String(status.silentReviews)} silent, ${String(status.failedReviews)} failed`,
+		`Reviews: ${String(status.reviewRequests)} requests, ${String(status.reviewsCompleted)} completed, ${String(status.silentReviews)} silent, ${String(status.reviewsSuperseded)} superseded, ${String(status.failedReviews)} failed`,
+		`Review cadence: every ${String(status.effectiveMinTurnsBetweenReviews)} meaningful turn${status.effectiveMinTurnsBetweenReviews === 1 ? "" : "s"}`,
 		`Governor skips: ${String(status.governorSkippedReviews)}, latest ${status.lastGovernorOutcome ?? "none"}`,
 		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.retryAttempts)} retry attempts`,
 		`Delivery failures: ${String(status.deliveryFailures)}`,

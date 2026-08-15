@@ -50,6 +50,7 @@ function extensionFor(
 	onRuntime: (runtime: AdvisorRuntime) => void,
 	onWarning?: (message: string) => void,
 	onStatus?: () => void,
+	onAdviseExecutionStart?: () => void | Promise<void>,
 ): InlineExtension {
 	return {
 		name: "pi-advisor-safety-test",
@@ -59,6 +60,7 @@ function extensionFor(
 				onRuntime,
 				...(onWarning === undefined ? {} : { onWarning }),
 				...(onStatus === undefined ? {} : { onStatus }),
+				...(onAdviseExecutionStart === undefined ? {} : { onAdviseExecutionStart }),
 			},
 		}),
 	};
@@ -199,14 +201,17 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expectedGovernorSkips,
 		}) => {
 			const executorBarrier = createBarrier();
-			const advisorBarrier = createBarrier();
+			const adviseStarted = createBarrier();
+			const afterAdvise = createBarrier();
 			const pendingAdvisorBarrier = createBarrier();
+			const secondExecutorTurn = createBarrier();
 			const primary = createPrimaryProvider([
 				{
 					content: [{ type: "toolCall", id: "hold-send-failure", name: "hold", arguments: {} }],
 					stopReason: "toolUse",
 				},
 				{
+					waitFor: secondExecutorTurn.promise,
 					content: [
 						{ type: "text", text: "SECOND-PENDING-EXECUTOR-UPDATE" },
 						{ type: "toolCall", id: "hold-pending-update", name: "hold", arguments: {} },
@@ -219,10 +224,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				},
 			]);
 			const advisor = createAdvisorProvider([
-				{
-					...acceptedAdvice("This delivery should throw."),
-					waitFor: advisorBarrier.promise,
-				},
+				acceptedAdvice("This delivery should throw."),
 				{ content: [], waitFor: pendingAdvisorBarrier.promise },
 			]);
 			const hold = defineTool({
@@ -237,7 +239,18 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			const harness = await createSessionHarness({
 				provider: primary,
 				advisorProvider: advisor,
-				extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+				extensions: [
+					extensionFor(
+						configFor(advisor),
+						(value) => (runtime = value),
+						undefined,
+						undefined,
+						async () => {
+							adviseStarted.release();
+							await afterAdvise.promise;
+						},
+					),
+				],
 				customTools: [hold],
 				tools: ["hold"],
 				mode: "rpc",
@@ -251,15 +264,16 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				});
 				const activeTurn = harness.session.prompt("start throwing active delivery");
 				try {
-					await waitFor(() => advisor.activeRequests === 1);
-					await waitFor(() => activeRuntime.getStatus().backlog);
+					await adviseStarted.promise;
 					if (governorOutcome !== undefined) {
 						const currentRun = Reflect.get(activeRuntime, "currentRun") as {
 							governorFailure?: string;
 						};
 						currentRun.governorFailure = governorOutcome;
 					}
-					advisorBarrier.release();
+					secondExecutorTurn.release();
+					await waitFor(() => activeRuntime.getStatus().backlog);
+					afterAdvise.release();
 					await waitFor(() => advisor.requests.length === 2);
 					const failedDeliveryStatus = activeRuntime.getStatus();
 					expect(failedDeliveryStatus).toMatchObject({
@@ -293,15 +307,17 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 						backlog: false,
 					});
 				} finally {
-					advisorBarrier.release();
+					afterAdvise.release();
 					pendingAdvisorBarrier.release();
+					secondExecutorTurn.release();
 					executorBarrier.release();
 					await activeTurn;
 					sendMessage.mockRestore();
 				}
 			} finally {
-				advisorBarrier.release();
+				afterAdvise.release();
 				pendingAdvisorBarrier.release();
+				secondExecutorTurn.release();
 				executorBarrier.release();
 				await harness.dispose();
 			}
@@ -1106,14 +1122,10 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				});
 			},
 		};
-		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({
 			provider: primary,
 			advisorProvider: advisor,
-			extensions: [
-				projectContextExtension,
-				extensionFor(configFor(advisor), (value) => (runtime = value)),
-			],
+			extensions: [projectContextExtension, extensionFor(configFor(advisor), () => undefined)],
 			tools: [],
 			mode: "rpc",
 		});
@@ -1124,15 +1136,19 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			projectFiles = [];
 			await harness.session.prompt("coalesce after removing project instructions");
 			advisorBarrier.release();
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+			await waitFor(() =>
+				advisor.requests.some((request) =>
+					JSON.stringify(request.context.messages).includes("COALESCED-AFTER-INSTRUCTIONS-REMOVED"),
+				),
+			);
 
 			const firstContext = JSON.stringify(advisor.requests[0]?.context.messages);
 			expect(firstContext).toContain("REMOVE-ME");
-			const secondContext = JSON.stringify(advisor.requests[1]?.context.messages);
-			expect(secondContext).toContain("COALESCED-WHILE-INSTRUCTIONS-PRESENT");
-			expect(secondContext).toContain("COALESCED-AFTER-INSTRUCTIONS-REMOVED");
-			expect(secondContext).not.toContain("REMOVE-ME");
-			expect(secondContext).not.toContain("project-instruction");
+			const latestContext = JSON.stringify(advisor.requests.at(-1)?.context.messages);
+			expect(latestContext).toContain("COALESCED-WHILE-INSTRUCTIONS-PRESENT");
+			expect(latestContext).toContain("COALESCED-AFTER-INSTRUCTIONS-REMOVED");
+			expect(latestContext).not.toContain("REMOVE-ME");
+			expect(latestContext).not.toContain("project-instruction");
 		} finally {
 			advisorBarrier.release();
 			await harness.dispose();
@@ -1665,9 +1681,11 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await harness.session.prompt("start delayed review");
 			await waitFor(() => advisor.activeRequests === 1);
 			await harness.session.prompt("coalesce a large update");
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+			await waitFor(
+				() => runtime?.getStatus().reviewsCompleted === 1 && !runtime.getStatus().backlog,
+			);
 			expect(runtime?.getStatus().maxPendingTranscriptBytesObserved).toBeLessThanOrEqual(80);
-			expect(JSON.stringify(advisor.requests[1]?.context)).toContain("xxxxx");
+			expect(JSON.stringify(advisor.requests.at(-1)?.context)).toContain("xxxxx");
 		} finally {
 			await harness.dispose();
 		}
@@ -2029,30 +2047,42 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 	});
 
 	it("marks advice stale when materially newer Executor activity follows the reviewed window", async () => {
-		const advisorBarrier = createBarrier();
+		const adviseStarted = createBarrier();
+		const afterAdvise = createBarrier();
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "first answer" }] },
 			{ content: [{ type: "text", text: "newer answer" }] },
 			{ content: [{ type: "text", text: "answer after stale advice" }] },
 		]);
 		const advisor = createAdvisorProvider([
-			{ ...acceptedAdvice("Recheck the earlier assumption."), waitFor: advisorBarrier.promise },
+			acceptedAdvice("Recheck the earlier assumption."),
 			{ content: [] },
 		]);
 		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({
 			provider: primary,
 			advisorProvider: advisor,
-			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			extensions: [
+				extensionFor(
+					configFor(advisor),
+					(value) => (runtime = value),
+					undefined,
+					undefined,
+					async () => {
+						adviseStarted.release();
+						await afterAdvise.promise;
+					},
+				),
+			],
 			tools: [],
 			mode: "rpc",
 		});
 		try {
-			await harness.session.prompt("first turn starts review");
-			await waitFor(() => advisor.activeRequests === 1);
+			void harness.session.prompt("first turn starts review");
+			await adviseStarted.promise;
 			await harness.session.prompt("advance while review is running");
 			expect(primary.requests).toHaveLength(2);
-			advisorBarrier.release();
+			afterAdvise.release();
 			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);
 			harness.sessionManager.appendMessage({
 				role: "bashExecution",
@@ -2075,7 +2105,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				);
 			expect(note?.details).toMatchObject({ stale: true, delivery: "deferred" });
 		} finally {
-			advisorBarrier.release();
+			afterAdvise.release();
 			await harness.dispose();
 		}
 	});
@@ -2251,17 +2281,15 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 	});
 
 	it("injects multiple deferred notes once in one bounded next-turn message", async () => {
-		const advisorBarrier = createBarrier();
+		const adviseStarted = createBarrier();
+		const afterAdvise = createBarrier();
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "first answer" }] },
 			{ content: [{ type: "text", text: "second answer" }] },
 			{ content: [{ type: "text", text: "answer after deferred batch" }] },
 		]);
 		const advisor = createAdvisorProvider([
-			{
-				...acceptedAdvice("First deferred issue.", "deferred-1"),
-				waitFor: advisorBarrier.promise,
-			},
+			acceptedAdvice("First deferred issue.", "deferred-1"),
 			acceptedAdvice("Second deferred issue.", "deferred-2", "nit"),
 			{ content: [] },
 		]);
@@ -2269,17 +2297,28 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		const harness = await createSessionHarness({
 			provider: primary,
 			advisorProvider: advisor,
-			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			extensions: [
+				extensionFor(
+					configFor(advisor),
+					(value) => (runtime = value),
+					undefined,
+					undefined,
+					async () => {
+						adviseStarted.release();
+						await afterAdvise.promise;
+					},
+				),
+			],
 			tools: [],
 			mode: "rpc",
 		});
 		try {
-			await harness.session.prompt("start first deferred review");
-			await waitFor(() => advisor.activeRequests === 1);
+			void harness.session.prompt("start first deferred review");
+			await adviseStarted.promise;
 			await harness.session.prompt("coalesce another reviewed turn");
 			expect(primary.requests).toHaveLength(2);
-			advisorBarrier.release();
-			await waitFor(() => runtime?.getStatus().deferredNotesPending === 2);
+			afterAdvise.release();
+			await waitFor(() => (runtime?.getStatus().deferredNotesPending ?? 0) >= 2);
 			await harness.session.prompt("materialize deferred batch");
 			const context = JSON.stringify(primary.requests.at(-1)?.context);
 			expect(context).toContain("First deferred issue.");
@@ -2299,7 +2338,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				deferredNotesPending: 0,
 			});
 		} finally {
-			advisorBarrier.release();
+			afterAdvise.release();
 			await harness.dispose();
 		}
 	});

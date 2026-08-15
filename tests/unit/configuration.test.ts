@@ -712,6 +712,131 @@ describe("WATCHDOG configuration", () => {
 		expect(cannotAdd.effectiveConfig.delivery).toEqual({ activeIdleSeverities: ["blocker"] });
 	});
 
+	it("loads review defaults and rejects out-of-range adaptive cadence fields", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(join(agentDir, "WATCHDOG.yml"), ["version: 1"].join("\n"));
+		const defaults = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(defaults.warnings).toEqual([]);
+		expect(defaults.userConfig.review).toEqual({
+			skipNonMaterialTurns: false,
+			adaptiveCadence: {
+				enabled: false,
+				silentReviewsBeforeBackOff: 3,
+				backOffTurnStep: 1,
+				maxMinTurnsBetweenReviews: 4,
+			},
+		});
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"review:",
+				"  skipNonMaterialTurns: true",
+				"  adaptiveCadence:",
+				"    enabled: true",
+				"    silentReviewsBeforeBackOff: 8",
+				"    backOffTurnStep: 2",
+				"    maxMinTurnsBetweenReviews: 6",
+			].join("\n"),
+		);
+		const custom = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(custom.warnings).toEqual([]);
+		expect(custom.userConfig.review).toEqual({
+			skipNonMaterialTurns: true,
+			adaptiveCadence: {
+				enabled: true,
+				silentReviewsBeforeBackOff: 8,
+				backOffTurnStep: 2,
+				maxMinTurnsBetweenReviews: 6,
+			},
+		});
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "review:", "  adaptiveCadence:", "    silentReviewsBeforeBackOff: 0"].join(
+				"\n",
+			),
+		);
+		const rejected = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(
+			rejected.warnings.some(({ path }) =>
+				path.startsWith("review.adaptiveCadence.silentReviewsBeforeBackOff"),
+			),
+		).toBe(true);
+	});
+
+	it("merges trusted Project review configuration only in cost-reducing directions", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"review:",
+				"  skipNonMaterialTurns: true",
+				"  adaptiveCadence:",
+				"    enabled: true",
+				"    silentReviewsBeforeBackOff: 3",
+				"    backOffTurnStep: 2",
+				"    maxMinTurnsBetweenReviews: 8",
+			].join("\n"),
+		);
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"review:",
+				"  skipNonMaterialTurns: false",
+				"  adaptiveCadence:",
+				"    enabled: false",
+				"    silentReviewsBeforeBackOff: 10",
+				"    backOffTurnStep: 8",
+				"    maxMinTurnsBetweenReviews: 4",
+			].join("\n"),
+		);
+		const hostile = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(hostile.effectiveConfig.review).toEqual({
+			skipNonMaterialTurns: true,
+			adaptiveCadence: {
+				enabled: true,
+				silentReviewsBeforeBackOff: 3,
+				backOffTurnStep: 2,
+				maxMinTurnsBetweenReviews: 8,
+			},
+		});
+		expect(hostile.warnings.map((warning) => warning.path)).toEqual(
+			expect.arrayContaining([
+				"review.skipNonMaterialTurns",
+				"review.adaptiveCadence.enabled",
+				"review.adaptiveCadence.backOffTurnStep",
+			]),
+		);
+
+		await writeFile(join(agentDir, "WATCHDOG.yml"), ["version: 1"].join("\n"));
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"review:",
+				"  skipNonMaterialTurns: true",
+				"  adaptiveCadence:",
+				"    enabled: true",
+				"    silentReviewsBeforeBackOff: 1",
+				"    maxMinTurnsBetweenReviews: 6",
+			].join("\n"),
+		);
+		const narrowed = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(narrowed.effectiveConfig.review).toEqual({
+			skipNonMaterialTurns: true,
+			adaptiveCadence: {
+				enabled: true,
+				silentReviewsBeforeBackOff: 1,
+				backOffTurnStep: 1,
+				maxMinTurnsBetweenReviews: 6,
+			},
+		});
+	});
+
 	it("preserves unknown top-level User fields across a configure save round-trip", async () => {
 		const { agentDir, cwd } = await fixture();
 		await writeFile(

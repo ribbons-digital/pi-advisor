@@ -154,7 +154,7 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 			providerId: "pi-advisor-fixture-advisor",
 			modelId: "advisor-scripted",
 			api: ADVISOR_SCRIPTED_API,
-			responses: [{ content: [] }],
+			responses: [{ content: [] }, { content: [] }, { content: [] }],
 		});
 		const largeOutput = defineTool({
 			name: "large_output",

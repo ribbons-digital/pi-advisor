@@ -201,6 +201,10 @@ Secrets can exist in ordinary source files, generated output, hard-link aliases,
 See [Security](docs/security.md) for the protected targets, tool bounds, controls, and residual risks.
 
 Automatic review creates additional provider requests, latency, token usage, and cost.
+In-flight reviews that have not started `advise` are superseded when a newer meaningful update arrives, so Advisor spends the remainder of that attempt on the coalesced newer window instead of finishing a stale review.
+`review.skipNonMaterialTurns` can hold purely conversational turns until later material Executor activity, and `review.adaptiveCadence` can widen the minimum turn distance after consecutive silent reviews.
+Both options default off.
+Held-for-material-turn evidence is not restored across resume.
 Cumulative session token and reported-cost caps default to `off`, while complete lifetime usage remains visible in `/advisor status`.
 An explicitly configured positive cap pauses only Advisor and never interrupts the Executor.
 A trusted Project may add or lower a finite cap but cannot remove or raise a finite User cap.
