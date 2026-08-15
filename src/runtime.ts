@@ -2719,6 +2719,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			}
 			if (
 				run.abortedForSupersession === true &&
+				run.adviseExecutionStartedCallIds.size === 0 &&
 				this.pendingUpdate !== undefined &&
 				this.activeReviewMatches(reviewId)
 			) {
