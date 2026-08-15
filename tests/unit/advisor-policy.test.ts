@@ -1346,3 +1346,48 @@ describe("Quality Slice Q5 dedupe accuracy", () => {
 		});
 	});
 });
+
+describe("Quality Slice Q5 dedupe rollback restoration", () => {
+	const POLICY: DedupePolicy = { similarityRedeliveryThreshold: 0.5, reRaiseMinTurns: 4 };
+
+	function finding(
+		note: string,
+		severity: AdviceSeverity = "concern",
+	): AdviceDedupeIdentity & { note: string } {
+		return { note, severity, intent: "review", findingKeyHash: "a".repeat(64) };
+	}
+
+	it("restores prior metadata on rollback instead of deleting a re-delivered key", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding(
+			"The rollback path drops the pending migration state on failure.",
+			"concern",
+		);
+		dedupe.add(first, 1);
+		const blocker = finding(first.note, "blocker");
+		const snapshot = dedupe.snapshotEntry(blocker);
+		expect(dedupe.add(blocker, 5)).toBe(false);
+		dedupe.restoreEntry(snapshot);
+		expect(dedupe.size).toBe(1);
+		const entries = dedupe.exportNewestEntries(8);
+		expect(entries.find((entry) => entry.hash === adviceDedupeKey(first))?.metadata).toEqual({
+			severity: "concern",
+			signature: noteSignature(first.note).toString(16).padStart(16, "0"),
+			lastDeliveryTurn: 1,
+		});
+		expect(dedupe.decide(blocker, 5, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "re-raised",
+		});
+	});
+
+	it("restoring a fresh-key snapshot deletes the inserted key", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		const snapshot = dedupe.snapshotEntry(first);
+		dedupe.add(first, 1);
+		dedupe.restoreEntry(snapshot);
+		expect(dedupe.size).toBe(0);
+		expect(dedupe.decide(first, 9, POLICY)).toEqual({ outcome: "deliver" });
+	});
+});

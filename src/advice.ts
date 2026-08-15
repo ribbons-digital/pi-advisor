@@ -425,12 +425,17 @@ export interface PersistedDedupeEntry {
 	metadata?: PersistedDedupeKeyMetadata;
 }
 
-interface DedupeEntry {
+export interface AdviceDedupeEntryState {
 	metadata?: {
 		severity: AdviceSeverity;
 		signature: bigint;
 		lastDeliveryTurn: number;
 	};
+}
+
+export interface AdviceDedupeSnapshot {
+	key: string;
+	entry: AdviceDedupeEntryState | undefined;
 }
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
@@ -439,7 +444,7 @@ const SIGNATURE_PATTERN = /^[a-f0-9]{16}$/u;
 function metadataFor(
 	advice: AdviceDedupeIdentity,
 	turnNumber: number | undefined,
-): DedupeEntry["metadata"] {
+): AdviceDedupeEntryState["metadata"] {
 	if (
 		turnNumber === undefined ||
 		advice.intent !== "review" ||
@@ -456,7 +461,7 @@ function metadataFor(
 }
 
 export class BoundedAdviceDedupe {
-	private readonly entries = new Map<string, DedupeEntry>();
+	private readonly entries = new Map<string, AdviceDedupeEntryState>();
 
 	constructor(readonly capacity = 4_096) {
 		if (!Number.isInteger(capacity) || capacity < 1) {
@@ -524,6 +529,33 @@ export class BoundedAdviceDedupe {
 
 	delete(advice: AdviceDedupeIdentity): boolean {
 		return this.entries.delete(adviceDedupeKey(advice));
+	}
+
+	/** Captures the entry state before an `add` so a failed delivery can restore it. */
+	snapshotEntry(advice: AdviceDedupeIdentity): AdviceDedupeSnapshot {
+		const key = adviceDedupeKey(advice);
+		const entry = this.entries.get(key);
+		return {
+			key,
+			entry:
+				entry === undefined
+					? undefined
+					: entry.metadata === undefined
+						? {}
+						: { metadata: { ...entry.metadata } },
+		};
+	}
+
+	/**
+	 * Restores the captured pre-add entry state: deletes a newly inserted key or
+	 * replaces the in-place metadata update, preserving insertion order.
+	 */
+	restoreEntry(snapshot: AdviceDedupeSnapshot): void {
+		if (snapshot.entry === undefined) {
+			this.entries.delete(snapshot.key);
+			return;
+		}
+		this.entries.set(snapshot.key, snapshot.entry);
 	}
 
 	clear(): void {

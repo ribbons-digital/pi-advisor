@@ -1,11 +1,16 @@
-import { type InlineExtension } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+
+import { type ExtensionAPI, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+	adviceDedupeKey,
 	createPiAdvisorExtension,
 	DEFAULT_ADVISOR_CONFIG,
+	noteSignature,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type BoundedAdviceDedupe,
 } from "../../src/index.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
@@ -269,6 +274,85 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 			expect(runtime?.getStatus()).toMatchObject({
 				notesDelivered: 1,
 				notesSuppressed: 2,
+			});
+			expect(JSON.stringify(primary.requests[3]?.context)).not.toContain('tag=\\"re-raised\\"');
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("restores prior dedupe metadata when a tagged delivery fails", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "one" }] },
+			{ content: [{ type: "text", text: "two" }] },
+			{ content: [{ type: "text", text: "three" }] },
+			{ content: [{ type: "text", text: "four" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			reviewAdvice(ROLLBACK_NOTE, ROLLBACK_KEY, "concern"),
+			{ content: [] },
+			reviewAdvice(ROLLBACK_NOTE, ROLLBACK_KEY, "blocker"),
+			reviewAdvice(ROLLBACK_NOTE, ROLLBACK_KEY, "concern"),
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.dedupe.reRaiseMinTurns = 2;
+						config.delivery.activeIdleSeverities = ["blocker"];
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			await harness.session.prompt("review one");
+			await waitFor(() => activeRuntime.getStatus().reviewsCompleted === 1);
+			await harness.session.prompt("review two");
+			await waitFor(() => activeRuntime.getStatus().reviewsCompleted === 2);
+
+			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => {
+				throw new Error("scripted tagged delivery failure");
+			});
+			await harness.session.prompt("review three");
+			await waitFor(() => activeRuntime.getStatus().deliveryFailures === 1);
+			expect(activeRuntime.getStatus()).toMatchObject({
+				reviewsCompleted: 2,
+				failedReviews: 1,
+				consecutiveFailures: 1,
+			});
+
+			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			const findingHash = createHash("sha256")
+				.update(`review-finding:${ROLLBACK_KEY}`)
+				.digest("hex");
+			const key = adviceDedupeKey({
+				note: ROLLBACK_NOTE,
+				severity: "concern",
+				intent: "review",
+				findingKeyHash: findingHash,
+			});
+			expect(dedupe.exportNewestEntries(8).find((entry) => entry.hash === key)?.metadata).toEqual({
+				severity: "concern",
+				signature: noteSignature(ROLLBACK_NOTE).toString(16).padStart(16, "0"),
+				lastDeliveryTurn: 1,
+			});
+
+			sendMessage.mockRestore();
+
+			await harness.session.prompt("review four");
+			await waitFor(() => activeRuntime.getStatus().reviewsCompleted === 3);
+			expect(activeRuntime.getStatus()).toMatchObject({
+				notesDelivered: 1,
+				notesSuppressed: 1,
 			});
 			expect(JSON.stringify(primary.requests[3]?.context)).not.toContain('tag=\\"re-raised\\"');
 		} finally {

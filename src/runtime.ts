@@ -3002,6 +3002,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			return undefined;
 		}
 		const tag = dedupeDecision.tag;
+		const dedupeSnapshot = this.adviceDedupe.snapshotEntry(advice);
 		const dispatch = selectAdviceDispatch({
 			forceDeferred,
 			aborted: ctx.signal?.aborted === true,
@@ -3102,7 +3103,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			const queueState = this.memoryQueueState(advice);
 			if (dispatch === "followUp" && queueState === "could-not-queue") {
 				this.activeAdvice.remove(identity);
-				this.adviceDedupe.delete(advice);
+				this.adviceDedupe.restoreEntry(dedupeSnapshot);
 				this.memorySuggestionAdmissions = previousAdmissions;
 				if (previousTurn === undefined) delete this.lastMemorySuggestionTurn;
 				else this.lastMemorySuggestionTurn = previousTurn;
@@ -3161,7 +3162,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					this.updateBacklogStatus();
 				}
 				this.activeAdvice.remove(identity);
-				this.adviceDedupe.delete(advice);
+				this.adviceDedupe.restoreEntry(dedupeSnapshot);
 				this.memorySuggestionAdmissions = previousAdmissions;
 				if (previousTurn === undefined) delete this.lastMemorySuggestionTurn;
 				else this.lastMemorySuggestionTurn = previousTurn;
