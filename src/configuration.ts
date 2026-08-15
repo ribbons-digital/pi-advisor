@@ -120,6 +120,15 @@ const ReviewSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const DedupeSchema = Type.Object(
+	{
+		similarityRedeliveryThreshold: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+		reRaiseMinTurns: Type.Optional(
+			Type.Number({ minimum: 0, maximum: HARD_LIMITS.reRaiseMinTurns }),
+		),
+	},
+	{ additionalProperties: false },
+);
 const UserSchema = Type.Object(
 	{
 		version: Type.Literal(ADVISOR_CONFIG_VERSION),
@@ -133,6 +142,7 @@ const UserSchema = Type.Object(
 		security: Type.Optional(SecuritySchema),
 		delivery: Type.Optional(DeliverySchema),
 		review: Type.Optional(ReviewSchema),
+		dedupe: Type.Optional(DedupeSchema),
 		memorySuggestions: Type.Optional(MemorySchema),
 		persistence: Type.Optional(
 			Type.Object({ transcript: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
@@ -155,6 +165,7 @@ const ProjectSchema = Type.Object(
 		),
 		delivery: Type.Optional(DeliverySchema),
 		review: Type.Optional(ReviewSchema),
+		dedupe: Type.Optional(DedupeSchema),
 		memorySuggestions: Type.Optional(MemorySchema),
 	},
 	{ additionalProperties: false },
@@ -175,6 +186,7 @@ const USER_KEYS = new Set([
 	"security",
 	"delivery",
 	"review",
+	"dedupe",
 	"memorySuggestions",
 	"persistence",
 ]);
@@ -187,6 +199,7 @@ const PROJECT_KEYS = new Set([
 	"security",
 	"delivery",
 	"review",
+	"dedupe",
 	"memorySuggestions",
 ]);
 const CONTEXT_KEYS = new Set(["maxFraction", "reserveTokens", "maxUpdateTokens"]);
@@ -195,6 +208,7 @@ const SECURITY_USER_KEYS = new Set(["additionalProtectedPaths", "protectedPathEx
 const SECURITY_PROJECT_KEYS = new Set(["additionalProtectedPaths"]);
 const DELIVERY_KEYS = new Set(["activeIdleSeverities"]);
 const REVIEW_KEYS = new Set(["skipNonMaterialTurns", "adaptiveCadence"]);
+const DEDUPE_KEYS = new Set(["similarityRedeliveryThreshold", "reRaiseMinTurns"]);
 const ADAPTIVE_CADENCE_KEYS = new Set([
 	"enabled",
 	"silentReviewsBeforeBackOff",
@@ -257,6 +271,7 @@ function collectUnknownWarnings(
 		["security", source === "user" ? SECURITY_USER_KEYS : SECURITY_PROJECT_KEYS],
 		["delivery", DELIVERY_KEYS],
 		["review", REVIEW_KEYS],
+		["dedupe", DEDUPE_KEYS],
 		["memorySuggestions", MEMORY_KEYS],
 	];
 	if (source === "user") nested.push(["persistence", PERSISTENCE_KEYS]);
@@ -358,11 +373,13 @@ function pickKnown(value: unknown, source: "user" | "project"): Record<string, u
 								? DELIVERY_KEYS
 								: key === "review"
 									? REVIEW_KEYS
-									: key === "memorySuggestions"
-										? MEMORY_KEYS
-										: key === "persistence"
-											? PERSISTENCE_KEYS
-											: undefined;
+									: key === "dedupe"
+										? DEDUPE_KEYS
+										: key === "memorySuggestions"
+											? MEMORY_KEYS
+											: key === "persistence"
+												? PERSISTENCE_KEYS
+												: undefined;
 			if (nestedKeys !== undefined) {
 				const picked = Object.fromEntries(
 					Object.entries(candidate).filter(([nestedKey, nestedValue]) => {
@@ -467,6 +484,7 @@ function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>)
 	const security = (document.security ?? {}) as Partial<AdvisorConfig["security"]>;
 	const delivery = (document.delivery ?? {}) as Partial<AdvisorConfig["delivery"]>;
 	const review = (document.review ?? {}) as Partial<AdvisorConfig["review"]>;
+	const dedupe = (document.dedupe ?? {}) as Partial<AdvisorConfig["dedupe"]>;
 	const adaptive = (review.adaptiveCadence ?? {}) as Partial<
 		AdvisorConfig["review"]["adaptiveCadence"]
 	>;
@@ -501,6 +519,7 @@ function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>)
 				...adaptive,
 			},
 		},
+		dedupe: { ...base.dedupe, ...dedupe },
 		memorySuggestions: { ...base.memorySuggestions, ...memory },
 		persistence: { ...base.persistence, ...persistence },
 		version: ADVISOR_CONFIG_VERSION,
@@ -647,6 +666,20 @@ export function mergeProjectConfiguration(
 						),
 		},
 		review: mergeProjectReviewConfiguration(userConfig, project),
+		dedupe: {
+			similarityRedeliveryThreshold: Math.min(
+				userConfig.dedupe.similarityRedeliveryThreshold,
+				project.dedupe?.similarityRedeliveryThreshold ??
+					userConfig.dedupe.similarityRedeliveryThreshold,
+			),
+			reRaiseMinTurns:
+				userConfig.dedupe.reRaiseMinTurns === 0 || project.dedupe?.reRaiseMinTurns === 0
+					? 0
+					: Math.max(
+							userConfig.dedupe.reRaiseMinTurns,
+							project.dedupe?.reRaiseMinTurns ?? userConfig.dedupe.reRaiseMinTurns,
+						),
+		},
 		memorySuggestions,
 	});
 }

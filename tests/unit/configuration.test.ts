@@ -10,10 +10,12 @@ import {
 	configureAdvisor,
 	DEFAULT_ADVISOR_CONFIG,
 	hasAdvisorCommandCollision,
+	HARD_LIMITS,
 	loadAdvisorConfiguration,
 	MAX_WATCHDOG_MARKDOWN_BYTES,
 	MAX_WATCHDOG_YAML_BYTES,
 	mergeProjectConfiguration,
+	normalizeAdvisorConfig,
 	pickAdvisorInteractiveConfiguration,
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
@@ -1079,5 +1081,141 @@ describe("WATCHDOG configuration", () => {
 		} finally {
 			await chmod(agentDir, 0o700);
 		}
+	});
+});
+
+describe("Quality Slice Q5 dedupe configuration", () => {
+	it("loads dedupe defaults and rejects out-of-range values", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(join(agentDir, "WATCHDOG.yml"), ["version: 1"].join("\n"));
+		const defaults = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(defaults.warnings).toEqual([]);
+		expect(defaults.userConfig.dedupe).toEqual({
+			similarityRedeliveryThreshold: 0.5,
+			reRaiseMinTurns: 4,
+		});
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"dedupe:",
+				"  similarityRedeliveryThreshold: 0.25",
+				"  reRaiseMinTurns: 8",
+			].join("\n"),
+		);
+		const custom = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(custom.warnings).toEqual([]);
+		expect(custom.userConfig.dedupe).toEqual({
+			similarityRedeliveryThreshold: 0.25,
+			reRaiseMinTurns: 8,
+		});
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "dedupe:", "  similarityRedeliveryThreshold: 1.5"].join("\n"),
+		);
+		const rejected = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(
+			rejected.warnings.some(({ path }) => path.startsWith("dedupe.similarityRedeliveryThreshold")),
+		).toBe(true);
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "dedupe:", "  reRaiseMinTurns: 65"].join("\n"),
+		);
+		const rejectedTurns = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(
+			rejectedTurns.warnings.some(({ path }) => path.startsWith("dedupe.reRaiseMinTurns")),
+		).toBe(true);
+	});
+
+	it("clamps dedupe values to hard limits and floors turn counts", () => {
+		expect(
+			normalizeAdvisorConfig({
+				...structuredClone(DEFAULT_ADVISOR_CONFIG),
+				dedupe: { similarityRedeliveryThreshold: 2, reRaiseMinTurns: 100 },
+			}).dedupe,
+		).toEqual({ similarityRedeliveryThreshold: 1, reRaiseMinTurns: HARD_LIMITS.reRaiseMinTurns });
+		expect(
+			normalizeAdvisorConfig({
+				...structuredClone(DEFAULT_ADVISOR_CONFIG),
+				dedupe: { similarityRedeliveryThreshold: -1, reRaiseMinTurns: 2.5 },
+			}).dedupe,
+		).toEqual({ similarityRedeliveryThreshold: 0, reRaiseMinTurns: 2 });
+	});
+
+	it("merges trusted Project dedupe configuration only in redelivery-reducing directions", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"dedupe:",
+				"  similarityRedeliveryThreshold: 0.5",
+				"  reRaiseMinTurns: 4",
+			].join("\n"),
+		);
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"dedupe:",
+				"  similarityRedeliveryThreshold: 0.9",
+				"  reRaiseMinTurns: 1",
+			].join("\n"),
+		);
+		const hostile = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(hostile.effectiveConfig.dedupe).toEqual({
+			similarityRedeliveryThreshold: 0.5,
+			reRaiseMinTurns: 4,
+		});
+
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"dedupe:",
+				"  similarityRedeliveryThreshold: 0.1",
+				"  reRaiseMinTurns: 12",
+			].join("\n"),
+		);
+		const narrowed = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(narrowed.effectiveConfig.dedupe).toEqual({
+			similarityRedeliveryThreshold: 0.1,
+			reRaiseMinTurns: 12,
+		});
+	});
+
+	it("lets Project dedupe configuration zero re-raise but never re-enable redelivery", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(join(agentDir, "WATCHDOG.yml"), ["version: 1"].join("\n"));
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			["version: 1", "dedupe:", "  reRaiseMinTurns: 0"].join("\n"),
+		);
+		const narrowed = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(narrowed.effectiveConfig.dedupe).toEqual({
+			similarityRedeliveryThreshold: 0.5,
+			reRaiseMinTurns: 0,
+		});
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "dedupe:", "  reRaiseMinTurns: 0"].join("\n"),
+		);
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			["version: 1", "dedupe:", "  reRaiseMinTurns: 8"].join("\n"),
+		);
+		const staysDisabled = await loadAdvisorConfiguration({
+			agentDir,
+			cwd,
+			projectTrusted: true,
+		});
+		expect(staysDisabled.effectiveConfig.dedupe).toEqual({
+			similarityRedeliveryThreshold: 0.5,
+			reRaiseMinTurns: 0,
+		});
 	});
 });

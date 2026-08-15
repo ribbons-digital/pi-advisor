@@ -10,7 +10,12 @@ import {
 	type MarkdownTheme,
 } from "@earendil-works/pi-tui";
 
-import type { AdviceDelivery, AdviceSeverity, MemorySuggestionQueueState } from "./advice.js";
+import type {
+	AdviceDelivery,
+	AdviceDedupeTag,
+	AdviceSeverity,
+	MemorySuggestionQueueState,
+} from "./advice.js";
 import { HARD_LIMITS } from "./config.js";
 import {
 	isMemorySuggestionBasis,
@@ -39,6 +44,7 @@ interface AdvicePresentationBase {
 export interface ReviewAdvicePresentationNote extends AdvicePresentationBase {
 	intent: "review";
 	severity: AdviceSeverity;
+	tag?: AdviceDedupeTag;
 }
 
 export interface MemorySuggestionPresentationNote extends AdvicePresentationBase {
@@ -299,7 +305,12 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 	const base = parsePresentationBase(note);
 	if (base === undefined) return undefined;
 	if (note.intent === "review" && isAdviceSeverity(note.severity)) {
-		return { ...base, intent: "review", severity: note.severity };
+		return {
+			...base,
+			intent: "review",
+			severity: note.severity,
+			...(note.tag === "possible-duplicate" || note.tag === "re-raised" ? { tag: note.tag } : {}),
+		};
 	}
 	if (
 		note.intent !== "memory-suggestion" ||
@@ -415,6 +426,10 @@ export function renderAdviceCards(
 			...(note.intent === "memory-suggestion" ? [note.memory.category, note.memory.basis] : []),
 			...(note.stale ? ["potentially stale"] : []),
 			...(note.restoredAfterResume ? ["restored after resume"] : []),
+			...(note.intent === "review" && note.tag === "possible-duplicate"
+				? ["possible duplicate"]
+				: []),
+			...(note.intent === "review" && note.tag === "re-raised" ? ["re-raised"] : []),
 		];
 		box.addChild(new Spacer(1));
 		box.addChild(new Text(theme.fg(note.stale ? "warning" : "muted", metadata.join(" · ")), 0, 0));

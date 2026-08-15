@@ -28,6 +28,7 @@ import {
 	createStrictAdviseTool,
 	formatAdviceForDelivery,
 	type AcceptedAdvice,
+	type AdviceDedupeTag,
 	type AdviceCollector,
 	type AdviceDelivery,
 	type MemorySuggestionQueueState,
@@ -442,6 +443,7 @@ interface PendingAdvice {
 	displayedInEntry: boolean;
 	restoredAfterResume?: boolean;
 	reviewId?: string;
+	tag?: AdviceDedupeTag;
 }
 
 type TranscriptRecordDetails = PersistedAdvisorTranscriptRecordV2 extends infer Record
@@ -1318,8 +1320,8 @@ export class AdvisorRuntime {
 				discardedIdentities.add(identity);
 			}
 		}
-		this.adviceDedupe.restoreKeys(
-			state.dedupeHashes.filter((hash) => !discardedIdentities.has(hash)),
+		this.adviceDedupe.restoreEntries(
+			state.dedupeHashes.filter((entry) => !discardedIdentities.has(entry.hash)),
 		);
 	}
 
@@ -1475,7 +1477,7 @@ export class AdvisorRuntime {
 				: { lastReviewSubmittedAt: this.lastReviewSubmittedAt }),
 			activeDeliveries,
 			deferredAdvice,
-			dedupeHashes: this.adviceDedupe.exportNewestKeys(
+			dedupeHashes: this.adviceDedupe.exportNewestEntries(
 				MAX_PERSISTED_DEDUPE_HASHES,
 				transientIdentities,
 			),
@@ -2914,6 +2916,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		queueState?: MemorySuggestionQueueState,
 		restoredAfterResume = false,
 		reviewId?: string,
+		tag?: AdviceDedupeTag,
 	): AdvicePresentationNote {
 		const common = {
 			note: advice.note,
@@ -2935,7 +2938,12 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					memory: { ...advice.memory },
 					...(queueState === undefined ? {} : { queueState }),
 				}
-			: { ...common, intent: advice.intent, severity: advice.severity };
+			: {
+					...common,
+					intent: advice.intent,
+					severity: advice.severity,
+					...(tag === undefined ? {} : { tag }),
+				};
 	}
 
 	private memoryQueueState(advice: AcceptedAdvice): MemorySuggestionQueueState | undefined {
@@ -2963,6 +2971,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			this.memoryQueueState(pending.advice),
 			pending.restoredAfterResume === true,
 			pending.reviewId,
+			pending.tag,
 		);
 		const data: LateAdviceEntryData = { note: details, displayedAt: Date.now() };
 		try {
@@ -2983,14 +2992,16 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		reviewId: string,
 	): AdviceDelivery | undefined {
 		const identity = adviceDedupeKey(advice);
-		if (
-			this.pendingAdvice.has(identity) ||
-			this.activeAdvice.has(identity) ||
-			this.adviceDedupe.has(advice)
-		) {
+		if (this.pendingAdvice.has(identity) || this.activeAdvice.has(identity)) {
 			this.status.notesSuppressed++;
 			return undefined;
 		}
+		const dedupeDecision = this.adviceDedupe.decide(advice, turnNumber, this.config.dedupe);
+		if (dedupeDecision.outcome === "suppress") {
+			this.status.notesSuppressed++;
+			return undefined;
+		}
+		const tag = dedupeDecision.tag;
 		const dispatch = selectAdviceDispatch({
 			forceDeferred,
 			aborted: ctx.signal?.aborted === true,
@@ -3013,6 +3024,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				branchWindow: cursorAtTail(ctx.sessionManager.getBranch()),
 				displayedInEntry: false,
 				reviewId,
+				...(tag === undefined ? {} : { tag }),
 			};
 			const admission = this.pendingAdvice.enqueue(identity, pending, adviceQueueBytes(advice));
 			if (admission !== "accepted") {
@@ -3025,7 +3037,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				}
 				return undefined;
 			}
-			this.adviceDedupe.add(advice);
+			this.adviceDedupe.add(advice, turnNumber);
 			this.recordMemorySuggestionAdmission(advice, turnNumber);
 			this.refreshDeferredAdviceStatus();
 			this.persistState();
@@ -3042,6 +3054,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				reviewId,
 				turnNumber,
 				epoch: this.status.epoch,
+				...(tag === undefined ? {} : { tag }),
 			};
 			const candidateDeliveries = [...this.activeAdvice.values(), outstanding].map((pending) => ({
 				advice: pending.advice,
@@ -3079,7 +3092,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			const previousAdmissions = this.memorySuggestionAdmissions;
 			const previousTurn = this.lastMemorySuggestionTurn;
 			const previousAt = this.lastMemorySuggestionAt;
-			this.adviceDedupe.add(advice);
+			this.adviceDedupe.add(advice, turnNumber);
 			this.recordMemorySuggestionAdmission(advice, turnNumber);
 			if (dispatch === "followUp" && advice.intent === "review") {
 				this.automaticReviewFollowUpDeliveryId = deliveryId;
@@ -3107,6 +3120,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				queueState,
 				false,
 				reviewId,
+				tag,
 			);
 			const supersedesNewerExecutorReview = dispatch === "followUp" && stale;
 			const supersededUpdate = supersedesNewerExecutorReview ? this.pendingUpdate : undefined;
@@ -3120,7 +3134,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				this.pi.sendMessage(
 					{
 						customType: ADVISOR_CUSTOM_TYPE,
-						content: formatAdviceForDelivery(advice, "active", stale, queueState),
+						content: formatAdviceForDelivery(advice, "active", stale, queueState, false, tag),
 						display: true,
 						details: { ...details, notes: [details] },
 					},
@@ -3195,6 +3209,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				isStale(pending),
 				this.memoryQueueState(pending.advice),
 				pending.restoredAfterResume === true,
+				pending.tag,
 			),
 		);
 		const pending = batch.map(({ value, rendered }) => ({
@@ -3210,7 +3225,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			({ advice }) => advice.intent === "memory-suggestion",
 		).length;
 		const notes = pending.map(
-			({ advice, stale, displayedInEntry, restoredAfterResume, reviewId }) =>
+			({ advice, stale, displayedInEntry, restoredAfterResume, reviewId, tag }) =>
 				this.adviceDetails(
 					advice,
 					"deferred",
@@ -3220,6 +3235,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					this.memoryQueueState(advice),
 					restoredAfterResume === true,
 					reviewId,
+					tag,
 				),
 		);
 		const content = pending.map(({ formatted }) => formatted).join("\n\n");

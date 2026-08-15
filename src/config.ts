@@ -36,6 +36,11 @@ export interface AdvisorReviewConfig {
 	adaptiveCadence: AdvisorAdaptiveCadenceConfig;
 }
 
+export interface AdvisorDedupeConfig {
+	similarityRedeliveryThreshold: number;
+	reRaiseMinTurns: number;
+}
+
 export interface AdvisorLimitConfig {
 	maxAdviceCharacters: number;
 	maxAdviceTokens: number;
@@ -74,6 +79,7 @@ export interface AdvisorUserConfig {
 	};
 	delivery: AdvisorDeliveryConfig;
 	review: AdvisorReviewConfig;
+	dedupe: AdvisorDedupeConfig;
 	memorySuggestions: MemorySuggestionConfig;
 	persistence: {
 		transcript: boolean;
@@ -101,6 +107,7 @@ export interface AdvisorProjectConfig {
 			maxMinTurnsBetweenReviews?: number;
 		};
 	};
+	dedupe?: Partial<AdvisorDedupeConfig>;
 	memorySuggestions?: {
 		enabled?: false;
 	} & Partial<Omit<MemorySuggestionConfig, "enabled">>;
@@ -152,6 +159,10 @@ const CANONICAL_DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze({
 			maxMinTurnsBetweenReviews: 4,
 		},
 	},
+	dedupe: {
+		similarityRedeliveryThreshold: 0.5,
+		reRaiseMinTurns: 4,
+	},
 	memorySuggestions: {
 		enabled: true,
 		minTurnsBetweenSuggestions: 8,
@@ -188,6 +199,7 @@ export const HARD_LIMITS = {
 	silentReviewsBeforeBackOff: 32,
 	backOffTurnStep: 8,
 	maxMinTurnsBetweenReviews: 64,
+	reRaiseMinTurns: 64,
 } as const;
 
 function finiteAtLeast(value: number, minimum: number, fallback: number): number {
@@ -337,6 +349,24 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 			),
 		},
 		review: normalizeReviewConfig(input.review, input.limits.minTurnsBetweenReviews),
+		dedupe: {
+			similarityRedeliveryThreshold: Math.min(
+				1,
+				finiteAtLeast(
+					input.dedupe.similarityRedeliveryThreshold,
+					0,
+					defaults.dedupe.similarityRedeliveryThreshold,
+				),
+			),
+			reRaiseMinTurns: Math.floor(
+				finiteClamped(
+					input.dedupe.reRaiseMinTurns,
+					0,
+					HARD_LIMITS.reRaiseMinTurns,
+					defaults.dedupe.reRaiseMinTurns,
+				),
+			),
+		},
 		memorySuggestions: {
 			enabled: input.memorySuggestions.enabled,
 			minTurnsBetweenSuggestions: finiteAtLeast(

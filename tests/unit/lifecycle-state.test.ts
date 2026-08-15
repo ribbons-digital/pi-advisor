@@ -95,7 +95,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 		const valid = stateFor(manager);
 		expect(parsePersistedAdvisorRuntimeState(valid, manager.getSessionId(), branch)).toEqual(valid);
 		expect(
-			parsePersistedAdvisorRuntimeState({ ...valid, version: 4 }, manager.getSessionId(), branch),
+			parsePersistedAdvisorRuntimeState({ ...valid, version: 5 }, manager.getSessionId(), branch),
 		).toBeUndefined();
 		expect(parsePersistedAdvisorRuntimeState(valid, "another-session", branch)).toBeUndefined();
 		expect(
@@ -196,6 +196,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 		semanticAdvice.findingKeyHash = "a".repeat(64);
 		const current = {
 			...stateFor(manager),
+			version: 3,
 			deferredAdvice: [
 				{
 					advice: semanticAdvice,
@@ -206,9 +207,11 @@ describe("Slice 3A lifecycle state primitives", () => {
 			],
 			dedupeHashes: [adviceDedupeKey(semanticAdvice)],
 		};
-		expect(parsePersistedAdvisorRuntimeState(current, manager.getSessionId(), branch)).toEqual(
-			current,
-		);
+		expect(parsePersistedAdvisorRuntimeState(current, manager.getSessionId(), branch)).toEqual({
+			...current,
+			version: ADVISOR_RUNTIME_STATE_VERSION,
+			dedupeHashes: [{ hash: adviceDedupeKey(semanticAdvice) }],
+		});
 
 		const invalidHash = structuredClone(current);
 		if (invalidHash.deferredAdvice[0]?.advice.intent !== "review") {
@@ -353,22 +356,139 @@ describe("Slice 3A lifecycle state primitives", () => {
 		) {
 			throw new Error("Expected all dedupe fixtures");
 		}
-		expect(dedupe.exportNewestKeys(0)).toEqual([]);
-		expect(() => dedupe.exportNewestKeys(-1)).toThrow(RangeError);
-		expect(() => dedupe.exportNewestKeys(1.5)).toThrow(RangeError);
-		const newest = dedupe.exportNewestKeys(2);
+		expect(dedupe.exportNewestEntries(0)).toEqual([]);
+		expect(() => dedupe.exportNewestEntries(-1)).toThrow(RangeError);
+		expect(() => dedupe.exportNewestEntries(1.5)).toThrow(RangeError);
+		const newest = dedupe.exportNewestEntries(2);
 		expect(newest).toHaveLength(2);
 		const fourthKey = adviceDedupeKey(fourth);
-		expect(dedupe.exportNewestKeys(2, new Set([fourthKey]))).toEqual([
-			adviceDedupeKey(second),
-			adviceDedupeKey(third),
+		expect(dedupe.exportNewestEntries(2, new Set([fourthKey]))).toEqual([
+			{ hash: adviceDedupeKey(second) },
+			{ hash: adviceDedupeKey(third) },
 		]);
 
 		const restored = new BoundedAdviceDedupe(4);
-		restored.restoreKeys(["invalid", ...newest, ...newest]);
+		restored.restoreEntries([{ hash: "invalid" }, ...newest, ...newest]);
 		expect(restored.size).toBe(2);
 		expect(restored.has(first)).toBe(false);
 		expect(restored.has(third)).toBe(true);
 		expect(restored.has(fourth)).toBe(true);
+	});
+});
+
+describe("Quality Slice Q5 dedupe metadata persistence", () => {
+	it("round-trips version 4 dedupe metadata and rejects malformed entries", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const signature = "0123456789abcdef";
+		const withMetadata = {
+			...stateFor(manager),
+			dedupeHashes: [
+				{ hash: "a".repeat(64) },
+				{
+					hash: "b".repeat(64),
+					metadata: { severity: "concern", signature, lastDeliveryTurn: 1 },
+				},
+			],
+			memorySuggestions: {
+				...stateFor(manager).memorySuggestions,
+				meaningfulTurnCount: 1,
+			},
+		};
+		expect(parsePersistedAdvisorRuntimeState(withMetadata, manager.getSessionId(), branch)).toEqual(
+			withMetadata,
+		);
+
+		const entry = (hash: string, metadata: unknown) => ({ hash, metadata });
+		const badSeverity = {
+			...stateFor(manager),
+			dedupeHashes: [entry("a".repeat(64), { severity: "urgent", signature, lastDeliveryTurn: 1 })],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(badSeverity, manager.getSessionId(), branch),
+		).toBeUndefined();
+		const badSignature = {
+			...stateFor(manager),
+			dedupeHashes: [
+				entry("a".repeat(64), { severity: "concern", signature: "XYZ", lastDeliveryTurn: 1 }),
+			],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(badSignature, manager.getSessionId(), branch),
+		).toBeUndefined();
+		const badTurn = {
+			...stateFor(manager),
+			dedupeHashes: [
+				entry("a".repeat(64), { severity: "concern", signature, lastDeliveryTurn: 0 }),
+			],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(badTurn, manager.getSessionId(), branch),
+		).toBeUndefined();
+		const missingTurn = {
+			...stateFor(manager),
+			dedupeHashes: [entry("a".repeat(64), { severity: "concern", signature })],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(missingTurn, manager.getSessionId(), branch),
+		).toBeUndefined();
+		const unknownMetadataKey = {
+			...stateFor(manager),
+			dedupeHashes: [
+				entry("a".repeat(64), { severity: "concern", signature, lastDeliveryTurn: 1, extra: true }),
+			],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(unknownMetadataKey, manager.getSessionId(), branch),
+		).toBeUndefined();
+		const duplicateHashes = {
+			...stateFor(manager),
+			dedupeHashes: [{ hash: "a".repeat(64) }, { hash: "a".repeat(64) }],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(duplicateHashes, manager.getSessionId(), branch),
+		).toBeUndefined();
+	});
+
+	it("rejects metadata whose last delivery turn exceeds the meaningful turn count", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const state = {
+			...stateFor(manager),
+			dedupeHashes: [
+				{
+					hash: "a".repeat(64),
+					metadata: { severity: "blocker", signature: "0123456789abcdef", lastDeliveryTurn: 2 },
+				},
+			],
+			memorySuggestions: {
+				...stateFor(manager).memorySuggestions,
+				meaningfulTurnCount: 1,
+			},
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(state, manager.getSessionId(), branch),
+		).toBeUndefined();
+	});
+
+	it("migrates strict version 2 dedupe hashes to metadata-free entries", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const base = stateFor(manager);
+		Reflect.deleteProperty(base, "activeDeliveries");
+		const version2 = {
+			...base,
+			version: 2,
+			dedupeHashes: ["a".repeat(64), "b".repeat(64)],
+		};
+		expect(parsePersistedAdvisorRuntimeState(version2, manager.getSessionId(), branch)).toEqual({
+			...version2,
+			version: ADVISOR_RUNTIME_STATE_VERSION,
+			activeDeliveries: [],
+			dedupeHashes: [{ hash: "a".repeat(64) }, { hash: "b".repeat(64) }],
+		});
 	});
 });

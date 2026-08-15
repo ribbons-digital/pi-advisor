@@ -1,6 +1,11 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
-import { adviceDedupeKey, type AcceptedAdvice, type AdviceSeverity } from "./advice.js";
+import {
+	adviceDedupeKey,
+	type AcceptedAdvice,
+	type AdviceSeverity,
+	type PersistedDedupeEntry,
+} from "./advice.js";
 import { HARD_LIMITS } from "./config.js";
 import { MAX_PENDING_ADVICE_ITEMS } from "./delivery.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
@@ -8,7 +13,7 @@ import { redactSecrets } from "./redaction.js";
 import { cursorMatches, type AdvisorCursor } from "./transcript.js";
 
 export const ADVISOR_RUNTIME_STATE_ENTRY_TYPE = "pi-advisor-runtime-state";
-export const ADVISOR_RUNTIME_STATE_VERSION = 3 as const;
+export const ADVISOR_RUNTIME_STATE_VERSION = 4 as const;
 export const ADVISOR_TRANSCRIPT_ENTRY_TYPE = "pi-advisor-transcript-record";
 export const ADVISOR_TRANSCRIPT_LEGACY_RECORD_VERSION = 1 as const;
 export const ADVISOR_TRANSCRIPT_RECORD_VERSION = 2 as const;
@@ -167,7 +172,7 @@ export interface PersistedAdvisorRuntimeState {
 	lastReviewSubmittedAt?: number;
 	activeDeliveries: PersistedAdvisorActiveDelivery[];
 	deferredAdvice: PersistedDeferredAdvice[];
-	dedupeHashes: string[];
+	dedupeHashes: PersistedDedupeEntry[];
 	memorySuggestions: PersistedMemorySuggestionState;
 	reviewFollowUpsTriggered?: number;
 	notesDelivered: number;
@@ -293,6 +298,32 @@ function serializedBytes(value: unknown): number | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function isPersistedDedupeEntry(value: unknown): value is PersistedDedupeEntry {
+	if (typeof value !== "object" || value === null) return false;
+	const entry = value as Record<string, unknown>;
+	if (!hasOnlyKeys(entry, ["hash", "metadata"])) return false;
+	if (typeof entry.hash !== "string" || !/^[a-f0-9]{64}$/u.test(entry.hash)) return false;
+	if (entry.metadata === undefined) return true;
+	if (typeof entry.metadata !== "object" || entry.metadata === null) return false;
+	const metadata = entry.metadata as Record<string, unknown>;
+	return (
+		hasOnlyKeys(metadata, ["severity", "signature", "lastDeliveryTurn"]) &&
+		isAdviceSeverity(metadata.severity) &&
+		typeof metadata.signature === "string" &&
+		/^[a-f0-9]{16}$/u.test(metadata.signature) &&
+		isFiniteInteger(metadata.lastDeliveryTurn, 1)
+	);
+}
+
+function isLegacyDedupeHashes(value: unknown): value is string[] {
+	return (
+		Array.isArray(value) &&
+		value.length <= MAX_PERSISTED_DEDUPE_HASHES &&
+		value.every((hash) => typeof hash === "string" && /^[a-f0-9]{64}$/u.test(hash)) &&
+		new Set(value).size === value.length
+	);
 }
 
 function isPersistedDeferredAdvice(
@@ -454,8 +485,16 @@ export function parsePersistedAdvisorRuntimeState(
 	}
 	const state = value as Record<string, unknown>;
 	const version = state.version;
-	if (version !== 1 && version !== 2 && version !== ADVISOR_RUNTIME_STATE_VERSION) return undefined;
+	if (
+		version !== 1 &&
+		version !== 2 &&
+		version !== 3 &&
+		version !== ADVISOR_RUNTIME_STATE_VERSION
+	) {
+		return undefined;
+	}
 	const legacy = version === 1 || version === 2;
+	const currentShape = version === 3 || version === ADVISOR_RUNTIME_STATE_VERSION;
 	const allowedKeys = legacy
 		? [
 				"version",
@@ -495,12 +534,15 @@ export function parsePersistedAdvisorRuntimeState(
 		!Array.isArray(state.deferredAdvice) ||
 		state.deferredAdvice.length > MAX_PENDING_ADVICE_ITEMS ||
 		!state.deferredAdvice.every((pending) =>
-			isPersistedDeferredAdvice(pending, version !== 1, version === ADVISOR_RUNTIME_STATE_VERSION),
+			isPersistedDeferredAdvice(pending, version !== 1, currentShape),
 		) ||
 		!Array.isArray(state.dedupeHashes) ||
 		state.dedupeHashes.length > MAX_PERSISTED_DEDUPE_HASHES ||
-		!state.dedupeHashes.every((hash) => typeof hash === "string" && /^[a-f0-9]{64}$/u.test(hash)) ||
-		new Set(state.dedupeHashes).size !== state.dedupeHashes.length ||
+		(version === ADVISOR_RUNTIME_STATE_VERSION
+			? !state.dedupeHashes.every(isPersistedDedupeEntry) ||
+				new Set(state.dedupeHashes.map((entry) => (entry as { hash: string }).hash)).size !==
+					state.dedupeHashes.length
+			: !isLegacyDedupeHashes(state.dedupeHashes)) ||
 		!isMemoryState(state.memorySuggestions) ||
 		(state.reviewFollowUpsTriggered !== undefined &&
 			!isFiniteInteger(state.reviewFollowUpsTriggered)) ||
@@ -545,18 +587,37 @@ export function parsePersistedAdvisorRuntimeState(
 			(activeReviewTurn !== undefined &&
 				queuedReviewTurn !== undefined &&
 				queuedReviewTurn < activeReviewTurn) ||
-			deliveries.some((delivery) => delivery.turnNumber > meaningfulTurnCount)
+			deliveries.some((delivery) => delivery.turnNumber > meaningfulTurnCount) ||
+			(version === ADVISOR_RUNTIME_STATE_VERSION &&
+				(state.dedupeHashes as PersistedDedupeEntry[]).some(
+					(entry) =>
+						entry.metadata !== undefined && entry.metadata.lastDeliveryTurn > meaningfulTurnCount,
+				))
 		) {
 			return undefined;
 		}
-		return structuredClone(value) as PersistedAdvisorRuntimeState;
+		return {
+			...(structuredClone(value) as unknown as Omit<
+				PersistedAdvisorRuntimeState,
+				"version" | "dedupeHashes"
+			>),
+			version: ADVISOR_RUNTIME_STATE_VERSION,
+			dedupeHashes:
+				version === 3
+					? (state.dedupeHashes as string[]).map((hash) => ({ hash }))
+					: (structuredClone(state.dedupeHashes) as PersistedDedupeEntry[]),
+		};
 	}
 	const migrated = structuredClone(value) as Record<string, unknown>;
 	return {
-		...(migrated as unknown as Omit<PersistedAdvisorRuntimeState, "version" | "activeDeliveries">),
+		...(migrated as unknown as Omit<
+			PersistedAdvisorRuntimeState,
+			"version" | "activeDeliveries" | "dedupeHashes"
+		>),
 		version: ADVISOR_RUNTIME_STATE_VERSION,
 		activeDeliveries: [],
-		...(version === 1 ? { dedupeHashes: [] } : {}),
+		dedupeHashes:
+			version === 1 ? [] : (migrated.dedupeHashes as string[]).map((hash) => ({ hash })),
 	};
 }
 

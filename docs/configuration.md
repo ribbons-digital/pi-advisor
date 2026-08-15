@@ -210,13 +210,22 @@ Failed and governor-skipped reviews neither extend nor reset the back-off.
 Adaptive cadence state is in-memory only and is not restored on resume.
 `/advisor status` reports the effective cadence.
 
-| YAML path                                           | Type                                                     | Release default | Hard maximum   | Scope and Project merge                | Effect                                                                      |
-| --------------------------------------------------- | -------------------------------------------------------- | --------------- | -------------- | -------------------------------------- | --------------------------------------------------------------------------- |
-| `review.skipNonMaterialTurns`                       | Boolean                                                  | `false`         | Not applicable | User sets; Project may set only `true` | Holds non-material Meaningful turns until a later material turn joins them. |
-| `review.adaptiveCadence.enabled`                    | Boolean                                                  | `false`         | Not applicable | User sets; Project may set only `true` | Enables silent-review back-off of the effective minimum turn distance.      |
-| `review.adaptiveCadence.silentReviewsBeforeBackOff` | Number from `1` through `32`                             | `3`             | `32`           | User sets; Project may lower           | Silent reviews required before one back-off step.                           |
-| `review.adaptiveCadence.backOffTurnStep`            | Number from `1` through `8`                              | `1`             | `8`            | User only                              | Turns added to the effective minimum distance after each silent run.        |
-| `review.adaptiveCadence.maxMinTurnsBetweenReviews`  | Number from `limits.minTurnsBetweenReviews` through `64` | `4`             | `64`           | User sets; Project may raise           | Cap on the effective minimum turn distance.                                 |
+### Dedupe fields
+
+Review notes that reuse the same `findingKey` compare their normalized-note 64-bit SimHash signature against the stored signature of that key's last delivery.
+A similarity below `dedupe.similarityRedeliveryThreshold` delivers the note with a possible-duplicate tag, while a similarity at or above the threshold suppresses it, so `0` disables the secondary signal and larger values redeliver more.
+A note whose severity is strictly higher than the stored highest delivered severity and arrives at least `dedupe.reRaiseMinTurns` meaningful turns after that key's last delivery re-delivers with a re-raised tag, and `0` disables escalation re-raise.
+Project configuration may only reduce redelivery and cost: it may lower `similarityRedeliveryThreshold`, and it may raise or zero `reRaiseMinTurns`, never the opposite directions.
+
+| YAML path                                           | Type                                                     | Release default | Hard maximum   | Scope and Project merge                | Effect                                                                                              |
+| --------------------------------------------------- | -------------------------------------------------------- | --------------- | -------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `review.skipNonMaterialTurns`                       | Boolean                                                  | `false`         | Not applicable | User sets; Project may set only `true` | Holds non-material Meaningful turns until a later material turn joins them.                         |
+| `review.adaptiveCadence.enabled`                    | Boolean                                                  | `false`         | Not applicable | User sets; Project may set only `true` | Enables silent-review back-off of the effective minimum turn distance.                              |
+| `review.adaptiveCadence.silentReviewsBeforeBackOff` | Number from `1` through `32`                             | `3`             | `32`           | User sets; Project may lower           | Silent reviews required before one back-off step.                                                   |
+| `review.adaptiveCadence.backOffTurnStep`            | Number from `1` through `8`                              | `1`             | `8`            | User only                              | Turns added to the effective minimum distance after each silent run.                                |
+| `review.adaptiveCadence.maxMinTurnsBetweenReviews`  | Number from `limits.minTurnsBetweenReviews` through `64` | `4`             | `64`           | User sets; Project may raise           | Cap on the effective minimum turn distance.                                                         |
+| `dedupe.similarityRedeliveryThreshold`              | Number from `0` through `1`                              | `0.5`           | `1`            | User sets; Project may lower           | Similarity below this value redelivers a reused `findingKey` as a possible duplicate. `0` disables. |
+| `dedupe.reRaiseMinTurns`                            | Number from `0` through `64`                             | `4`             | `64`           | User sets; Project may raise or zero   | Meaningful turns before a strictly higher severity re-delivers the key as re-raised. `0` disables.  |
 
 ### Memory suggestion fields
 
