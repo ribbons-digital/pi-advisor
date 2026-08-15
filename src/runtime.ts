@@ -1227,6 +1227,7 @@ export class AdvisorRuntime {
 			this.lastMemorySuggestionAt = state.memorySuggestions.lastAdmittedAt;
 		}
 		this.status.memorySuggestionsDelivered = state.memorySuggestions.deliveredCount;
+		this.status.reviewFollowUpsTriggered = state.reviewFollowUpsTriggered ?? 0;
 		this.status.notesDelivered = state.notesDelivered;
 		if (state.lastReviewSubmittedTurn === undefined) delete this.lastReviewSubmittedTurn;
 		else this.lastReviewSubmittedTurn = state.lastReviewSubmittedTurn;
@@ -1464,6 +1465,7 @@ export class AdvisorRuntime {
 				sessionCapReached:
 					this.memorySuggestionAdmissions >= this.config.memorySuggestions.sessionSuggestionCap,
 			},
+			reviewFollowUpsTriggered: this.status.reviewFollowUpsTriggered,
 			notesDelivered: this.status.notesDelivered,
 		};
 		while (

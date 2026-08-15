@@ -45,6 +45,36 @@ function stateFor(manager: SessionManager): PersistedAdvisorRuntimeState {
 }
 
 describe("Slice 3A lifecycle state primitives", () => {
+	it("round-trips the optional review follow-up counter and defaults older states to zero", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const withCounter = { ...stateFor(manager), reviewFollowUpsTriggered: 5 };
+		expect(parsePersistedAdvisorRuntimeState(withCounter, manager.getSessionId(), branch)).toEqual(
+			withCounter,
+		);
+		const withoutCounter = parsePersistedAdvisorRuntimeState(
+			stateFor(manager),
+			manager.getSessionId(),
+			branch,
+		);
+		expect(withoutCounter?.reviewFollowUpsTriggered).toBeUndefined();
+		expect(
+			parsePersistedAdvisorRuntimeState(
+				{ ...stateFor(manager), reviewFollowUpsTriggered: -1 },
+				manager.getSessionId(),
+				branch,
+			),
+		).toBeUndefined();
+		expect(
+			parsePersistedAdvisorRuntimeState(
+				{ ...stateFor(manager), reviewFollowUpsTriggered: 1.5 },
+				manager.getSessionId(),
+				branch,
+			),
+		).toBeUndefined();
+	});
+
 	it("distinguishes transcript shrink from same-length ancestry mismatch", () => {
 		const manager = SessionManager.inMemory();
 		const root = manager.appendMessage({ role: "user", content: "root", timestamp: 1 });

@@ -23,6 +23,7 @@ export const WATCHDOG_YAML_NAME = "WATCHDOG.yml";
 export const WATCHDOG_MARKDOWN_NAME = "WATCHDOG.md";
 export const MAX_WATCHDOG_YAML_BYTES = 1_048_576;
 export const MAX_WATCHDOG_MARKDOWN_BYTES = 65_536;
+export const MAX_PRESERVED_UNKNOWN_CONFIG_BYTES = 65_536;
 
 const effortValues = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const toolValues = ["read", "grep", "find", "ls"] as const;
@@ -597,7 +598,18 @@ export async function loadAdvisorConfiguration(options: {
 			} else {
 				userConfig = mergeUserConfig(DEFAULT_ADVISOR_CONFIG, parsed.known);
 				if (Object.keys(parsed.unknownTopLevel).length > 0) {
-					userUnknownTopLevel = parsed.unknownTopLevel;
+					if (
+						Buffer.byteLength(stringify(parsed.unknownTopLevel, { lineWidth: 0 }), "utf8") >
+						MAX_PRESERVED_UNKNOWN_CONFIG_BYTES
+					) {
+						warnings.push({
+							source: "user",
+							path: paths.userYaml,
+							message: `Unknown top-level User fields exceeded the ${String(MAX_PRESERVED_UNKNOWN_CONFIG_BYTES)}-byte preservation limit and were not preserved on the next save.`,
+						});
+					} else {
+						userUnknownTopLevel = parsed.unknownTopLevel;
+					}
 				}
 			}
 		}

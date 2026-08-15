@@ -1,12 +1,16 @@
-import { defineTool, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import { defineTool, type InlineExtension, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 
 import {
+	ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
+	ADVISOR_RUNTIME_STATE_VERSION,
 	createPiAdvisorExtension,
+	cursorAtTail,
 	DEFAULT_ADVISOR_CONFIG,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
@@ -273,6 +277,59 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 				deferredNotesPending: 1,
 			});
 			expect(primary.requests).toHaveLength(11);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("keeps the fixed session cap across a compatible resume", async () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const state: PersistedAdvisorRuntimeState = {
+			version: ADVISOR_RUNTIME_STATE_VERSION,
+			sessionId: manager.getSessionId(),
+			savedAt: Date.now(),
+			cursor: cursorAtTail(manager.getBranch()),
+			activeDeliveries: [],
+			deferredAdvice: [],
+			dedupeHashes: [],
+			memorySuggestions: {
+				meaningfulTurnCount: 0,
+				admittedCount: 0,
+				deliveredCount: 0,
+				sessionCapReached: false,
+			},
+			reviewFollowUpsTriggered: 5,
+			notesDelivered: 5,
+		};
+		manager.appendCustomEntry(ADVISOR_RUNTIME_STATE_ENTRY_TYPE, state);
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "terminal answer" }] },
+			{ content: [{ type: "text", text: "next user answer" }] },
+		]);
+		const advisor = createAdvisorProvider([blockerAdvice("Cap survived resume."), { content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			sessionManager: manager,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("first turn after resume");
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);
+			expect(runtime?.getStatus()).toMatchObject({
+				reviewFollowUpsTriggered: 5,
+				notesDelivered: 5,
+				deferredNotesPending: 1,
+			});
+			expect(primary.requests).toHaveLength(1);
+			await harness.session.prompt("materialize the deferred blocker");
+			expect(JSON.stringify(primary.requests[1]?.context)).toContain(
+				'severity=\\"blocker\\" delivery=\\"deferred\\" stale=\\"false\\"',
+			);
 		} finally {
 			await harness.dispose();
 		}

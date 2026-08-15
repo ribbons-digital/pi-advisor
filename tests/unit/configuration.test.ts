@@ -746,6 +746,19 @@ describe("WATCHDOG configuration", () => {
 		expect(reloaded.userConfig.defaultEnabled).toBe(true);
 	});
 
+	it("drops unknown top-level User fields that exceed the preservation byte limit", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", `hugeFuture: "${"x".repeat(70_000)}"`].join("\n"),
+		);
+		const loaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(loaded.userUnknownTopLevel).toBeUndefined();
+		expect(loaded.warnings.some(({ message }) => message.includes("preservation limit"))).toBe(
+			true,
+		);
+	});
+
 	it("ignores Project files when trust is inactive", async () => {
 		const { agentDir, cwd } = await fixture();
 		await writeFile(join(agentDir, "WATCHDOG.yml"), "version: 1\nmodel: fixture/advisor\n");
