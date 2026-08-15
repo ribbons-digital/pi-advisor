@@ -5,7 +5,9 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	type InlineExtension,
+	type SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 
@@ -72,6 +74,26 @@ function createBarrier(): { promise: Promise<void>; release: () => void } {
 		release = resolve;
 	});
 	return { promise, release };
+}
+
+function assistantToolCall(content: AssistantMessage["content"]): AssistantMessage {
+	return {
+		role: "assistant",
+		content,
+		api: "integration-test",
+		provider: "test",
+		model: "test",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "toolUse",
+		timestamp: Date.now(),
+	};
 }
 
 function acceptedAdvice(
@@ -1994,7 +2016,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
 			await harness.session.prompt("inspect severity suppression");
 			expect(JSON.stringify(primary.requests[1]?.context)).toContain(
-				'severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"true\\"',
+				'severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"false\\"',
 			);
 			expect(JSON.stringify(primary.requests[2]?.context)).not.toContain('severity=\\"blocker\\"');
 			expect(runtime?.getStatus()).toMatchObject({
@@ -2006,7 +2028,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
-	it("marks advice stale when the Executor advances beyond the reviewed window", async () => {
+	it("marks advice stale when materially newer Executor activity follows the reviewed window", async () => {
 		const advisorBarrier = createBarrier();
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "first answer" }] },
@@ -2032,6 +2054,15 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(primary.requests).toHaveLength(2);
 			advisorBarrier.release();
 			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);
+			harness.sessionManager.appendMessage({
+				role: "bashExecution",
+				command: "pnpm run typecheck",
+				output: "",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				timestamp: Date.now(),
+			});
 			await harness.session.prompt("materialize stale advice");
 			const context = JSON.stringify(primary.requests.at(-1)?.context);
 			expect(context).toContain('stale=\\"true\\"');
@@ -2049,7 +2080,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
-	it("marks current deferred advice stale when the next user prompt materializes it", async () => {
+	it("does not mark deferred advice stale when only the triggering user prompt follows", async () => {
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "reviewed answer" }] },
 			{ content: [{ type: "text", text: "answer after deferred advice" }] },
@@ -2082,18 +2113,19 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				queued === undefined ? false : cursorMatches(branchBeforePrompt, queued.branchWindow),
 			).toBe(true);
 
-			await harness.session.prompt("materialize with newer Executor input");
+			await harness.session.prompt("materialize with only a user prompt");
 
 			const context = JSON.stringify(primary.requests[1]?.context);
-			expect(context).toContain('severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"true\\"');
-			expect(context).toContain("Verify this still applies");
+			expect(context).toContain('severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"false\\"');
+			expect(context).not.toContain("Verify this still applies");
 			const note = harness.sessionManager
 				.getEntries()
 				.find(
 					(entry): entry is CustomMessageEntry =>
 						entry.type === "custom_message" && entry.customType === "pi-advisor-note",
 				);
-			expect(note?.details).toMatchObject({ stale: true, delivery: "deferred" });
+			expect(note?.details).toMatchObject({ delivery: "deferred" });
+			expect(note?.details).not.toHaveProperty("stale");
 			expect(runtime.getStatus()).toMatchObject({
 				notesDelivered: 1,
 				deferredNotesPending: 0,
@@ -2103,7 +2135,76 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
-	it("recomputes deferred staleness when the branch advances before materialization", async () => {
+	it.each([
+		{
+			label: "only a user message",
+			append: (manager: SessionManager) =>
+				manager.appendMessage({
+					role: "user",
+					content: "buffered user shell activity",
+					timestamp: Date.now(),
+				}),
+			stale: false,
+		},
+		{
+			label: "a read-only grep call and result",
+			append: (manager: SessionManager) => {
+				manager.appendMessage(
+					assistantToolCall([{ type: "toolCall", id: "grep-1", name: "grep", arguments: {} }]),
+				);
+				manager.appendMessage({
+					role: "toolResult",
+					toolCallId: "grep-1",
+					toolName: "grep",
+					content: [{ type: "text", text: "no matches" }],
+					isError: false,
+					timestamp: Date.now(),
+				});
+			},
+			stale: false,
+		},
+		{
+			label: "a mutating edit call and result",
+			append: (manager: SessionManager) => {
+				manager.appendMessage(
+					assistantToolCall([{ type: "toolCall", id: "edit-1", name: "edit", arguments: {} }]),
+				);
+				manager.appendMessage({
+					role: "toolResult",
+					toolCallId: "edit-1",
+					toolName: "edit",
+					content: [{ type: "text", text: "updated" }],
+					isError: false,
+					timestamp: Date.now(),
+				});
+			},
+			stale: true,
+		},
+		{
+			label: "an unknown third-party tool call",
+			append: (manager: SessionManager) =>
+				manager.appendMessage(
+					assistantToolCall([
+						{ type: "toolCall", id: "custom-1", name: "some_tool", arguments: {} },
+					]),
+				),
+			stale: true,
+		},
+		{
+			label: "an included user bash execution",
+			append: (manager: SessionManager) =>
+				manager.appendMessage({
+					role: "bashExecution",
+					command: "pnpm run typecheck",
+					output: "",
+					exitCode: 0,
+					cancelled: false,
+					truncated: false,
+					timestamp: Date.now(),
+				}),
+			stale: true,
+		},
+	])("recomputes deferred staleness as $stale after $label", async ({ append, stale }) => {
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "reviewed answer" }] },
 			{ content: [{ type: "text", text: "answer after buffered activity" }] },
@@ -2123,22 +2224,27 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		try {
 			await harness.session.prompt("create current deferred advice");
 			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);
-			harness.sessionManager.appendMessage({
-				role: "user",
-				content: "buffered user shell activity",
-				timestamp: Date.now(),
-			});
+			append(harness.sessionManager);
 			await harness.session.prompt("materialize after buffered activity");
 			const context = JSON.stringify(primary.requests[1]?.context);
-			expect(context).toContain('severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"true\\"');
-			expect(context).toContain("Verify this still applies");
+			expect(context).toContain(`stale=\\"${String(stale)}\\"`);
+			if (stale) {
+				expect(context).toContain("Verify this still applies");
+			} else {
+				expect(context).not.toContain("Verify this still applies");
+			}
 			const note = harness.sessionManager
 				.getEntries()
 				.find(
 					(entry): entry is CustomMessageEntry =>
 						entry.type === "custom_message" && entry.customType === "pi-advisor-note",
 				);
-			expect(note?.details).toMatchObject({ stale: true, delivery: "deferred" });
+			expect(note?.details).toMatchObject({ delivery: "deferred" });
+			if (stale) {
+				expect(note?.details).toMatchObject({ stale: true });
+			} else {
+				expect(note?.details).not.toHaveProperty("stale");
+			}
 		} finally {
 			await harness.dispose();
 		}
@@ -2236,9 +2342,9 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await harness.session.prompt("resume after interruption");
 			const resumedContext = JSON.stringify(primary.requests[2]?.context);
 			expect(resumedContext).toContain(
-				'severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"true\\"',
+				'severity=\\"concern\\" delivery=\\"deferred\\" stale=\\"false\\"',
 			);
-			expect(resumedContext).toContain("Verify this still applies");
+			expect(resumedContext).not.toContain("Verify this still applies");
 		} finally {
 			advisorBarrier.release();
 			await harness.dispose();
@@ -2564,7 +2670,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(primary.requests).toHaveLength(1);
 			await harness.session.prompt("next user-driven turn");
 			expect(JSON.stringify(primary.requests[1]?.context)).toContain(
-				'severity=\\"blocker\\" delivery=\\"deferred\\" stale=\\"true\\"',
+				'severity=\\"blocker\\" delivery=\\"deferred\\" stale=\\"false\\"',
 			);
 		} finally {
 			await harness.dispose();

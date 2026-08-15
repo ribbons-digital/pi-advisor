@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { normalizeMemoryTextForDedupe } from "./advice.js";
-import { HARD_LIMITS } from "./config.js";
+import { HARD_LIMITS, READ_ONLY_TOOL_NAMES } from "./config.js";
 import { redactSecrets, truncateUtf8Bytes, truncateUtf8TailBytes } from "./redaction.js";
 
 export const ADVISOR_CUSTOM_TYPE = "pi-advisor-note";
@@ -74,6 +74,47 @@ export function branchHasNewerInstructionInput(
 		const message = entry.message;
 		if (message.role === "user" || message.role === "bashExecution") return true;
 		if (message.role === "custom" && message.customType !== ADVISOR_CUSTOM_TYPE) return true;
+	}
+	return false;
+}
+
+function isReadOnlyToolName(toolName: string): boolean {
+	return (READ_ONLY_TOOL_NAMES as readonly string[]).includes(toolName);
+}
+
+function messageContainsMaterialToolCall(message: AgentMessage): boolean {
+	if (message.role !== "assistant") return false;
+	for (const part of message.content) {
+		if (part.type === "toolCall" && !isReadOnlyToolName(part.name)) return true;
+	}
+	return false;
+}
+
+/**
+ * True when entries after the window contain materially newer Executor activity.
+ *
+ * Materially newer activity means a non-read-only tool call or its tool result, a
+ * context-included user bash execution, or a compaction or branch-summary entry.
+ * User messages, plain assistant text and reasoning, read-only tool calls and their
+ * results, and Advisor or other non-mutating extension context never count.
+ */
+export function branchHasMateriallyNewerExecutorActivity(
+	branch: SessionEntry[],
+	window: AdvisorCursor,
+): boolean {
+	for (let index = window.expectedIndex; index < branch.length; index++) {
+		const entry = branch[index];
+		if (entry === undefined) continue;
+		if (entry.type === "compaction" || entry.type === "branch_summary") return true;
+		if (!isMessageEntry(entry)) continue;
+		const message = entry.message;
+		if (message.role === "toolResult") {
+			if (!isReadOnlyToolName(message.toolName)) return true;
+		} else if (message.role === "bashExecution") {
+			if (message.excludeFromContext !== true) return true;
+		} else if (messageContainsMaterialToolCall(message)) {
+			return true;
+		}
 	}
 	return false;
 }
