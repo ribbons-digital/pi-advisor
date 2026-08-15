@@ -87,6 +87,9 @@ Malformed User configuration falls back to safe inactive behavior with persisted
 Malformed Project configuration is ignored.
 Warnings identify the file and field path without printing its value.
 Unknown fields are warned and ignored only when the remaining known document validates.
+Since QS-1 (2026-08-15), unknown top-level User fields are preserved verbatim across a `/advisor configure` save round-trip so forward-compatible keys are not silently dropped.
+The preserved values are re-emitted exactly as loaded, remain outside every typed field, and are never interpreted by the current package; a future schema that recognizes such a key makes its own decision about the value.
+Unknown nested fields are still dropped on save.
 
 ## Complete field reference
 
