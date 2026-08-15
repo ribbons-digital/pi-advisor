@@ -2660,7 +2660,14 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		const harness = await createSessionHarness({
 			provider: primary,
 			advisorProvider: advisor,
-			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.delivery.activeIdleSeverities = [];
+					}),
+					(value) => (runtime = value),
+				),
+			],
 			tools: [],
 			mode: "rpc",
 		});

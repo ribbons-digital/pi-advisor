@@ -662,6 +662,90 @@ describe("WATCHDOG configuration", () => {
 		expect(loaded.warnings[0]?.message).toContain("could not be read");
 	});
 
+	it("loads delivery.activeIdleSeverities with the approved release default and nit rejection", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(join(agentDir, "WATCHDOG.yml"), ["version: 1"].join("\n"));
+		const defaults = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(defaults.warnings).toEqual([]);
+		expect(defaults.userConfig.delivery).toEqual({ activeIdleSeverities: ["blocker"] });
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [concern, blocker]"].join("\n"),
+		);
+		const widened = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(widened.warnings).toEqual([]);
+		expect(widened.userConfig.delivery).toEqual({
+			activeIdleSeverities: ["concern", "blocker"],
+		});
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [nit]"].join("\n"),
+		);
+		const rejected = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(
+			rejected.warnings.some(({ path }) => path.startsWith("delivery.activeIdleSeverities")),
+		).toBe(true);
+	});
+
+	it("merges trusted Project delivery configuration only by removing severities", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [concern, blocker]"].join("\n"),
+		);
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [blocker]"].join("\n"),
+		);
+		const narrowed = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(narrowed.effectiveConfig.delivery).toEqual({ activeIdleSeverities: ["blocker"] });
+
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "delivery:", "  activeIdleSeverities: [blocker]"].join("\n"),
+		);
+		const cannotAdd = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(cannotAdd.effectiveConfig.delivery).toEqual({ activeIdleSeverities: ["blocker"] });
+	});
+
+	it("preserves unknown top-level User fields across a configure save round-trip", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"defaultEnabled: true",
+				"model: fixture/advisor",
+				"futureKnob: keep-me",
+				"anotherFuture:",
+				"  nested: [1, 2]",
+			].join("\n"),
+		);
+		const loaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(loaded.warnings.some(({ path }) => path === "futureKnob")).toBe(true);
+		expect(loaded.userUnknownTopLevel).toEqual({
+			futureKnob: "keep-me",
+			anotherFuture: { nested: [1, 2] },
+		});
+
+		const savedPath = join(agentDir, "saved.yml");
+		await saveUserConfigurationAtomic(savedPath, loaded.userConfig, loaded.userUnknownTopLevel);
+		const saved = await readFile(savedPath, "utf8");
+		expect(saved).toContain("futureKnob: keep-me");
+		expect(saved).toContain("anotherFuture:");
+		expect(saved).toContain("nested:");
+
+		await writeFile(agentDir + "/WATCHDOG.yml", saved);
+		const reloaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(reloaded.userUnknownTopLevel).toEqual({
+			futureKnob: "keep-me",
+			anotherFuture: { nested: [1, 2] },
+		});
+		expect(reloaded.userConfig.defaultEnabled).toBe(true);
+	});
+
 	it("ignores Project files when trust is inactive", async () => {
 		const { agentDir, cwd } = await fixture();
 		await writeFile(join(agentDir, "WATCHDOG.yml"), "version: 1\nmodel: fixture/advisor\n");

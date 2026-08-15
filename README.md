@@ -168,6 +168,7 @@ Newer Executor assistant text does not prevent that follow-up, and a continuatio
 Any newer user message, instruction-bearing extension message, or bash execution blocks automatic follow-up, including a context-excluded `!!` command.
 The Executor must verify, revise, or decline the suggestion against its latest context and can submit only through a compatible `memory_suggest` tool with explicit `status: "pending"`.
 The automatic follow-up can add one primary-model completion per accepted Memory suggestion, bounded by the configured cadence and session cap.
+An idle accepted review note whose severity is listed in `delivery.activeIdleSeverities` (release default `[blocker]`) starts one automatic Executor follow-up with the same newer-instruction-input guard, a fixed session cap of five follow-ups per session with deferred fallback, and a structural no-chain rule: while a review follow-up is pending, its own continuation is not reviewed and no new review follow-up can dispatch.
 In the stale superseding path, automatic Executor verification replaces the pending ordinary Advisor review of the intervening Executor continuation.
 This is an accepted tradeoff: the path avoids that queued Advisor call, so it adds no second Advisor semantic validation or related Advisor model cost.
 A non-stale current-window follow-up still receives ordinary Advisor review, and ordinary active steering is unchanged.

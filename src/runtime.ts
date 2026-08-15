@@ -51,6 +51,7 @@ import {
 	MAX_DEFERRED_DELIVERY_BYTES,
 	MAX_PENDING_ADVICE_BYTES,
 	MAX_PENDING_ADVICE_ITEMS,
+	REVIEW_FOLLOW_UP_SESSION_CAP,
 	selectAdviceDispatch,
 	takeRenderedPrefix,
 } from "./delivery.js";
@@ -377,6 +378,7 @@ export interface AdvisorRuntimeStatus {
 	memorySuggestionsPolicySuppressed: number;
 	memorySuggestionsLimitSuppressed: number;
 	memorySuggestionsRemaining: number;
+	reviewFollowUpsTriggered: number;
 	memorySuggestionNextEligibleTurn: number;
 	memorySuggestionNextEligibleAt: number;
 	redactions: number;
@@ -692,6 +694,7 @@ export function formatAdvisorDiagnosticsDump(
 		restoredDeferredNotesPending: status.restoredDeferredNotesPending,
 		oldestDeferredAdviceAgeMs: status.oldestDeferredAdviceAgeMs,
 		notesSuppressed: status.notesSuppressed,
+		reviewFollowUpsTriggered: status.reviewFollowUpsTriggered,
 		memorySuggestionCapability: status.memorySuggestionCapability,
 		memorySuggestionsEnabled: status.memorySuggestionsEnabled,
 		memorySuggestionsDelivered: status.memorySuggestionsDelivered,
@@ -908,6 +911,7 @@ export class AdvisorRuntime {
 	private finalPersistenceFallbackWarningEmitted = false;
 	private deliverySequence = 0;
 	private automaticMemoryFollowUpDeliveryId?: string;
+	private automaticReviewFollowUpDeliveryId?: string;
 	private readonly adviceDedupe = new BoundedAdviceDedupe();
 	private readonly transcriptRecords: PersistedAdvisorTranscriptRecord[] = [];
 	private readonly collector: AdviceCollector = {
@@ -972,6 +976,7 @@ export class AdvisorRuntime {
 			memorySuggestionsPolicySuppressed: 0,
 			memorySuggestionsLimitSuppressed: 0,
 			memorySuggestionsRemaining: this.config.memorySuggestions.sessionSuggestionCap,
+			reviewFollowUpsTriggered: 0,
 			memorySuggestionNextEligibleTurn: 0,
 			memorySuggestionNextEligibleAt: 0,
 			redactions: 0,
@@ -1102,6 +1107,7 @@ export class AdvisorRuntime {
 		delete this.configurationReprimeSnapshot;
 		delete this.collector.accepted;
 		delete this.automaticMemoryFollowUpDeliveryId;
+		delete this.automaticReviewFollowUpDeliveryId;
 		this.pendingAdvice.clear();
 		this.activeAdvice.clear();
 		this.adviceDedupe.clear();
@@ -2054,6 +2060,16 @@ export class AdvisorRuntime {
 			return;
 		}
 		delete this.automaticMemoryFollowUpDeliveryId;
+		delete this.automaticReviewFollowUpDeliveryId;
+		if (this.isAutomaticReviewFollowUpStillValid(entries)) {
+			if (event.message.role !== "assistant" || event.message.stopReason !== "toolUse") {
+				delete this.automaticReviewFollowUpDeliveryId;
+				this.cursor = nextCursor;
+				this.persistState();
+			}
+			return;
+		}
+		delete this.automaticReviewFollowUpDeliveryId;
 		if (!isMeaningfulExecutorTurn(event, entries)) {
 			this.cursor = nextCursor;
 			this.persistState();
@@ -2103,6 +2119,24 @@ export class AdvisorRuntime {
 		return (
 			containsStaleMemoryFollowUp && !branchHasNewerInstructionInput(entries, { expectedIndex: 0 })
 		);
+	}
+
+	private isAutomaticReviewFollowUpStillValid(entries: SessionEntry[]): boolean {
+		const deliveryId = this.automaticReviewFollowUpDeliveryId;
+		if (deliveryId === undefined) return false;
+		const containsReviewFollowUp = entries.some((entry) => {
+			if (entry.type !== "custom_message" || entry.customType !== ADVISOR_CUSTOM_TYPE) {
+				return false;
+			}
+			if (typeof entry.details !== "object" || entry.details === null) return false;
+			const details = entry.details as Record<string, unknown>;
+			return (
+				details.deliveryId === deliveryId &&
+				details.intent === "review" &&
+				details.delivery === "active"
+			);
+		});
+		return containsReviewFollowUp && !branchHasNewerInstructionInput(entries, { expectedIndex: 0 });
 	}
 
 	private enqueue(update: QueuedAdvisorUpdate): void {
@@ -2803,6 +2837,11 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			memoryCapabilityAvailable:
 				advice.intent === "memory-suggestion" &&
 				this.refreshMemorySuggestionCapability().state === "available",
+			...(advice.intent === "review" ? { reviewSeverity: advice.severity } : {}),
+			activeIdleSeverities: this.config.delivery.activeIdleSeverities,
+			reviewFollowUpPending: this.automaticReviewFollowUpDeliveryId !== undefined,
+			reviewFollowUpCapExhausted:
+				this.status.reviewFollowUpsTriggered >= REVIEW_FOLLOW_UP_SESSION_CAP,
 		});
 		if (dispatch === "deferred") {
 			const pending: PendingAdvice = {
@@ -2910,6 +2949,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				this.persistState();
 			}
 			if (dispatch === "followUp") this.automaticMemoryFollowUpDeliveryId = deliveryId;
+			if (dispatch === "followUp" && advice.intent === "review") {
+				this.automaticReviewFollowUpDeliveryId = deliveryId;
+				this.status.reviewFollowUpsTriggered++;
+			}
 			try {
 				this.pi.sendMessage(
 					{
@@ -2925,6 +2968,13 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			} catch (error) {
 				if (this.automaticMemoryFollowUpDeliveryId === deliveryId) {
 					delete this.automaticMemoryFollowUpDeliveryId;
+				}
+				if (this.automaticReviewFollowUpDeliveryId === deliveryId) {
+					delete this.automaticReviewFollowUpDeliveryId;
+					this.status.reviewFollowUpsTriggered = Math.max(
+						0,
+						this.status.reviewFollowUpsTriggered - 1,
+					);
 				}
 				if (supersededUpdate !== undefined) {
 					this.pendingUpdate =
@@ -3209,6 +3259,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 	private pause(reason: string): void {
 		if (this.status.paused) return;
 		delete this.automaticMemoryFollowUpDeliveryId;
+		delete this.automaticReviewFollowUpDeliveryId;
 		this.status.paused = true;
 		this.status.pauseReason = reason;
 		this.status.retryPending = false;
@@ -3250,6 +3301,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		delete this.lastReviewSubmittedTurn;
 		delete this.lastReviewSubmittedAt;
 		delete this.automaticMemoryFollowUpDeliveryId;
+		delete this.automaticReviewFollowUpDeliveryId;
 		this.pendingAdvice.clear();
 		this.activeAdvice.clear();
 		this.status.activeNotesPending = 0;
@@ -3298,6 +3350,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		delete this.lastReviewSubmittedTurn;
 		delete this.lastReviewSubmittedAt;
 		delete this.automaticMemoryFollowUpDeliveryId;
+		delete this.automaticReviewFollowUpDeliveryId;
 		this.pendingAdvice.clear();
 		this.activeAdvice.clear();
 		this.restoredRecoveryPending = false;
@@ -3323,6 +3376,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.status.retryDelayMs = 0;
 		this.clearCadenceTimer();
 		delete this.automaticMemoryFollowUpDeliveryId;
+		delete this.automaticReviewFollowUpDeliveryId;
 		await this.disposeNestedSession();
 		this.persistState();
 		this.disposed = true;
@@ -3429,7 +3483,7 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.retryAttempts)} retry attempts`,
 		`Delivery failures: ${String(status.deliveryFailures)}`,
 		`Lifecycle: ${String(status.branchResets)} resets, ${String(status.staleQueuedMessagesDiscarded)} stale queued messages discarded`,
-		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed`,
+		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
 		`Memory suggestions: ${status.memorySuggestionsEnabled ? "enabled" : "disabled"}, capability ${status.memorySuggestionCapability.state}, ${String(status.memorySuggestionsDelivered)} delivered, ${String(status.memorySuggestionsRemaining)} remaining, ${String(status.memorySuggestionsPolicySuppressed)} policy-suppressed, ${String(status.memorySuggestionsLimitSuppressed)} limit-suppressed`,
 		`Memory suggestion next eligibility: turn ${String(status.memorySuggestionNextEligibleTurn)}, ${new Date(status.memorySuggestionNextEligibleAt).toISOString()}`,
 		`Restart recovery: active review ${status.restoredActiveReviewPending ? "pending" : "none"}, queued review ${status.restoredQueuedReviewPending ? "pending" : "none"}, ${String(status.restoredActiveDeliveriesPending)} active deliveries pending, replay count ${String(status.restoredReplayCount)}, ${String(status.poisonReviewDrops)} poison drops`,

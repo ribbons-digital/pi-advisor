@@ -377,7 +377,14 @@ describe.sequential("strict advise with a scripted provider", () => {
 		const harness = await createSessionHarness({
 			provider: primary,
 			advisorProvider: advisor,
-			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.delivery.activeIdleSeverities = [];
+					}),
+					(value) => (runtime = value),
+				),
+			],
 			beforeBind: (modelRuntime) => enableStrictAdvise(modelRuntime, advisor),
 			tools: [],
 			mode: "rpc",

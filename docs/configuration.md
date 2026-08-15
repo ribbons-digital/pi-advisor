@@ -170,6 +170,20 @@ Exceptions can expose sensitive content to the selected provider and should be r
 Read-only access, static symlink-aware checks, and redaction are defenses rather than a sandbox.
 They cannot guarantee detection of every secret, hard-link alias, or concurrent same-user filesystem mutation.
 
+### Delivery fields
+
+While the Executor is running, accepted advice of every severity uses the existing steering boundary.
+While the Executor is idle, an accepted review note whose severity is listed in `delivery.activeIdleSeverities` starts one automatic Executor follow-up instead of waiting for the next user turn.
+The release default admits only `blocker`, so an idle `blocker` reaches the Executor through one bounded automatic continuation while `concern` and `nit` keep deferred delivery.
+The same newer-instruction-input guard that protects Memory suggestion follow-ups applies, and a fixed session cap of five automatic review follow-ups bounds cost with deferred fallback at the cap.
+A review follow-up cannot chain: while it is pending, its own Executor continuation is not reviewed and no new review follow-up can dispatch.
+`nit` is structurally excluded because validation accepts only the values below.
+Empty `activeIdleSeverities: []` preserves pre-Q3 behavior (all idle review notes deferred).
+
+| YAML path                       | Type                            | Release default | Hard maximum | Scope and Project merge                   | Effect                                                                                       |
+| ------------------------------- | ------------------------------- | --------------- | ------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `delivery.activeIdleSeverities` | Array of `concern` or `blocker` | `[blocker]`     | None         | User sets; Project may only remove values | Lists severities that may start one automatic Executor follow-up while the Executor is idle. |
+
 ### Memory suggestion fields
 
 Memory suggestions activate only while ordinary Advisor is active and Pi exposes a schema-compatible active `memory_suggest` tool.
