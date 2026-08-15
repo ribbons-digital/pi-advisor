@@ -2212,10 +2212,16 @@ export class AdvisorRuntime {
 
 	private enqueue(update: QueuedAdvisorUpdate): void {
 		if (update.heldForMaterialTurn === true) {
-			// A held update cannot submit on its own. Keep it waiting in
-			// throttledUpdate so it never supersedes the in-flight review and
-			// instead joins the next material turn.
-			this.throttledUpdate = this.coalescePending(this.throttledUpdate, update);
+			if (this.pendingUpdate === undefined) {
+				// A held update cannot submit on its own. Keep it waiting in
+				// throttledUpdate so it never supersedes the in-flight review and
+				// instead joins the next material turn.
+				this.throttledUpdate = this.coalescePending(this.throttledUpdate, update);
+			} else {
+				// A material update is already queued, so the held evidence joins it
+				// instead of creating a second coexisting queued slot.
+				this.pendingUpdate = this.coalescePending(this.pendingUpdate, update);
+			}
 			this.updateBacklogStatus();
 			this.persistState();
 			return;
