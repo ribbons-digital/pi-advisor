@@ -1278,6 +1278,7 @@ export class AdvisorRuntime {
 				deliveryId: persisted.deliveryId,
 				turnNumber: persisted.turnNumber,
 				epoch: this.status.epoch,
+				...(persisted.tag === undefined ? {} : { tag: persisted.tag }),
 			};
 			this.activeAdvice.enqueue(
 				persisted.identity,
@@ -1310,6 +1311,7 @@ export class AdvisorRuntime {
 				displayedInEntry: false,
 				restoredAfterResume: true,
 				...(persisted.reviewId === undefined ? {} : { reviewId: persisted.reviewId }),
+				...(persisted.tag === undefined ? {} : { tag: persisted.tag }),
 			};
 			if (
 				this.pendingAdvice.enqueue(identity, pending, adviceQueueBytes(pending.advice)) ===
@@ -1415,6 +1417,7 @@ export class AdvisorRuntime {
 					displayedInEntry: pending.displayedInEntry,
 					...(pending.restoredAfterResume ? { restoredAfterResume: true as const } : {}),
 					...(pending.reviewId === undefined ? {} : { reviewId: pending.reviewId }),
+					...(pending.tag === undefined ? {} : { tag: pending.tag }),
 				}))
 			: [];
 		const activeDeliveries: PersistedAdvisorActiveDelivery[] = this.activeAdvice
@@ -1429,6 +1432,7 @@ export class AdvisorRuntime {
 				identity: pending.identity,
 				deliveryId: pending.deliveryId,
 				turnNumber: pending.turnNumber,
+				...(pending.tag === undefined ? {} : { tag: pending.tag }),
 			}));
 		if (serializedJsonBytes(activeDeliveries) > MAX_PERSISTED_ACTIVE_DELIVERIES_BYTES) {
 			throw new Error("Advisor invariant violated: active delivery serialized bound exceeded");
@@ -3354,6 +3358,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				displayedInEntry: false,
 				restoredAfterResume: this.status.restoredActiveDeliveriesPending > 0,
 				reviewId: outstanding.reviewId,
+				...(outstanding.tag === undefined ? {} : { tag: outstanding.tag }),
 			};
 			const admission = this.pendingAdvice.enqueue(
 				outstanding.identity,

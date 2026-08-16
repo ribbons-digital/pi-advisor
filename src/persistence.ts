@@ -3,6 +3,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	adviceDedupeKey,
 	type AcceptedAdvice,
+	type AdviceDedupeTag,
 	type AdviceSeverity,
 	type PersistedDedupeEntry,
 } from "./advice.js";
@@ -128,6 +129,7 @@ export interface PersistedDeferredAdvice {
 	displayedInEntry: boolean;
 	restoredAfterResume?: boolean;
 	reviewId?: string;
+	tag?: AdviceDedupeTag;
 }
 
 export interface PersistedAdvisorReviewUpdate {
@@ -340,6 +342,7 @@ function isPersistedDeferredAdvice(
 			"branchWindow",
 			"displayedInEntry",
 			"restoredAfterResume",
+			"tag",
 			...(allowReviewId ? ["reviewId"] : []),
 		]) &&
 		isAcceptedAdvice(pending.advice, allowFindingKeyHash) &&
@@ -347,7 +350,10 @@ function isPersistedDeferredAdvice(
 		isCursor(pending.branchWindow) &&
 		typeof pending.displayedInEntry === "boolean" &&
 		(pending.restoredAfterResume === undefined || pending.restoredAfterResume === true) &&
-		(!allowReviewId || pending.reviewId === undefined || isBoundedId(pending.reviewId))
+		(!allowReviewId || pending.reviewId === undefined || isBoundedId(pending.reviewId)) &&
+		(pending.tag === undefined ||
+			pending.tag === "possible-duplicate" ||
+			pending.tag === "re-raised")
 	);
 }
 
@@ -418,6 +424,7 @@ function isPersistedActiveDelivery(
 			"identity",
 			"deliveryId",
 			"turnNumber",
+			"tag",
 		]) &&
 		isAcceptedAdvice(delivery.advice, true) &&
 		typeof delivery.stale === "boolean" &&

@@ -492,3 +492,44 @@ describe("Quality Slice Q5 dedupe metadata persistence", () => {
 		});
 	});
 });
+
+describe("Quality Slice Q5 dedupe tag persistence", () => {
+	it("round-trips the optional dedupe tag on deferred advice and rejects invalid tags", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const taggedAdvice = advice("Verify the concrete cancellation defect.");
+		if (taggedAdvice.intent !== "review") throw new Error("Expected review advice fixture");
+		taggedAdvice.findingKeyHash = "a".repeat(64);
+		const tagged = {
+			...stateFor(manager),
+			deferredAdvice: [
+				{
+					advice: taggedAdvice,
+					stale: true,
+					branchWindow: cursorAtTail(branch),
+					displayedInEntry: false,
+					tag: "re-raised",
+				},
+			],
+		};
+		expect(parsePersistedAdvisorRuntimeState(tagged, manager.getSessionId(), branch)).toEqual(
+			tagged,
+		);
+		const invalidTag = {
+			...tagged,
+			deferredAdvice: [
+				{
+					advice: taggedAdvice,
+					stale: true,
+					branchWindow: cursorAtTail(branch),
+					displayedInEntry: false,
+					tag: "urgent",
+				},
+			],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(invalidTag, manager.getSessionId(), branch),
+		).toBeUndefined();
+	});
+});

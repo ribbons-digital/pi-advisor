@@ -421,6 +421,7 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 						stale: true,
 						branchWindow: cursorAtTail(manager.getBranch()),
 						displayedInEntry: false,
+						tag: "possible-duplicate",
 					},
 				],
 				memorySuggestions: {
@@ -455,7 +456,9 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 			expect(runtime.getStatus().deferredNotesPending).toBe(1);
 			await harness.session.prompt("resume one");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
-			expect(JSON.stringify(primary.requests[0]?.context)).toContain(ROLLBACK_NOTE);
+			const resumedContext = JSON.stringify(primary.requests[0]?.context);
+			expect(resumedContext).toContain(ROLLBACK_NOTE);
+			expect(resumedContext).toContain('tag=\\"possible-duplicate\\"');
 			await harness.session.prompt("resume two");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
 			await harness.session.prompt("resume three");
