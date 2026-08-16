@@ -1101,7 +1101,10 @@ export class AdvisorRuntime {
 				this.mutesLoadError = loaded.error;
 				this.warn(loaded.error);
 			}
-			this.mutes ??= loaded.store;
+			// Fail closed per the documented contract: a reload failure drops any
+			// previously loaded store so no stale mutes stay in force while the
+			// file cannot be read; the file itself is never overwritten.
+			this.mutes = loaded.store;
 		} else {
 			this.mutesLoadError = undefined;
 			this.mutes = loaded.store;

@@ -374,6 +374,78 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 		}
 	});
 
+	it("drops the cached mutes when a mid-session reload fails so stale mutes do not stay in force", async () => {
+		const hashA = findingHash(KEY_A);
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "one" }] },
+			{ content: [{ type: "text", text: "two" }] },
+			{ content: [{ type: "text", text: "three" }] },
+			{ content: [{ type: "text", text: "four" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			reviewAdvice(NOTE_A, KEY_A),
+			reviewAdvice(NOTE_A, KEY_A),
+			reviewAdvice(NOTE_A, KEY_A),
+			{ content: [] },
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			setup: async (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+				// A valid mutes file at session start, muted before any review.
+				await writeFile(
+					join(agentDir, MUTES_FILE_NAME),
+					JSON.stringify([{ id: hashA, label: KEY_A }]),
+					"utf8",
+				);
+			},
+		});
+		try {
+			await harness.session.prompt("review one");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			expect(runtime?.mutesUnavailableReason()).toBeUndefined();
+			expect(runtime?.muteList()).toEqual([{ id: hashA.slice(0, 8), label: KEY_A }]);
+
+			// The loaded mute suppresses both notes: the "deliver" prompt also
+			// runs the next review, so reviews 1 and 2 are both muted at
+			// admission and nothing reaches the deferred queue.
+			await harness.session.prompt("deliver deferred note");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+			expect(runtime?.getStatus()).toMatchObject({ mutedSuppressions: 2, notesDelivered: 0 });
+
+			// Corrupt the file mid-session; the next write-gate reload fails and
+			// the failing load never overwrites the file.
+			const MALFORMED = "not: [valid\n  - yaml: {";
+			await writeFile(join(harness.agentDir, MUTES_FILE_NAME), MALFORMED, "utf8");
+			const rejected = await runtime?.muteFinding(hashA, KEY_A);
+			expect(rejected?.ok).toBe(false);
+			expect(rejected?.message).toContain("malformed");
+			expect(await readFile(join(harness.agentDir, MUTES_FILE_NAME), "utf8")).toBe(MALFORMED);
+			await waitFor(() => runtime?.getStatus().mutesUnavailable !== undefined);
+			expect(runtime?.muteList()).toEqual([]);
+
+			// The cached store was dropped: the next note is queued, not
+			// suppressed, matching the documented fail-closed contract.
+			await harness.session.prompt("review three");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 3);
+			expect(runtime?.getStatus()).toMatchObject({ mutedSuppressions: 2, notesDelivered: 0 });
+			expect(runtime?.getStatus().deferredNotesPending).toBe(1);
+			await harness.session.prompt("deliver deferred note");
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
+			expect(runtime?.getStatus()).toMatchObject({ mutedSuppressions: 2, notesDelivered: 1 });
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
 	it("merges a concurrent session's mutes instead of clobbering them", async () => {
 		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "one" }] }]);
 		const advisor = createAdvisorProvider([reviewAdvice(NOTE_A, KEY_A)]);
