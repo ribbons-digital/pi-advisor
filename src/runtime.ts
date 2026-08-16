@@ -395,6 +395,8 @@ export interface AdvisorRuntimeStatus {
 	notesSuppressed: number;
 	mutedSuppressions: number;
 	mutedFindings: number;
+	/** Set when the mutes file could not be loaded; the store is empty and inactive. */
+	mutesUnavailable?: string;
 	lastNoteCreatedAt?: number;
 	lastNoteSeverity?: AdviceSeverity;
 	lastNoteFindingKey?: string;
@@ -1082,6 +1084,11 @@ export class AdvisorRuntime {
 		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
 		this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
 		this.status.mutedFindings = this.mutes?.list().length ?? 0;
+		if (this.mutesLoadError === undefined) {
+			delete this.status.mutesUnavailable;
+		} else {
+			this.status.mutesUnavailable = this.mutesLoadError;
+		}
 		return structuredClone(this.status);
 	}
 
@@ -1219,6 +1226,14 @@ export class AdvisorRuntime {
 			ok: false,
 			message: "The mutes file changed concurrently; the unmute was not applied. Try again.",
 		};
+	}
+
+	/**
+	 * The reason the mutes file could not be loaded, or undefined when the
+	 * store is active. While set, muteList() is empty and no mute is enforced.
+	 */
+	mutesUnavailableReason(): string | undefined {
+		return this.mutesLoadError;
 	}
 
 	muteList(): { id: string; label: string }[] {
@@ -4012,7 +4027,7 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.retryAttempts)} retry attempts`,
 		`Delivery failures: ${String(status.deliveryFailures)}`,
 		`Lifecycle: ${String(status.branchResets)} resets, ${String(status.staleQueuedMessagesDiscarded)} stale queued messages discarded`,
-		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.mutedSuppressions)} muted-suppressed, ${String(status.mutedFindings)} muted findings, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
+		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.mutedSuppressions)} muted-suppressed, ${status.mutesUnavailable === undefined ? `${String(status.mutedFindings)} muted findings` : "muted findings unavailable"}, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
 		`Memory suggestions: ${status.memorySuggestionsEnabled ? "enabled" : "disabled"}, capability ${status.memorySuggestionCapability.state}, ${String(status.memorySuggestionsDelivered)} delivered, ${String(status.memorySuggestionsRemaining)} remaining, ${String(status.memorySuggestionsPolicySuppressed)} policy-suppressed, ${String(status.memorySuggestionsLimitSuppressed)} limit-suppressed`,
 		`Memory suggestion next eligibility: turn ${String(status.memorySuggestionNextEligibleTurn)}, ${new Date(status.memorySuggestionNextEligibleAt).toISOString()}`,
 		`Restart recovery: active review ${status.restoredActiveReviewPending ? "pending" : "none"}, queued review ${status.restoredQueuedReviewPending ? "pending" : "none"}, ${String(status.restoredActiveDeliveriesPending)} active deliveries pending, replay count ${String(status.restoredReplayCount)}, ${String(status.poisonReviewDrops)} poison drops`,
@@ -4027,6 +4042,9 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 	if (status.lastFailure) lines.push(`Last failure: ${status.lastFailure}`);
 	if (status.lastDeliveryFailure) {
 		lines.push(`Last delivery failure: ${status.lastDeliveryFailure}`);
+	}
+	if (status.mutesUnavailable !== undefined) {
+		lines.push(`Mutes: unavailable - ${status.mutesUnavailable}`);
 	}
 	return lines.join("\n");
 }

@@ -347,6 +347,14 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(rejected?.message).toContain("not modified");
 			expect(await readFile(join(harness.agentDir, MUTES_FILE_NAME), "utf8")).toBe(MALFORMED);
 
+			// The read path must surface the load failure instead of reporting
+			// an empty store: the list is empty but the reason is available, and
+			// status full carries the reason rather than a misleading 0 count.
+			expect(runtime?.muteList()).toEqual([]);
+			expect(runtime?.mutesUnavailableReason()).toContain("malformed");
+			expect(runtime?.getStatus().mutesUnavailable).toContain("malformed");
+			expect(runtime?.getStatus().mutedFindings).toBe(0);
+
 			// Repair the file with an existing mute; the next mute loads the real
 			// entries and appends instead of replacing them.
 			const existing = { id: "b".repeat(64), label: "existing-mute" };
@@ -357,6 +365,8 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(repaired).toContain("existing-mute");
 			expect(repaired).toContain(KEY_A);
 			expect(runtime?.muteList()).toHaveLength(2);
+			expect(runtime?.mutesUnavailableReason()).toBeUndefined();
+			expect(runtime?.getStatus().mutesUnavailable).toBeUndefined();
 		} finally {
 			await harness.dispose();
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

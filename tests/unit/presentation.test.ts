@@ -10,6 +10,7 @@ import {
 	formatAdviceForDelivery,
 	formatAdvisorDiagnosticsDump,
 	formatAdvisorFooterStatus,
+	formatAdvisorStatus,
 	formatAdvisorStatusShort,
 	shouldAnimateAdvisorFooter,
 	HARD_LIMITS,
@@ -598,6 +599,17 @@ describe("Quality Slice Q6 short status and card mute IDs", () => {
 		expect(lines[4]).toBe("Session: 10 tokens, $0.0100; caps off");
 		expect(lines[5]).toBe("Memory suggestions: enabled; capability available (5 remaining)");
 		expect(lines).toHaveLength(6);
+	});
+
+	it("reports the mutes load failure in status full instead of a mute count", () => {
+		const lines = formatAdvisorStatus({
+			...runtimeStatus(),
+			mutesUnavailable: "EACCES: permission denied",
+		}).split("\n");
+		const notes = lines.find((line) => line.startsWith("Notes:"));
+		expect(notes).toContain("muted findings unavailable");
+		expect(notes).not.toContain("0 muted findings");
+		expect(lines).toContain("Mutes: unavailable - EACCES: permission denied");
 	});
 
 	it("shows queued count, last note age and severity, and cap and pause state", () => {

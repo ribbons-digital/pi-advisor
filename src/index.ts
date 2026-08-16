@@ -396,6 +396,14 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 				return;
 			}
 			if (command === "mute list") {
+				const unavailable = runtime.mutesUnavailableReason();
+				if (unavailable !== undefined) {
+					ctx.ui.notify(
+						`Mutes are unavailable: ${unavailable} No mute is active and the mutes file was not modified.`,
+						"info",
+					);
+					return;
+				}
 				const mutes = runtime.muteList();
 				ctx.ui.notify(
 					mutes.length === 0
