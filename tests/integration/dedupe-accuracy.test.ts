@@ -114,6 +114,15 @@ function appendState(manager: SessionManager, state: PersistedAdvisorRuntimeStat
 	manager.appendCustomEntry(ADVISOR_RUNTIME_STATE_ENTRY_TYPE, state);
 }
 
+function latestRuntimeState(manager: SessionManager): PersistedAdvisorRuntimeState | undefined {
+	const latest = [...manager.getBranch()]
+		.reverse()
+		.find(
+			(entry) => entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
+		);
+	return latest?.type === "custom" ? (latest.data as PersistedAdvisorRuntimeState) : undefined;
+}
+
 describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 	it("suppresses paraphrase key reuse, tags a dissimilar reuse, and keeps distinct keys plain", async () => {
 		const primary = createPrimaryProvider([
@@ -472,6 +481,99 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 				notesDelivered: 2,
 				notesSuppressed: 0,
 			});
+		} finally {
+			await harness.dispose();
+		}
+	});
+});
+
+describe("Quality Slice Q5 dedupe snapshot tag guard", () => {
+	it("persists the dedupe tag of an active delivery through a live persistState write", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "activate for live persist" }] },
+		]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => undefined);
+			await harness.session.prompt("activate for live persist");
+
+			const hostContext = Reflect.get(activeRuntime, "hostContext") as ExtensionContext;
+			const ctx = {
+				mode: "rpc",
+				signal: hostContext.signal,
+				isIdle: () => false,
+				sessionManager: hostContext.sessionManager,
+			} as unknown as ExtensionContext;
+			const deliver = Reflect.get(activeRuntime, "deliver") as (
+				advice: unknown,
+				context: ExtensionContext,
+				stale: boolean,
+				newerInstructionInput: boolean,
+				forceDeferred: boolean,
+				turnNumber: number,
+				reviewId: string,
+			) => "active" | "deferred" | undefined;
+
+			const fillNote = "Persist note " + "y".repeat(300);
+			const seededSignature = (~noteSignature(fillNote) & 0xffffffffffffffffn)
+				.toString(16)
+				.padStart(16, "0");
+			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			dedupe.restoreEntries([
+				{
+					hash: adviceDedupeKey({
+						note: fillNote,
+						severity: "concern" as const,
+						intent: "review" as const,
+						findingKeyHash: "a".repeat(64),
+					}),
+					metadata: {
+						severity: "concern" as const,
+						signature: seededSignature,
+						lastDeliveryTurn: 1,
+					},
+				},
+			]);
+			const advice = {
+				intent: "review" as const,
+				note: fillNote,
+				severity: "concern" as const,
+				findingKeyHash: "a".repeat(64),
+				truncated: false,
+				originalCharacters: fillNote.length,
+				originalEstimatedTokens: Math.ceil(fillNote.length / 4),
+				createdAt: Date.now(),
+			};
+			const result = deliver.call(
+				activeRuntime,
+				advice,
+				ctx,
+				false,
+				false,
+				false,
+				1,
+				"persist-guard",
+			);
+			expect(result).toBe("active");
+
+			(Reflect.get(activeRuntime, "persistState") as () => void).call(activeRuntime);
+			const persisted = latestRuntimeState(harness.sessionManager);
+			const persistedDelivery = persisted?.activeDeliveries.find(
+				(delivery) => delivery.identity === adviceDedupeKey(advice),
+			);
+			expect(persistedDelivery?.tag).toBe("possible-duplicate");
+			sendMessage.mockRestore();
 		} finally {
 			await harness.dispose();
 		}
