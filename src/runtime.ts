@@ -3477,6 +3477,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					advice.findingKeyHash !== undefined &&
 					this.mutes?.isMuted(advice.findingKeyHash) === true
 				) {
+					// The note was registered in the dedupe index when it was queued;
+					// drop that history too so a later unmute can deliver it again.
+					this.adviceDedupe.delete(advice);
 					this.status.mutedSuppressions++;
 					return false;
 				}
