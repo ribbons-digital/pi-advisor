@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { SessionManager, type InlineExtension } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import {
+	SessionManager,
+	defineTool,
+	type ExtensionAPI,
+	type InlineExtension,
+} from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { describe, expect, it, vi } from "vitest";
 
 import {
 	ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
@@ -85,6 +91,14 @@ function reviewAdvice(
 
 async function waitFor(predicate: () => boolean): Promise<void> {
 	await expect.poll(predicate, { timeout: 5_000, interval: 10 }).toBe(true);
+}
+
+function createBarrier(): { promise: Promise<void>; release: () => void } {
+	let release: () => void = () => undefined;
+	const promise = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	return { promise, release };
 }
 
 function latestRuntimeState(manager: SessionManager): PersistedAdvisorRuntimeState | undefined {
@@ -565,6 +579,70 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			});
 			const context = JSON.stringify(primary.requests[0]?.context);
 			expect(context).not.toContain(NOTE_A);
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("does not record a finding whose active delivery failed", async () => {
+		const releaseTurn = createBarrier();
+		const primary = createPrimaryProvider([
+			{
+				content: [{ type: "toolCall", id: "hold-mute", name: "hold", arguments: {} }],
+				stopReason: "toolUse",
+			},
+			{ waitFor: releaseTurn.promise, content: [{ type: "text", text: "finished" }] },
+		]);
+		const advisor = createAdvisorProvider([reviewAdvice(NOTE_A, KEY_A), { content: [] }]);
+		const hold = defineTool({
+			name: "hold",
+			label: "hold",
+			description: "Keep the Executor busy so advice dispatches as active steering.",
+			parameters: Type.Object({}),
+			execute: () =>
+				Promise.resolve({ content: [{ type: "text" as const, text: "held" }], details: {} }),
+		});
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			customTools: [hold],
+			tools: ["hold"],
+			mode: "rpc",
+			setup: (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+			},
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => {
+				throw new Error("scripted active delivery failure");
+			});
+			try {
+				const turn = harness.session.prompt("start failing active delivery");
+				// The primary turn stays in flight (its second response is held), so
+				// the review dispatches active steering and the send fails.
+				await waitFor(() => activeRuntime.getStatus().deliveryFailures === 1);
+				releaseTurn.release();
+				await turn.catch(() => undefined);
+				const hashA = findingHash(KEY_A);
+				// The failed send never committed, so the finding is not
+				// mute-resolvable and no last note is surfaced.
+				expect(activeRuntime.resolveMuteTarget(hashA.slice(0, 8))).toEqual({ kind: "unknown" });
+				const status = activeRuntime.getStatus();
+				expect(status.lastNoteSeverity).toBeUndefined();
+				expect(status.lastNoteCreatedAt).toBeUndefined();
+				expect(status.activeNotesPending).toBe(0);
+				expect(status.mutedSuppressions).toBe(0);
+			} finally {
+				sendMessage.mockRestore();
+			}
 		} finally {
 			await harness.dispose();
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

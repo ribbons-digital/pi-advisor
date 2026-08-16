@@ -3339,7 +3339,6 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			const previousTurn = this.lastMemorySuggestionTurn;
 			const previousAt = this.lastMemorySuggestionAt;
 			this.adviceDedupe.add(advice, turnNumber);
-			this.recordDeliveredFinding(advice);
 			this.recordMemorySuggestionAdmission(advice, turnNumber);
 			if (dispatch === "followUp" && advice.intent === "review") {
 				this.automaticReviewFollowUpDeliveryId = deliveryId;
@@ -3389,6 +3388,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 						? { deliverAs: "followUp", triggerTurn: true }
 						: { deliverAs: "steer" },
 				);
+				// Record the delivered finding only after the send committed, so a
+				// failed sendMessage cannot make an undelivered finding mute-resolvable
+				// or surface a last note the user never saw.
+				this.recordDeliveredFinding(advice);
 			} catch (error) {
 				if (this.automaticMemoryFollowUpDeliveryId === deliveryId) {
 					delete this.automaticMemoryFollowUpDeliveryId;

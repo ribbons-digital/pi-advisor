@@ -194,8 +194,9 @@ async function runArm(options: {
 
 function summarize(results: readonly RunResult[], arm: "baseline" | "tiered") {
 	const armResults = results.filter((result) => result.arm === arm);
-	const silenceItems = armResults.filter((result) =>
-		[F9_DATASET.find((item) => item.id === result.itemId)?.expectation.kind].includes("silence"),
+	const silenceItems = armResults.filter(
+		(result) =>
+			F9_DATASET.find((item) => item.id === result.itemId)?.expectation.kind === "silence",
 	);
 	const silenceCorrect = silenceItems.filter(
 		(result) => result.verdict === "silence-correct",
@@ -203,8 +204,9 @@ function summarize(results: readonly RunResult[], arm: "baseline" | "tiered") {
 	const falsePositives = silenceItems.filter(
 		(result) => result.verdict === "false-positive",
 	).length;
-	const findingItems = armResults.filter((result) =>
-		[F9_DATASET.find((item) => item.id === result.itemId)?.expectation.kind].includes("finding"),
+	const findingItems = armResults.filter(
+		(result) =>
+			F9_DATASET.find((item) => item.id === result.itemId)?.expectation.kind === "finding",
 	);
 	const hits = findingItems.filter((result) => result.verdict === "hit").length;
 	const tokens = armResults.reduce((sum, result) => sum + result.tokens, 0);

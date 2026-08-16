@@ -38,11 +38,6 @@ function boundedText(input: string, maximumCharacters: number): string | undefin
 }
 
 /**
- * Bounds a raw `findingKey` for display: redacts first, then truncates to the
- * fixed 128-character retention bound. An empty result means the finding has no
- * usable display label and therefore no mute ID on its card.
- */
-/**
  * Truncates to the label bound without ever cutting through a `[REDACTED]`
  * marker: when the cut lands inside a marker, the cut moves to the marker
  * start so the whole marker is dropped instead of left partial.
