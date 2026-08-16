@@ -18,6 +18,7 @@ import type {
 } from "./advice.js";
 import { HARD_LIMITS } from "./config.js";
 import { findingMuteId } from "./mutes.js";
+import { sanitizeTerminalText } from "./redaction.js";
 import {
 	isMemorySuggestionBasis,
 	isMemorySuggestionCategory,
@@ -101,17 +102,6 @@ export function escapeXmlText(input: string): string {
 
 export function escapeXmlAttribute(input: string): string {
 	return escapeXmlText(input).replaceAll('"', "&quot;").replaceAll("'", "&apos;");
-}
-
-function sanitizeTerminalText(input: string): string {
-	let output = "";
-	for (const character of input) {
-		const codePoint = character.codePointAt(0) ?? 0;
-		const allowedWhitespace = codePoint === 0x9 || codePoint === 0xa;
-		const control = codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f);
-		output += allowedWhitespace || !control ? character : "\uFFFD";
-	}
-	return output;
 }
 
 const INLINE_PAREN_NUMBERED_MARKER = /(?:^|[\t\n ;:])(\d{1,2}\))[ \t]+(?=\S)/gu;

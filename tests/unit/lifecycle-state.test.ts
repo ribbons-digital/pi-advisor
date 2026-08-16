@@ -676,6 +676,8 @@ describe("Quality Slice Q6 runtime state version 5 (Q6-A1)", () => {
 			[{ hash: "short", label: "x" }],
 			[{ hash: "a".repeat(64), label: "" }],
 			[{ hash: "a".repeat(64), label: "API_KEY=sk-live-12345" }],
+			[{ hash: "a".repeat(64), label: "line1\nline2" }],
+			[{ hash: "a".repeat(64), label: "red\x1b[31mtext" }],
 			[{ hash: "a".repeat(64), label: "z".repeat(129) }],
 			[{ hash: "a".repeat(64), label: "x", extra: "y" }],
 			[

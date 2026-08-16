@@ -11,7 +11,7 @@ import { HARD_LIMITS } from "./config.js";
 import { MAX_PENDING_ADVICE_ITEMS } from "./delivery.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
 import { MAX_MUTE_ENTRIES } from "./mutes.js";
-import { redactSecrets } from "./redaction.js";
+import { containsTerminalControlCharacters, redactSecrets } from "./redaction.js";
 import { cursorMatches, type AdvisorCursor } from "./transcript.js";
 
 export const ADVISOR_RUNTIME_STATE_ENTRY_TYPE = "pi-advisor-runtime-state";
@@ -357,7 +357,8 @@ function isPersistedRecentFinding(value: unknown): value is PersistedRecentFindi
 		/^[a-f0-9]{64}$/u.test(entry.hash) &&
 		typeof entry.label === "string" &&
 		Array.from(entry.label).length > 0 &&
-		isBoundedSafeText(entry.label, MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS)
+		isBoundedSafeText(entry.label, MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS) &&
+		!containsTerminalControlCharacters(entry.label)
 	);
 }
 

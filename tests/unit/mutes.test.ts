@@ -14,7 +14,7 @@ import {
 	RecentFindingsIndex,
 	shortestUniquePrefixes,
 } from "../../src/mutes.js";
-import { redactSecrets } from "../../src/redaction.js";
+import { containsTerminalControlCharacters, redactSecrets } from "../../src/redaction.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -52,6 +52,27 @@ describe("Quality Slice Q6 bounded finding labels and mute IDs", () => {
 		expect(Array.from(labelTwo ?? "").length).toBeLessThanOrEqual(128);
 		expect(redactSecrets(labelTwo ?? "").text).toBe(labelTwo);
 		expect(labelTwo).toContain("KEY=[REDACTED]");
+	});
+
+	it("neutralizes terminal control characters while staying redaction-stable", () => {
+		const hostile = "defect\nrollback\r\x1b[31mred\x1b[0m";
+		const label = boundedFindingLabel(hostile);
+		expect(label).toBe("defect rollback\uFFFD\uFFFD[31mred\uFFFD[0m");
+		expect(redactSecrets(label ?? "").text).toBe(label);
+		// Tab, newline, carriage return, ESC, and C1 controls all become safe
+		// characters, so a label can never break the single-line rendering.
+		expect(containsTerminalControlCharacters(label ?? "")).toBe(false);
+	});
+
+	it("rejects mutes-file entries whose labels carry terminal control characters", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-advisor-mutes-"));
+		const path = join(directory, "mutes.yml");
+		for (const label of ["line1\nline2", "red\x1b[31mtext", "tab\there"]) {
+			await writeFile(path, JSON.stringify([{ id: HASH_A, label }]), "utf8");
+			const loaded = await MuteStore.load(path);
+			expect(loaded.error, JSON.stringify(label)).toBeDefined();
+			expect(loaded.store.list(), JSON.stringify(label)).toEqual([]);
+		}
 	});
 
 	it("derives the 8-hex mute ID and validates hex prefixes from 8 to 64 characters", () => {

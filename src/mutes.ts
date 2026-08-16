@@ -5,7 +5,12 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 
 import { readBounded } from "./configuration.js";
-import { REDACTION, redactSecrets } from "./redaction.js";
+import {
+	containsTerminalControlCharacters,
+	REDACTION,
+	redactSecrets,
+	sanitizeTerminalText,
+} from "./redaction.js";
 
 /**
  * Durable user-scope mutes and the bounded recent-findings index (Q6-A1).
@@ -69,7 +74,12 @@ function truncateWithoutCuttingMarker(text: string): string | undefined {
  * card.
  */
 export function boundedFindingLabel(input: string): string | undefined {
-	const truncated = boundedText(input.trim(), MAX_FINDING_LABEL_CHARACTERS);
+	// Neutralize terminal control characters before bounding and redaction so a
+	// model-authored key can never inject newlines or escape sequences into
+	// notify messages, the status line, or the mutes file; tab, newline, and
+	// carriage return become spaces because the label is single-line text.
+	const singleLine = sanitizeTerminalText(input).replace(/[\t\n\r]/gu, " ");
+	const truncated = boundedText(singleLine.trim(), MAX_FINDING_LABEL_CHARACTERS);
 	if (truncated === undefined) return undefined;
 	let text = truncated;
 	for (let iteration = 0; iteration < 8; iteration++) {
@@ -106,6 +116,7 @@ function isRecentFinding(value: unknown): value is RecentFinding {
 		typeof entry.label === "string" &&
 		Array.from(entry.label).length > 0 &&
 		Array.from(entry.label).length <= MAX_FINDING_LABEL_CHARACTERS &&
+		!containsTerminalControlCharacters(entry.label) &&
 		redactSecrets(entry.label).text === entry.label
 	);
 }
@@ -177,6 +188,7 @@ function isMutesFileEntry(value: unknown): value is { id: string; label: string 
 		typeof entry.label === "string" &&
 		Array.from(entry.label).length > 0 &&
 		Array.from(entry.label).length <= MAX_FINDING_LABEL_CHARACTERS &&
+		!containsTerminalControlCharacters(entry.label) &&
 		redactSecrets(entry.label).text === entry.label
 	);
 }
