@@ -338,6 +338,11 @@ export class MuteStore {
 		if (text === undefined) {
 			return { store: new MuteStore(path), fingerprint: "" };
 		}
+		if (text.trim().length === 0) {
+			// An empty or whitespace-only YAML document is a valid empty list, not
+			// a malformed file; treating it as malformed would block every write.
+			return { store: new MuteStore(path), fingerprint: text };
+		}
 		if (Buffer.byteLength(text, "utf8") > MAX_MUTES_FILE_BYTES) {
 			return {
 				store: new MuteStore(path),
