@@ -28,6 +28,9 @@ import {
 	measureAdvisorToolOutput,
 	normalizeAdviceForDedupe,
 	normalizeAdvisorConfig,
+	noteSimilarity,
+	hammingDistance64,
+	noteSignature,
 	parseAdviseWireInput,
 	parsePersistedAdvisorTranscriptRecord,
 	PROPOSED_ADVISOR_CONFIG,
@@ -39,6 +42,8 @@ import {
 	type AdviceDedupeIdentity,
 	type AdviseWireInput,
 	type AdvisorRuntimeStatus,
+	type AdviceSeverity,
+	type DedupePolicy,
 } from "../../src/index.js";
 
 function dedupeIdentity(
@@ -1108,5 +1113,302 @@ describe("Slice 1 transcript filtering and redaction", () => {
 				[],
 			),
 		).toBe(true);
+	});
+});
+
+describe("Quality Slice Q5 dedupe accuracy", () => {
+	const POLICY: DedupePolicy = { similarityRedeliveryThreshold: 0.5, reRaiseMinTurns: 4 };
+
+	function finding(
+		note: string,
+		severity: AdviceSeverity = "concern",
+	): AdviceDedupeIdentity & { note: string } {
+		return { note, severity, intent: "review", findingKeyHash: "a".repeat(64) };
+	}
+
+	it("computes 64-bit SimHash similarity with identity 1.0 and full range", () => {
+		const a = noteSignature("The rollback path drops the pending migration state on failure.");
+		expect(noteSignature("The rollback path drops the pending migration state on failure.")).toBe(
+			a,
+		);
+		expect(noteSimilarity(a, a)).toBe(1);
+		expect(hammingDistance64(0n, 0n)).toBe(0);
+		expect(hammingDistance64(0n, (1n << 32n) - 1n)).toBe(32);
+		expect(noteSimilarity(0n, (1n << 32n) - 1n)).toBe(0.5);
+		expect(noteSimilarity(0n, (1n << 64n) - 1n)).toBe(0);
+		const short = noteSignature("one");
+		expect(short).toBe(noteSignature(" ONE "));
+	});
+
+	it("suppresses paraphrase findingKey reuse and near-identical notes", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		expect(dedupe.add(first, 1)).toBe(true);
+		const paraphrase = finding(
+			"The rollback path loses the pending migration state when it fails.",
+		);
+		const nearIdentical = finding(
+			"The rollback path drops the pending migration state on failure, leaving stale data.",
+		);
+		expect(
+			noteSimilarity(noteSignature(first.note), noteSignature(paraphrase.note)),
+		).toBeGreaterThanOrEqual(0.5);
+		expect(
+			noteSimilarity(noteSignature(first.note), noteSignature(nearIdentical.note)),
+		).toBeGreaterThanOrEqual(0.5);
+		expect(dedupe.decide(paraphrase, 2, POLICY)).toEqual({ outcome: "suppress" });
+		expect(dedupe.decide(nearIdentical, 2, POLICY)).toEqual({ outcome: "suppress" });
+	});
+
+	it("delivers a dissimilar findingKey reuse with the possible-duplicate tag", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		dedupe.add(first, 1);
+		const distinct = finding(
+			"Feature flags are read after the configuration file is closed, so values always come back empty.",
+		);
+		const similarity = noteSimilarity(noteSignature(first.note), noteSignature(distinct.note));
+		expect(similarity).toBeLessThan(0.5);
+		expect(dedupe.decide(distinct, 2, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "possible-duplicate",
+		});
+	});
+
+	it("treats a zero threshold as disabled and boundary equality as suppressed", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		dedupe.add(first, 1);
+		const distinct = finding(
+			"Feature flags are read after the configuration file is closed, so values always come back empty.",
+		);
+		const similarity = noteSimilarity(noteSignature(first.note), noteSignature(distinct.note));
+		expect(
+			dedupe.decide(distinct, 2, { similarityRedeliveryThreshold: 0, reRaiseMinTurns: 4 }),
+		).toEqual({ outcome: "suppress" });
+		expect(
+			dedupe.decide(distinct, 2, {
+				similarityRedeliveryThreshold: similarity,
+				reRaiseMinTurns: 0,
+			}),
+		).toEqual({ outcome: "suppress" });
+		expect(
+			dedupe.decide(distinct, 2, {
+				similarityRedeliveryThreshold: similarity + 1 / 64,
+				reRaiseMinTurns: 0,
+			}),
+		).toEqual({ outcome: "deliver", tag: "possible-duplicate" });
+	});
+
+	it("re-raises only after the configured turn distance and only for strictly higher severity", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding(
+			"The rollback path drops the pending migration state on failure.",
+			"concern",
+		);
+		dedupe.add(first, 1);
+		expect(dedupe.decide(finding(first.note, "blocker"), 2, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+		expect(dedupe.decide(finding(first.note, "blocker"), 4, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+		expect(dedupe.decide(finding(first.note, "blocker"), 5, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "re-raised",
+		});
+		expect(dedupe.decide(finding(first.note, "concern"), 9, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+		expect(dedupe.decide(finding(first.note, "nit"), 9, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+		expect(
+			dedupe.decide(finding(first.note, "blocker"), 9, {
+				similarityRedeliveryThreshold: 0.5,
+				reRaiseMinTurns: 0,
+			}),
+		).toEqual({ outcome: "suppress" });
+	});
+
+	it("updates stored severity and turn metadata on redelivery", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding(
+			"The rollback path drops the pending migration state on failure.",
+			"concern",
+		);
+		expect(dedupe.add(first, 1)).toBe(true);
+		expect(dedupe.add(finding(first.note, "blocker"), 5)).toBe(false);
+		expect(dedupe.decide(finding(first.note, "blocker"), 6, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+		expect(dedupe.decide(finding(first.note, "concern"), 5, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+	});
+
+	it("keeps metadata-free restored keys on exact pre-Q5 suppress-always behavior", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		dedupe.restoreEntries([{ hash: adviceDedupeKey(finding("Any note.")) }]);
+		expect(
+			dedupe.decide(
+				finding(
+					"Feature flags are read after the configuration file is closed, so values always come back empty.",
+					"blocker",
+				),
+				9,
+				POLICY,
+			),
+		).toEqual({ outcome: "suppress" });
+	});
+
+	it("keeps exact suppression for non-finding identities regardless of severity", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		dedupe.add(dedupeIdentity("Verify rollback punctuation!"), 1);
+		expect(
+			dedupe.decide(dedupeIdentity("VERIFY rollback punctuation...", "blocker"), 9, POLICY),
+		).toEqual({ outcome: "suppress" });
+		const memory: AdviceDedupeIdentity = {
+			intent: "memory-suggestion",
+			memory: {
+				text: "Use sfw-prefixed pnpm commands.",
+				category: "project",
+				basis: "project-constraint",
+			},
+		};
+		dedupe.add(memory, 1);
+		expect(dedupe.decide(memory, 9, POLICY)).toEqual({ outcome: "suppress" });
+	});
+
+	it("records metadata only for findingKey review notes and evicts it with the key", () => {
+		const dedupe = new BoundedAdviceDedupe(2);
+		expect(dedupe.add(dedupeIdentity("Plain review note."), 1)).toBe(true);
+		const memory: AdviceDedupeIdentity = {
+			intent: "memory-suggestion",
+			memory: {
+				text: "Use sfw-prefixed pnpm commands.",
+				category: "project",
+				basis: "project-constraint",
+			},
+		};
+		expect(dedupe.add(memory, 1)).toBe(true);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		expect(dedupe.add(first, 1)).toBe(true);
+		expect(dedupe.has(dedupeIdentity("Plain review note."))).toBe(false);
+		expect(dedupe.has(first)).toBe(true);
+		const exported = dedupe.exportNewestEntries(8);
+		const findingEntry = exported.find((entry) => entry.hash === adviceDedupeKey(first));
+		expect(findingEntry?.metadata).toEqual({
+			severity: "concern",
+			signature: noteSignature(first.note).toString(16).padStart(16, "0"),
+			lastDeliveryTurn: 1,
+		});
+		for (const entry of exported) {
+			if (entry.hash !== adviceDedupeKey(first)) expect(entry.metadata).toBeUndefined();
+		}
+	});
+
+	it("restores persisted metadata and rejects malformed entries", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		const key = adviceDedupeKey(first);
+		const signature = noteSignature(first.note).toString(16).padStart(16, "0");
+		dedupe.restoreEntries([
+			{ hash: key, metadata: { severity: "concern", signature, lastDeliveryTurn: 1 } },
+			{
+				hash: "f".repeat(64),
+				metadata: {
+					severity: "urgent" as AdviceSeverity,
+					signature,
+					lastDeliveryTurn: 1,
+				},
+			},
+			{
+				hash: "e".repeat(64),
+				metadata: { severity: "concern", signature: "not-hex", lastDeliveryTurn: 1 },
+			},
+			{
+				hash: "d".repeat(64),
+				metadata: { severity: "concern", signature, lastDeliveryTurn: 0 },
+			},
+		]);
+		expect(dedupe.size).toBe(1);
+		expect(dedupe.decide(finding(first.note, "blocker"), 5, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "re-raised",
+		});
+		const distinct = finding(
+			"Feature flags are read after the configuration file is closed, so values always come back empty.",
+		);
+		expect(dedupe.decide(distinct, 2, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "possible-duplicate",
+		});
+	});
+});
+
+describe("Quality Slice Q5 dedupe rollback restoration", () => {
+	const POLICY: DedupePolicy = { similarityRedeliveryThreshold: 0.5, reRaiseMinTurns: 4 };
+
+	function finding(
+		note: string,
+		severity: AdviceSeverity = "concern",
+	): AdviceDedupeIdentity & { note: string } {
+		return { note, severity, intent: "review", findingKeyHash: "a".repeat(64) };
+	}
+
+	it("restores prior metadata on rollback instead of deleting a re-delivered key", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding(
+			"The rollback path drops the pending migration state on failure.",
+			"concern",
+		);
+		dedupe.add(first, 1);
+		const blocker = finding(first.note, "blocker");
+		const snapshot = dedupe.snapshotEntry(blocker);
+		expect(dedupe.add(blocker, 5)).toBe(false);
+		dedupe.restoreEntry(snapshot);
+		expect(dedupe.size).toBe(1);
+		const entries = dedupe.exportNewestEntries(8);
+		expect(entries.find((entry) => entry.hash === adviceDedupeKey(first))?.metadata).toEqual({
+			severity: "concern",
+			signature: noteSignature(first.note).toString(16).padStart(16, "0"),
+			lastDeliveryTurn: 1,
+		});
+		expect(dedupe.decide(blocker, 5, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "re-raised",
+		});
+	});
+
+	it("restoring a fresh-key snapshot deletes the inserted key", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		const snapshot = dedupe.snapshotEntry(first);
+		dedupe.add(first, 1);
+		dedupe.restoreEntry(snapshot);
+		expect(dedupe.size).toBe(0);
+		expect(dedupe.decide(first, 9, POLICY)).toEqual({ outcome: "deliver" });
+	});
+
+	it("back-fills metadata onto an entry inserted without a turn", () => {
+		const dedupe = new BoundedAdviceDedupe(16);
+		const first = finding("The rollback path drops the pending migration state on failure.");
+		dedupe.add(first);
+		expect(dedupe.decide(finding(first.note, "blocker"), 5, POLICY)).toEqual({
+			outcome: "suppress",
+		});
+		expect(dedupe.add(first, 1)).toBe(false);
+		expect(dedupe.decide(finding(first.note, "blocker"), 5, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "re-raised",
+		});
+		const distinct = finding(
+			"Feature flags are read after the configuration file is closed, so values always come back empty.",
+		);
+		expect(dedupe.decide(distinct, 2, POLICY)).toEqual({
+			outcome: "deliver",
+			tag: "possible-duplicate",
+		});
 	});
 });

@@ -358,8 +358,110 @@ export function adviceDedupeKey(advice: AdviceDedupeIdentity): string {
 	return createHash("sha256").update(identity).digest("hex");
 }
 
+const SEVERITY_RANK: Record<AdviceSeverity, number> = { nit: 0, concern: 1, blocker: 2 };
+
+export function isAdviceSeverity(value: unknown): value is AdviceSeverity {
+	return value === "nit" || value === "concern" || value === "blocker";
+}
+
+function isStrictlyHigherSeverity(candidate: AdviceSeverity, baseline: AdviceSeverity): boolean {
+	return SEVERITY_RANK[candidate] > SEVERITY_RANK[baseline];
+}
+
+/** 64-bit SimHash over normalized-note tokens; identical notes produce identical signatures. */
+export function noteSignature(input: string): bigint {
+	const tokens = normalizeAdviceForDedupe(input)
+		.split(/\s+/u)
+		.filter((token) => token.length > 0);
+	const weights = new Int32Array(64);
+	for (const token of tokens) {
+		const value = createHash("sha256").update(`note-token:${token}`).digest().readBigUInt64BE(0);
+		for (let bit = 0; bit < 64; bit++) {
+			const current = weights[bit] ?? 0;
+			weights[bit] = current + ((value & (1n << BigInt(bit))) === 0n ? -1 : 1);
+		}
+	}
+	let signature = 0n;
+	for (let bit = 0; bit < 64; bit++) {
+		if ((weights[bit] ?? 0) > 0) signature |= 1n << BigInt(bit);
+	}
+	return signature;
+}
+
+export function hammingDistance64(left: bigint, right: bigint): number {
+	let difference = left ^ right;
+	let distance = 0;
+	while (difference !== 0n) {
+		difference &= difference - 1n;
+		distance++;
+	}
+	return distance;
+}
+
+export function noteSimilarity(left: bigint, right: bigint): number {
+	return 1 - hammingDistance64(left, right) / 64;
+}
+
+export type AdviceDedupeTag = "possible-duplicate" | "re-raised";
+
+export type DedupeDecision =
+	| { outcome: "suppress" }
+	| { outcome: "deliver"; tag?: AdviceDedupeTag };
+
+export interface DedupePolicy {
+	similarityRedeliveryThreshold: number;
+	reRaiseMinTurns: number;
+}
+
+export interface PersistedDedupeKeyMetadata {
+	severity: AdviceSeverity;
+	/** 16 lowercase hex characters encoding the 64-bit SimHash signature. */
+	signature: string;
+	lastDeliveryTurn: number;
+}
+
+export interface PersistedDedupeEntry {
+	hash: string;
+	metadata?: PersistedDedupeKeyMetadata;
+}
+
+export interface AdviceDedupeEntryState {
+	metadata?: {
+		severity: AdviceSeverity;
+		signature: bigint;
+		lastDeliveryTurn: number;
+	};
+}
+
+export interface AdviceDedupeSnapshot {
+	key: string;
+	entry: AdviceDedupeEntryState | undefined;
+}
+
+const HASH_PATTERN = /^[a-f0-9]{64}$/u;
+const SIGNATURE_PATTERN = /^[a-f0-9]{16}$/u;
+
+function metadataFor(
+	advice: AdviceDedupeIdentity,
+	turnNumber: number | undefined,
+): AdviceDedupeEntryState["metadata"] {
+	if (
+		turnNumber === undefined ||
+		advice.intent !== "review" ||
+		advice.findingKeyHash === undefined ||
+		advice.severity === undefined
+	) {
+		return undefined;
+	}
+	return {
+		severity: advice.severity,
+		signature: noteSignature(advice.note),
+		lastDeliveryTurn: turnNumber,
+	};
+}
+
 export class BoundedAdviceDedupe {
-	private readonly keys = new Set<string>();
+	private readonly entries = new Map<string, AdviceDedupeEntryState>();
 
 	constructor(readonly capacity = 4_096) {
 		if (!Number.isInteger(capacity) || capacity < 1) {
@@ -368,55 +470,166 @@ export class BoundedAdviceDedupe {
 	}
 
 	has(advice: AdviceDedupeIdentity): boolean {
-		return this.keys.has(adviceDedupeKey(advice));
+		return this.entries.has(adviceDedupeKey(advice));
 	}
 
-	add(advice: AdviceDedupeIdentity): boolean {
+	/**
+	 * Decides whether a note may deliver. A key without metadata keeps exact
+	 * pre-Q5 suppress-always behavior with no similarity delivery and no re-raise.
+	 */
+	decide(advice: AdviceDedupeIdentity, turnNumber: number, policy: DedupePolicy): DedupeDecision {
+		const entry = this.entries.get(adviceDedupeKey(advice));
+		if (entry === undefined) return { outcome: "deliver" };
+		if (advice.intent !== "review" || advice.findingKeyHash === undefined) {
+			return { outcome: "suppress" };
+		}
+		const metadata = entry.metadata;
+		if (metadata === undefined) return { outcome: "suppress" };
+		const signature = noteSignature(advice.note);
+		if (
+			policy.reRaiseMinTurns > 0 &&
+			advice.severity !== undefined &&
+			isStrictlyHigherSeverity(advice.severity, metadata.severity) &&
+			turnNumber - metadata.lastDeliveryTurn >= policy.reRaiseMinTurns
+		) {
+			return { outcome: "deliver", tag: "re-raised" };
+		}
+		if (
+			policy.similarityRedeliveryThreshold > 0 &&
+			noteSimilarity(signature, metadata.signature) < policy.similarityRedeliveryThreshold
+		) {
+			return { outcome: "deliver", tag: "possible-duplicate" };
+		}
+		return { outcome: "suppress" };
+	}
+
+	add(advice: AdviceDedupeIdentity, turnNumber?: number): boolean {
 		const key = adviceDedupeKey(advice);
-		if (this.keys.has(key)) return false;
-		this.keys.add(key);
-		if (this.keys.size > this.capacity) {
-			const oldest = this.keys.values().next().value;
-			if (oldest !== undefined) this.keys.delete(oldest);
+		const metadata = metadataFor(advice, turnNumber);
+		const existing = this.entries.get(key);
+		if (existing !== undefined) {
+			if (metadata !== undefined && existing.metadata !== undefined) {
+				existing.metadata = {
+					severity: isStrictlyHigherSeverity(metadata.severity, existing.metadata.severity)
+						? metadata.severity
+						: existing.metadata.severity,
+					signature: metadata.signature,
+					lastDeliveryTurn: metadata.lastDeliveryTurn,
+				};
+			} else if (metadata !== undefined) {
+				// Back-fill metadata onto an entry inserted without a turn (for example a
+				// restored pending note emitted before its finding key carried metadata),
+				// so the key gains similarity and re-raise behavior instead of staying
+				// permanently metadata-free.
+				existing.metadata = metadata;
+			}
+			return false;
+		}
+		this.entries.set(key, metadata === undefined ? {} : { metadata });
+		if (this.entries.size > this.capacity) {
+			const oldest = this.entries.keys().next().value;
+			if (oldest !== undefined) this.entries.delete(oldest);
 		}
 		return true;
 	}
 
 	delete(advice: AdviceDedupeIdentity): boolean {
-		return this.keys.delete(adviceDedupeKey(advice));
+		return this.entries.delete(adviceDedupeKey(advice));
+	}
+
+	/** Captures the entry state before an `add` so a failed delivery can restore it. */
+	snapshotEntry(advice: AdviceDedupeIdentity): AdviceDedupeSnapshot {
+		const key = adviceDedupeKey(advice);
+		const entry = this.entries.get(key);
+		return {
+			key,
+			entry:
+				entry === undefined
+					? undefined
+					: entry.metadata === undefined
+						? {}
+						: { metadata: { ...entry.metadata } },
+		};
+	}
+
+	/**
+	 * Restores the captured pre-add entry state: deletes a newly inserted key or
+	 * replaces the in-place metadata update, preserving insertion order.
+	 */
+	restoreEntry(snapshot: AdviceDedupeSnapshot): void {
+		if (snapshot.entry === undefined) {
+			this.entries.delete(snapshot.key);
+			return;
+		}
+		this.entries.set(snapshot.key, snapshot.entry);
 	}
 
 	clear(): void {
-		this.keys.clear();
+		this.entries.clear();
 	}
 
-	exportNewestKeys(maximum: number, excludedKeys: ReadonlySet<string> = new Set()): string[] {
+	exportNewestEntries(
+		maximum: number,
+		excludedKeys: ReadonlySet<string> = new Set(),
+	): PersistedDedupeEntry[] {
 		if (!Number.isInteger(maximum) || maximum < 0) {
 			throw new RangeError("Advice dedupe export bound must be a non-negative integer");
 		}
 		if (maximum === 0) return [];
-		const newest: string[] = [];
-		for (const key of [...this.keys].reverse()) {
+		const newest: PersistedDedupeEntry[] = [];
+		for (const [key, entry] of [...this.entries].reverse()) {
 			if (excludedKeys.has(key)) continue;
-			newest.push(key);
+			const metadata = entry.metadata;
+			newest.push(
+				metadata === undefined
+					? { hash: key }
+					: {
+							hash: key,
+							metadata: {
+								severity: metadata.severity,
+								signature: metadata.signature.toString(16).padStart(16, "0"),
+								lastDeliveryTurn: metadata.lastDeliveryTurn,
+							},
+						},
+			);
 			if (newest.length === maximum) break;
 		}
 		return newest.reverse();
 	}
 
-	restoreKeys(keys: readonly string[]): void {
-		for (const key of keys) {
-			if (!/^[a-f0-9]{64}$/u.test(key) || this.keys.has(key)) continue;
-			this.keys.add(key);
-			if (this.keys.size > this.capacity) {
-				const oldest = this.keys.values().next().value;
-				if (oldest !== undefined) this.keys.delete(oldest);
+	restoreEntries(entries: readonly PersistedDedupeEntry[]): void {
+		for (const entry of entries) {
+			if (!HASH_PATTERN.test(entry.hash) || this.entries.has(entry.hash)) continue;
+			const metadata = entry.metadata;
+			if (
+				metadata !== undefined &&
+				(!isAdviceSeverity(metadata.severity) ||
+					!SIGNATURE_PATTERN.test(metadata.signature) ||
+					!Number.isSafeInteger(metadata.lastDeliveryTurn) ||
+					metadata.lastDeliveryTurn < 1)
+			) {
+				continue;
+			}
+			this.entries.set(entry.hash, {
+				...(metadata === undefined
+					? {}
+					: {
+							metadata: {
+								severity: metadata.severity,
+								signature: BigInt(`0x${metadata.signature}`),
+								lastDeliveryTurn: metadata.lastDeliveryTurn,
+							},
+						}),
+			});
+			if (this.entries.size > this.capacity) {
+				const oldest = this.entries.keys().next().value;
+				if (oldest !== undefined) this.entries.delete(oldest);
 			}
 		}
 	}
 
 	get size(): number {
-		return this.keys.size;
+		return this.entries.size;
 	}
 }
 
@@ -549,6 +762,7 @@ export function formatAdviceForDelivery(
 	stale: boolean,
 	queueState?: MemorySuggestionQueueState,
 	restoredAfterResume = false,
+	tag?: AdviceDedupeTag,
 ): string {
 	if (advice.intent === "memory-suggestion") {
 		const attributes = [
@@ -578,6 +792,7 @@ export function formatAdviceForDelivery(
 		`delivery="${escapeXmlAttribute(delivery)}"`,
 		`stale="${escapeXmlAttribute(String(stale))}"`,
 		...(restoredAfterResume ? [`restored-after-resume="true"`] : []),
+		...(tag === undefined ? [] : [`tag="${escapeXmlAttribute(tag)}"`]),
 	];
 	const resumeWarning = restoredAfterResume
 		? "This deferred advice was restored after resume and may be stale. "

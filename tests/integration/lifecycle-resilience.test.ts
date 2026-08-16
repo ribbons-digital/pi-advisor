@@ -951,6 +951,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						deliveryId: "restored-delivery-absent",
 						reviewId: "restored-review-absent",
 						turnNumber: 1,
+						tag: "possible-duplicate",
 					},
 				],
 			}),
@@ -977,6 +978,9 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			});
 			await harness.session.prompt("materialize recovered active delivery");
 			expect(JSON.stringify(primary.requests[0]?.context)).toContain(advice.note);
+			expect(JSON.stringify(primary.requests[0]?.context)).toContain(
+				'tag=\\"possible-duplicate\\"',
+			);
 			expect(runtime?.getStatus().notesDelivered).toBe(1);
 		} finally {
 			await harness.dispose();
@@ -1545,7 +1549,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 							displayedInEntry: false,
 						},
 					],
-					dedupeHashes: [adviceDedupeKey(advice)],
+					dedupeHashes: [{ hash: adviceDedupeKey(advice) }],
 				}),
 			);
 			const primary = createPrimaryProvider([
@@ -1634,9 +1638,11 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			if (latest?.type !== "custom") throw new Error("Expected persisted dedupe state");
 			const persisted = latest.data as PersistedAdvisorRuntimeState;
 			expect(persisted.dedupeHashes).toHaveLength(MAX_PERSISTED_DEDUPE_HASHES);
-			expect(persisted.dedupeHashes).toEqual(allKeys.slice(0, MAX_PERSISTED_DEDUPE_HASHES));
+			expect(persisted.dedupeHashes).toEqual(
+				allKeys.slice(0, MAX_PERSISTED_DEDUPE_HASHES).map((hash) => ({ hash })),
+			);
 			for (const transient of transientKeys) {
-				expect(persisted.dedupeHashes).not.toContain(transient);
+				expect(persisted.dedupeHashes.map((entry) => entry.hash)).not.toContain(transient);
 			}
 		} finally {
 			await harness.dispose();
@@ -1647,17 +1653,17 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 		const duplicate = "Do not repeat this already delivered review note.";
 		const advice = reviewAdvice(duplicate);
 		const manager = SessionManager.inMemory();
-		const proposedHashes = Array.from({ length: 512 }, (_, index) =>
-			index.toString(16).padStart(64, "0"),
-		);
+		const proposedHashes = Array.from({ length: 512 }, (_, index) => ({
+			hash: index.toString(16).padStart(64, "0"),
+		}));
 		const proposedState = persistedState(manager, { dedupeHashes: proposedHashes });
 		expect(Buffer.byteLength(JSON.stringify(proposedState), "utf8")).toBeGreaterThan(33 * 1_024);
-		const hashes = Array.from({ length: MAX_PERSISTED_DEDUPE_HASHES }, (_, index) =>
-			index === 0 ? adviceDedupeKey(advice) : index.toString(16).padStart(64, "0"),
-		);
+		const hashes = Array.from({ length: MAX_PERSISTED_DEDUPE_HASHES }, (_, index) => ({
+			hash: index === 0 ? adviceDedupeKey(advice) : index.toString(16).padStart(64, "0"),
+		}));
 		const state = persistedState(manager, { dedupeHashes: hashes });
 		appendState(manager, state);
-		expect(Buffer.byteLength(JSON.stringify(state), "utf8")).toBeLessThan(9 * 1_024);
+		expect(Buffer.byteLength(JSON.stringify(state), "utf8")).toBeLessThan(12 * 1_024);
 
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "answer that triggers duplicate review" }] },

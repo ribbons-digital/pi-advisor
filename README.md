@@ -158,6 +158,7 @@ The latest explicit user request controls the active workflow unless it invokes 
 Workflow or gate advice is checked against recent Executor actions, tool results, and review results before delivery, and repeated findings can be suppressed by semantic identity.
 The Advisor model must use one `findingKey` for paraphrases or severity changes of exactly one concrete defect and a different key for every materially different defect.
 The key, rather than note wording or severity, is authoritative for semantic suppression, so incorrect model key reuse can suppress a distinct note.
+A reused key still delivers a materially dissimilar note as a possible duplicate (64-bit SimHash similarity below the configured threshold), and a persisting defect re-delivers as re-raised when its severity strictly increases after the configured turn distance.
 Only an accepted Advisory note enters the Executor context.
 Private Advisor reasoning, rejected notes, duplicate notes, content-free responses, and ordinary silent reviews remain outside the Executor context.
 
