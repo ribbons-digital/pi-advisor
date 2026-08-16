@@ -384,7 +384,9 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 			),
 		},
 		memorySuggestions: {
-			enabled: merged.memorySuggestions.enabled,
+			enabled:
+				(merged.memorySuggestions as Partial<MemorySuggestionConfig>).enabled ??
+				defaults.memorySuggestions.enabled,
 			minTurnsBetweenSuggestions: finiteAtLeast(
 				merged.memorySuggestions.minTurnsBetweenSuggestions,
 				0,
@@ -415,7 +417,11 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 				defaults.memorySuggestions.maxProposedMemoryTokens,
 			),
 		},
-		persistence: { ...merged.persistence },
+		persistence: {
+			transcript:
+				(merged.persistence as Partial<AdvisorConfig["persistence"]>).transcript ??
+				defaults.persistence.transcript,
+		},
 	};
 }
 

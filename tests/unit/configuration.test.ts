@@ -1383,6 +1383,8 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		partial.review = {} as AdvisorConfig["review"];
 		partial.context = {} as AdvisorConfig["context"];
 		partial.limits = {} as AdvisorConfig["limits"];
+		partial.memorySuggestions = {} as AdvisorConfig["memorySuggestions"];
+		partial.persistence = {} as AdvisorConfig["persistence"];
 		const normalized = normalizeAdvisorConfig(partial);
 		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
 		expect(normalized.security.additionalProtectedPaths).toEqual([]);
@@ -1392,5 +1394,7 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		expect(normalized.review.skipNonMaterialTurns).toBe(false);
 		expect(normalized.context.maxFraction).toBe(0.65);
 		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
+		expect(normalized.memorySuggestions.enabled).toBe(true);
+		expect(normalized.persistence.transcript).toBe(true);
 	});
 });
