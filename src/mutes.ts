@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 
 import { readBounded } from "./configuration.js";
-import { redactSecrets } from "./redaction.js";
+import { REDACTION, redactSecrets } from "./redaction.js";
 
 /**
  * Durable user-scope mutes and the bounded recent-findings index (Q6-A1).
@@ -42,8 +42,51 @@ function boundedText(input: string, maximumCharacters: number): string | undefin
  * fixed 128-character retention bound. An empty result means the finding has no
  * usable display label and therefore no mute ID on its card.
  */
+/**
+ * Truncates to the label bound without ever cutting through a `[REDACTED]`
+ * marker: when the cut lands inside a marker, the cut moves to the marker
+ * start so the whole marker is dropped instead of left partial.
+ */
+function truncateWithoutCuttingMarker(text: string): string | undefined {
+	const characters = Array.from(text);
+	if (characters.length <= MAX_FINDING_LABEL_CHARACTERS) return characters.join("");
+	let cut = MAX_FINDING_LABEL_CHARACTERS;
+	for (let index = Math.max(0, cut - (REDACTION.length - 1)); index < cut; index++) {
+		if (text.startsWith(REDACTION, index)) {
+			cut = index;
+			break;
+		}
+	}
+	const result = characters.slice(0, cut).join("");
+	return result.length === 0 ? undefined : result;
+}
+
+/**
+ * Bounds a raw `findingKey` for display: truncate first, redact, and repeat
+ * until the result is a redaction fixpoint (redacting it again changes
+ * nothing) and at most the fixed 128-character bound. A truncated label can
+ * cut through a secret and leave a partial value that redaction restores,
+ * and a truncation after redaction can cut through a `[REDACTED]` marker
+ * that the next redaction pass re-expands; the fixpoint loop plus
+ * marker-safe truncation guarantees the persisted label never changes under
+ * redaction, so the strict validators never reject it. An empty result means
+ * the finding has no usable display label and therefore no mute ID on its
+ * card.
+ */
 export function boundedFindingLabel(input: string): string | undefined {
-	return boundedText(redactSecrets(input).text.trim(), MAX_FINDING_LABEL_CHARACTERS);
+	const truncated = boundedText(input.trim(), MAX_FINDING_LABEL_CHARACTERS);
+	if (truncated === undefined) return undefined;
+	let text = truncated;
+	for (let iteration = 0; iteration < 8; iteration++) {
+		const redacted = redactSecrets(text).text;
+		if (redacted === text) return text;
+		const next = truncateWithoutCuttingMarker(redacted);
+		if (next === undefined) return undefined;
+		text = next;
+	}
+	// The bounded loop did not converge; discard the label rather than
+	// persisting one that redaction would change again.
+	return redactSecrets(text).text === text ? text : undefined;
 }
 
 export function findingMuteId(hash: string): string {

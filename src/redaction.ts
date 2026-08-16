@@ -3,7 +3,7 @@ export interface RedactionResult {
 	redactions: number;
 }
 
-const REDACTION = "[REDACTED]";
+export const REDACTION = "[REDACTED]";
 
 const PATTERNS: RegExp[] = [
 	/-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9]+)? PRIVATE KEY-----/g,

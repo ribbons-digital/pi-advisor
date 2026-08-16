@@ -14,6 +14,7 @@ import {
 	RecentFindingsIndex,
 	shortestUniquePrefixes,
 } from "../../src/mutes.js";
+import { redactSecrets } from "../../src/redaction.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -29,6 +30,28 @@ describe("Quality Slice Q6 bounded finding labels and mute IDs", () => {
 		const bounded = boundedFindingLabel(long);
 		expect(bounded).toBeDefined();
 		expect(Array.from(bounded ?? "").length).toBe(128);
+	});
+
+	it("never produces a label that redaction would change again (fixpoint bound)", () => {
+		// The 128-character truncation cuts through the secret value, and a
+		// truncation after redaction would cut through the restored marker;
+		// the fixpoint loop must converge on a stable bounded label.
+		const markerCut = `${"a".repeat(110)} API_KEY=sk-live-12345 tail`;
+		const label = boundedFindingLabel(markerCut);
+		expect(label).toBeDefined();
+		expect(Array.from(label ?? "").length).toBeLessThanOrEqual(128);
+		expect(redactSecrets(label ?? "").text).toBe(label);
+		// The restored marker spans the 128-character boundary, so it is dropped
+		// whole and the label ends at the key prefix, which is redaction-stable.
+		expect(label).toMatch(/API_KEY=$/u);
+
+		// Marker fully inside the bound is kept and still converges.
+		const afterMarker = `${"k".repeat(112)} KEY=sk-live-12345 more`;
+		const labelTwo = boundedFindingLabel(afterMarker);
+		expect(labelTwo).toBeDefined();
+		expect(Array.from(labelTwo ?? "").length).toBeLessThanOrEqual(128);
+		expect(redactSecrets(labelTwo ?? "").text).toBe(labelTwo);
+		expect(labelTwo).toContain("KEY=[REDACTED]");
 	});
 
 	it("derives the 8-hex mute ID and validates hex prefixes from 8 to 64 characters", () => {

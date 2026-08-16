@@ -306,21 +306,22 @@ ${rows}
  * configured model's provider id (for example `vibeproxy` for
  * `vibeproxy/claude-opus-4-8`) so the configured Advisor model can resolve
  * with real credentials. Loading requires the explicit opt-in env flag
- * `PI_ADVISOR_EXPERIMENT_LOAD_PROVIDER_EXTENSIONS=1` because the extension
- * executes with full process permissions outside Pi's normal extension
- * loading path; naming a provider in the WATCHDOG configuration alone never
- * triggers execution. Only that single extension is executed, only its
- * provider registration is forwarded into the experiment model runtime, and
- * the provider id must be a plain single-segment directory name.
+ * `PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION=<providerId>` that names exactly
+ * the extension to execute, because the extension runs with full process
+ * permissions outside Pi's normal extension loading path; naming a provider
+ * in the WATCHDOG configuration alone never triggers execution. Only that
+ * single extension is executed, only its provider registration is forwarded
+ * into the experiment model runtime, and the provider id must be a plain
+ * single-segment directory name.
  */
 async function registerUserProviderExtensions(
 	agentDir: string,
 	providerId: string,
 	modelRuntime: ModelRuntime,
 ): Promise<string[]> {
-	if (process.env.PI_ADVISOR_EXPERIMENT_LOAD_PROVIDER_EXTENSIONS !== "1") {
+	if (process.env.PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION !== providerId) {
 		console.warn(
-			`[f9] the configured provider ${providerId} is not available from the built-in runtime. Set PI_ADVISOR_EXPERIMENT_LOAD_PROVIDER_EXTENSIONS=1 to load its extension from ${join(agentDir, "extensions", providerId)} after reviewing the extension source.`,
+			`[f9] the configured provider ${providerId} is not available from the built-in runtime. Set PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION=${providerId} to load its extension from ${join(agentDir, "extensions", providerId)} after reviewing the extension source.`,
 		);
 		return [];
 	}
