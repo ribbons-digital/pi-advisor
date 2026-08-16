@@ -1349,10 +1349,29 @@ describe("Quality Slice Q6 configure menu model gate (F12)", () => {
 });
 
 describe("Quality Slice Q6 legacy programmatic configuration (verified defect fix)", () => {
-	it("normalizes a pre-Q3 programmatic config without the delivery key", () => {
-		const legacy = structuredClone(DEFAULT_ADVISOR_CONFIG);
-		delete (legacy as Partial<AdvisorConfig>).delivery;
-		const normalized = normalizeAdvisorConfig(legacy);
+	it("normalizes a legacy programmatic config missing every post-original group", () => {
+		const legacy = structuredClone(DEFAULT_ADVISOR_CONFIG) as Partial<AdvisorConfig>;
+		// A config built against the original shape lacks every group added
+		// later: delivery (Q3), review (Q4), dedupe (Q5), and the later
+		// memorySuggestions and persistence groups; deleting the original groups
+		// too proves the merge-over-defaults fallback is complete.
+		delete legacy.tools;
+		delete legacy.context;
+		delete legacy.limits;
+		delete legacy.security;
+		delete legacy.delivery;
+		delete legacy.review;
+		delete legacy.dedupe;
+		delete legacy.memorySuggestions;
+		delete legacy.persistence;
+		const normalized = normalizeAdvisorConfig(legacy as AdvisorConfig);
 		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
+		expect(normalized.dedupe.similarityRedeliveryThreshold).toBe(0.5);
+		expect(normalized.dedupe.reRaiseMinTurns).toBe(4);
+		expect(normalized.review.skipNonMaterialTurns).toBe(false);
+		expect(normalized.memorySuggestions.enabled).toBe(true);
+		expect(normalized.persistence.transcript).toBe(true);
+		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
+		expect(normalized.tools).toEqual(["read", "grep", "find", "ls"]);
 	});
 });
