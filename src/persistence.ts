@@ -437,7 +437,10 @@ function isPersistedActiveDelivery(
 		/^[a-f0-9]{64}$/u.test(delivery.identity) &&
 		delivery.identity === adviceDedupeKey(delivery.advice) &&
 		isBoundedId(delivery.deliveryId) &&
-		isFiniteInteger(delivery.turnNumber, 1)
+		isFiniteInteger(delivery.turnNumber, 1) &&
+		(delivery.tag === undefined ||
+			delivery.tag === "possible-duplicate" ||
+			delivery.tag === "re-raised")
 	);
 }
 

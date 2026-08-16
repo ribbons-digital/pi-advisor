@@ -532,4 +532,56 @@ describe("Quality Slice Q5 dedupe tag persistence", () => {
 			parsePersistedAdvisorRuntimeState(invalidTag, manager.getSessionId(), branch),
 		).toBeUndefined();
 	});
+
+	it("accepts a valid tag and rejects an arbitrary tag value on an active delivery", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const taggedAdvice = advice("Verify the concrete cancellation defect.");
+		if (taggedAdvice.intent !== "review") throw new Error("Expected review advice fixture");
+		taggedAdvice.findingKeyHash = "a".repeat(64);
+		const base = stateFor(manager);
+		const delivery = {
+			advice: taggedAdvice,
+			stale: false,
+			branchWindow: cursorAtTail(branch),
+			displayedInEntry: false,
+			identity: adviceDedupeKey(taggedAdvice),
+			deliveryId: "tagged-delivery",
+			reviewId: "tagged-review",
+			turnNumber: 1,
+		};
+		const tagged = {
+			...base,
+			activeDeliveries: [delivery],
+			memorySuggestions: {
+				...base.memorySuggestions,
+				meaningfulTurnCount: 1,
+			},
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(
+				{ ...tagged, activeDeliveries: [{ ...delivery, tag: "re-raised" }] },
+				manager.getSessionId(),
+				branch,
+			),
+		).toEqual({
+			...tagged,
+			activeDeliveries: [{ ...delivery, tag: "re-raised" }],
+		});
+		expect(
+			parsePersistedAdvisorRuntimeState(
+				{ ...tagged, activeDeliveries: [{ ...delivery, tag: "urgent" }] },
+				manager.getSessionId(),
+				branch,
+			),
+		).toBeUndefined();
+		expect(
+			parsePersistedAdvisorRuntimeState(
+				{ ...tagged, activeDeliveries: [{ ...delivery, tag: 7 }] },
+				manager.getSessionId(),
+				branch,
+			),
+		).toBeUndefined();
+	});
 });
