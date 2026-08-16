@@ -140,6 +140,23 @@ describe("Quality Slice Q6 durable mutes file (Q6-D2)", () => {
 		expect(loaded.store.list()).toEqual([]);
 	});
 
+	it("treats an empty or whitespace-only file as a valid empty store", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-advisor-mutes-"));
+		for (const content of ["", "   \n  "]) {
+			const path = join(directory, "mutes.yml");
+			await writeFile(path, content, "utf8");
+			const loaded = await MuteStore.load(path);
+			expect(loaded.error, JSON.stringify(content)).toBeUndefined();
+			expect(loaded.store.list()).toEqual([]);
+			// A write must succeed against the empty document, not fail closed.
+			loaded.store.mute(HASH_A, "x");
+			await loaded.store.save();
+			const reloaded = await MuteStore.load(path);
+			expect(reloaded.error, JSON.stringify(content)).toBeUndefined();
+			expect(reloaded.store.list()).toEqual([{ hash: HASH_A, label: "x" }]);
+		}
+	});
+
 	it("fails closed on a malformed file without overwriting it", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "pi-advisor-mutes-"));
 		const path = join(directory, "mutes.yml");
