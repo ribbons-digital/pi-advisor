@@ -421,7 +421,7 @@ function pickKnown(value: unknown, source: "user" | "project"): Record<string, u
 	return output;
 }
 
-async function readBounded(path: string, maximumBytes: number): Promise<string | undefined> {
+export async function readBounded(path: string, maximumBytes: number): Promise<string | undefined> {
 	let handle;
 	try {
 		handle = await open(path, "r");

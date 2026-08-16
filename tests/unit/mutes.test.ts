@@ -148,6 +148,19 @@ describe("Quality Slice Q6 durable mutes file (Q6-D2)", () => {
 		}
 	});
 
+	it("fails closed on an oversized file without materializing its content", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-advisor-mutes-"));
+		const path = join(directory, "mutes.yml");
+		await writeFile(
+			path,
+			`${JSON.stringify({ id: HASH_A, label: "alpha" })}\n`.repeat(1_000_000),
+			"utf8",
+		);
+		const loaded = await MuteStore.load(path);
+		expect(loaded.error).toContain("size bound");
+		expect(loaded.store.list()).toEqual([]);
+	});
+
 	it("unmutes by exact hash and ignores unknown hashes", () => {
 		const store = new MuteStore("/unused");
 		store.mute(HASH_A, "alpha");

@@ -20,7 +20,7 @@
  * - The evaluation note is written to `docs/f9-evaluation.md`.
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -315,8 +315,17 @@ async function registerUserProviderExtensions(
 	providerId: string,
 	modelRuntime: ModelRuntime,
 ): Promise<string[]> {
+	// The provider id comes from the User WATCHDOG configuration, so it must be
+	// a plain single-segment directory name before it is used to build a path.
+	if (!/^[a-z0-9][a-z0-9_-]*$/iu.test(providerId)) {
+		console.warn(
+			`[f9] refusing to load a provider extension for unsafe provider id ${JSON.stringify(providerId)}`,
+		);
+		return [];
+	}
 	const extensionsDir = join(agentDir, "extensions");
 	const entryPath = join(extensionsDir, providerId, "index.ts");
+	if (!entryPath.startsWith(`${extensionsDir}${sep}`)) return [];
 	try {
 		const module = (await import(pathToFileURL(entryPath).href)) as {
 			default?: (pi: ExtensionAPI) => Promise<void> | void;

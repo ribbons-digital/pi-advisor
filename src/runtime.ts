@@ -1119,18 +1119,42 @@ export class AdvisorRuntime {
 		return { kind: "collision", matches };
 	}
 
-	async muteFinding(hash: string, label: string): Promise<{ ok: boolean; message?: string }> {
+	/**
+	 * Fail-closed write gate for the mutes file: returns a bounded reason when
+	 * a write must not proceed. A file that failed to load is retried once;
+	 * only a clean load (missing file counts as clean) unlocks writes, so a
+	 * malformed or unreadable mutes file is never overwritten.
+	 */
+	private async mutesWriteGate(): Promise<string | undefined> {
 		await this.loadMutes();
-		if (this.mutes === undefined) {
+		let mutes = this.mutes;
+		if (mutes === undefined) return "The mutes file could not be loaded.";
+		if (this.mutesLoadError === undefined) return undefined;
+		await this.loadMutes(true);
+		mutes = this.mutes;
+		if (mutes === undefined) return "The mutes file could not be loaded.";
+		return this.mutesLoadError;
+	}
+
+	async muteFinding(hash: string, label: string): Promise<{ ok: boolean; message?: string }> {
+		const loadError = await this.mutesWriteGate();
+		if (loadError !== undefined) {
+			return {
+				ok: false,
+				message: `${loadError} No mute was applied and the existing file was not modified.`,
+			};
+		}
+		const mutes = this.mutes;
+		if (mutes === undefined) {
 			return { ok: false, message: "The mutes file could not be loaded; no mute was applied." };
 		}
-		if (this.mutes.isMuted(hash)) return { ok: true, message: "Finding is already muted." };
-		const before = this.mutes.list();
-		this.mutes.mute(hash, label);
+		if (mutes.isMuted(hash)) return { ok: true, message: "Finding is already muted." };
+		const before = mutes.list();
+		mutes.mute(hash, label);
 		try {
-			await this.mutes.save();
+			await mutes.save();
 		} catch {
-			this.mutes.replace(before);
+			mutes.replace(before);
 			this.warn("The Advisor mutes file could not be saved; the mute was not applied.");
 			return {
 				ok: false,
@@ -1141,11 +1165,18 @@ export class AdvisorRuntime {
 	}
 
 	async unmuteFinding(prefix: string): Promise<{ ok: boolean; message?: string }> {
-		await this.loadMutes();
-		if (this.mutes === undefined) {
+		const loadError = await this.mutesWriteGate();
+		if (loadError !== undefined) {
+			return {
+				ok: false,
+				message: `${loadError} No unmute was applied and the existing file was not modified.`,
+			};
+		}
+		const mutes = this.mutes;
+		if (mutes === undefined) {
 			return { ok: false, message: "The mutes file could not be loaded; no unmute was applied." };
 		}
-		const matches = this.mutes.resolve(prefix);
+		const matches = mutes.resolve(prefix);
 		if (matches.length === 0) {
 			return {
 				ok: false,
@@ -1165,12 +1196,12 @@ export class AdvisorRuntime {
 		if (match === undefined) {
 			return { ok: false, message: `No muted finding matches ${prefix}.` };
 		}
-		const before = this.mutes.list();
-		this.mutes.unmute(match.hash);
+		const before = mutes.list();
+		mutes.unmute(match.hash);
 		try {
-			await this.mutes.save();
+			await mutes.save();
 		} catch {
-			this.mutes.replace(before);
+			mutes.replace(before);
 			this.warn("The Advisor mutes file could not be saved; the unmute was not applied.");
 			return {
 				ok: false,

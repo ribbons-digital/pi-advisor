@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { parse, stringify } from "yaml";
 
+import { readBounded } from "./configuration.js";
 import { redactSecrets } from "./redaction.js";
 
 /**
@@ -225,27 +226,28 @@ export class MuteStore {
 
 	/**
 	 * Loads the mutes file. A missing file is the normal first-run state and
-	 * yields an empty store. A malformed file yields an error plus an empty
-	 * store; the malformed file is never overwritten.
+	 * yields an empty store. A malformed or oversized file yields an error plus
+	 * an empty store; the malformed file is never overwritten.
 	 */
 	static async load(path: string): Promise<{ store: MuteStore; error?: string }> {
 		let text: string | undefined;
 		try {
-			const data = await readFile(path, "utf8");
-			if (Buffer.byteLength(data, "utf8") > MAX_MUTES_FILE_BYTES) {
-				return {
-					store: new MuteStore(path),
-					error: `${path} exceeds the mutes file size bound and was ignored.`,
-				};
-			}
-			text = data;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-				return { store: new MuteStore(path) };
-			}
+			// Bounded read: at most MAX_MUTES_FILE_BYTES + 1 bytes are materialized,
+			// so an oversized file is detected without loading its content.
+			text = await readBounded(path, MAX_MUTES_FILE_BYTES);
+		} catch {
 			return {
 				store: new MuteStore(path),
 				error: `${path} could not be read; mutes are inactive until the file is repaired.`,
+			};
+		}
+		if (text === undefined) {
+			return { store: new MuteStore(path) };
+		}
+		if (Buffer.byteLength(text, "utf8") > MAX_MUTES_FILE_BYTES) {
+			return {
+				store: new MuteStore(path),
+				error: `${path} exceeds the mutes file size bound and was ignored.`,
 			};
 		}
 		try {

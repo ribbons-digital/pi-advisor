@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { SessionManager, type InlineExtension } from "@earendil-works/pi-coding-agent";
@@ -290,6 +290,53 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			const context = JSON.stringify(primary.requests[3]?.context);
 			expect(context).toContain('tag=\\"re-raised\\"');
 			expect(runtime?.getStatus()).toMatchObject({ notesDelivered: 2, mutedSuppressions: 0 });
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("fails closed on a malformed mutes file and never overwrites it until repaired", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "one" }] }]);
+		const advisor = createAdvisorProvider([reviewAdvice(NOTE_A, KEY_A)]);
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const MALFORMED = "not: [valid\n  - yaml: {";
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			setup: async (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+				await writeFile(join(agentDir, MUTES_FILE_NAME), MALFORMED, "utf8");
+			},
+		});
+		try {
+			await harness.session.prompt("review one");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			const hashA = findingHash(KEY_A);
+
+			// The load failed at session start; a mute must fail closed without
+			// touching the malformed file.
+			const rejected = await runtime?.muteFinding(hashA, KEY_A);
+			expect(rejected?.ok).toBe(false);
+			expect(rejected?.message).toContain("malformed");
+			expect(rejected?.message).toContain("not modified");
+			expect(await readFile(join(harness.agentDir, MUTES_FILE_NAME), "utf8")).toBe(MALFORMED);
+
+			// Repair the file with an existing mute; the next mute loads the real
+			// entries and appends instead of replacing them.
+			const existing = { id: "b".repeat(64), label: "existing-mute" };
+			await writeFile(join(harness.agentDir, MUTES_FILE_NAME), JSON.stringify([existing]), "utf8");
+			const accepted = await runtime?.muteFinding(hashA, KEY_A);
+			expect(accepted?.ok).toBe(true);
+			const repaired = await readFile(join(harness.agentDir, MUTES_FILE_NAME), "utf8");
+			expect(repaired).toContain("existing-mute");
+			expect(repaired).toContain(KEY_A);
+			expect(runtime?.muteList()).toHaveLength(2);
 		} finally {
 			await harness.dispose();
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
