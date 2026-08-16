@@ -29,7 +29,6 @@ import {
 	createStrictAdviseTool,
 	formatAdviceForDelivery,
 	type AcceptedAdvice,
-	type AcceptedReviewAdvice,
 	type AdviceDedupeTag,
 	type AdviceCollector,
 	type AdviceDelivery,
@@ -501,16 +500,9 @@ interface OutstandingAdvice extends PendingAdvice {
  * Runtime state version 4 (batch A) does not yet persist the display label; the
  * label joins persisted accepted advice with runtime state version 5 (Q6-A1).
  */
-function withoutFindingLabel(advice: AcceptedAdvice): AcceptedAdvice {
-	if (advice.intent !== "review" || advice.findingKey === undefined) return advice;
-	const clone = structuredClone(advice) as AcceptedReviewAdvice & { findingKey?: string };
-	delete clone.findingKey;
-	return clone;
-}
-
 function persistedActiveDelivery(pending: OutstandingAdvice): PersistedAdvisorActiveDelivery {
 	return {
-		advice: withoutFindingLabel(structuredClone(pending.advice)),
+		advice: structuredClone(pending.advice),
 		stale: pending.stale,
 		branchWindow: { ...pending.branchWindow },
 		displayedInEntry: pending.displayedInEntry,
@@ -1413,6 +1405,7 @@ export class AdvisorRuntime {
 		this.status.memorySuggestionsDelivered = state.memorySuggestions.deliveredCount;
 		this.status.reviewFollowUpsTriggered = state.reviewFollowUpsTriggered ?? 0;
 		this.status.notesDelivered = state.notesDelivered;
+		this.recentFindings.restore(state.recentFindings);
 		if (state.lastReviewSubmittedTurn === undefined) delete this.lastReviewSubmittedTurn;
 		else this.lastReviewSubmittedTurn = state.lastReviewSubmittedTurn;
 		if (state.lastReviewSubmittedAt === undefined) delete this.lastReviewSubmittedAt;
@@ -1575,7 +1568,7 @@ export class AdvisorRuntime {
 		const retainDeferred = this.config.limits.deferredAdviceRetentionHours > 0;
 		const deferredAdvice: PersistedDeferredAdvice[] = retainDeferred
 			? this.pendingAdvice.values().map((pending) => ({
-					advice: withoutFindingLabel(structuredClone(pending.advice)),
+					advice: structuredClone(pending.advice),
 					stale: pending.stale,
 					branchWindow: { ...pending.branchWindow },
 					displayedInEntry: pending.displayedInEntry,
@@ -1638,6 +1631,7 @@ export class AdvisorRuntime {
 				MAX_PERSISTED_DEDUPE_HASHES,
 				transientIdentities,
 			),
+			recentFindings: [...this.recentFindings.entries()],
 			memorySuggestions: {
 				meaningfulTurnCount: this.meaningfulTurnCount,
 				admittedCount: this.memorySuggestionAdmissions,
@@ -1665,6 +1659,12 @@ export class AdvisorRuntime {
 			serializedJsonBytes(state) > MAX_PERSISTED_RUNTIME_STATE_BYTES
 		) {
 			state.dedupeHashes.shift();
+		}
+		while (
+			state.recentFindings.length > 0 &&
+			serializedJsonBytes(state) > MAX_PERSISTED_RUNTIME_STATE_BYTES
+		) {
+			state.recentFindings.shift();
 		}
 		if (
 			state.queuedReview !== undefined &&

@@ -141,6 +141,7 @@ function persistedState(
 			deliveredCount: 0,
 			sessionCapReached: false,
 		},
+		recentFindings: [],
 		notesDelivered: 0,
 		...overrides,
 	};

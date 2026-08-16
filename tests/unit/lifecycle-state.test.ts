@@ -25,8 +25,11 @@ function advice(note: string): AcceptedAdvice {
 	};
 }
 
-function stateFor(manager: SessionManager): PersistedAdvisorRuntimeState {
-	return {
+function stateFor(
+	manager: SessionManager,
+	version: typeof ADVISOR_RUNTIME_STATE_VERSION | 1 | 2 | 3 | 4 = ADVISOR_RUNTIME_STATE_VERSION,
+): PersistedAdvisorRuntimeState {
+	const state: Partial<PersistedAdvisorRuntimeState> = {
 		version: ADVISOR_RUNTIME_STATE_VERSION,
 		sessionId: manager.getSessionId(),
 		savedAt: Date.now(),
@@ -40,8 +43,12 @@ function stateFor(manager: SessionManager): PersistedAdvisorRuntimeState {
 			deliveredCount: 0,
 			sessionCapReached: false,
 		},
+		recentFindings: [],
 		notesDelivered: 0,
 	};
+	if (version === 1 || version === 2) delete state.activeDeliveries;
+	if (version !== ADVISOR_RUNTIME_STATE_VERSION) delete state.recentFindings;
+	return state as PersistedAdvisorRuntimeState;
 }
 
 describe("Slice 3A lifecycle state primitives", () => {
@@ -95,7 +102,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 		const valid = stateFor(manager);
 		expect(parsePersistedAdvisorRuntimeState(valid, manager.getSessionId(), branch)).toEqual(valid);
 		expect(
-			parsePersistedAdvisorRuntimeState({ ...valid, version: 5 }, manager.getSessionId(), branch),
+			parsePersistedAdvisorRuntimeState({ ...valid, version: 6 }, manager.getSessionId(), branch),
 		).toBeUndefined();
 		expect(parsePersistedAdvisorRuntimeState(valid, "another-session", branch)).toBeUndefined();
 		expect(
@@ -160,8 +167,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
 		const branch = manager.getBranch();
 		const legacyAdvice = advice("Verify the legacy cancellation defect.");
-		const legacyBase = structuredClone(stateFor(manager));
-		Reflect.deleteProperty(legacyBase, "activeDeliveries");
+		const legacyBase = structuredClone(stateFor(manager, 1));
 		const legacy = {
 			...legacyBase,
 			version: 1,
@@ -189,13 +195,14 @@ describe("Slice 3A lifecycle state primitives", () => {
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			activeDeliveries: [],
 			dedupeHashes: [],
+			recentFindings: [],
 		});
 
 		const semanticAdvice = advice("Verify the concrete cancellation defect.");
 		if (semanticAdvice.intent !== "review") throw new Error("Expected review advice fixture");
 		semanticAdvice.findingKeyHash = "a".repeat(64);
 		const current = {
-			...stateFor(manager),
+			...stateFor(manager, 3),
 			version: 3,
 			deferredAdvice: [
 				{
@@ -211,6 +218,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 			...current,
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			dedupeHashes: [{ hash: adviceDedupeKey(semanticAdvice) }],
+			recentFindings: [],
 		});
 
 		const invalidHash = structuredClone(current);
@@ -231,8 +239,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 	it("migrates strict version 2 state without inventing a review backlog", () => {
 		const manager = SessionManager.inMemory();
 		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
-		const legacyBase = structuredClone(stateFor(manager));
-		Reflect.deleteProperty(legacyBase, "activeDeliveries");
+		const legacyBase = structuredClone(stateFor(manager, 2));
 		const version2 = { ...legacyBase, version: 2 };
 		expect(
 			parsePersistedAdvisorRuntimeState(version2, manager.getSessionId(), manager.getBranch()),
@@ -240,6 +247,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 			...version2,
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			activeDeliveries: [],
+			recentFindings: [],
 		});
 	});
 
@@ -477,8 +485,7 @@ describe("Quality Slice Q5 dedupe metadata persistence", () => {
 		const manager = SessionManager.inMemory();
 		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
 		const branch = manager.getBranch();
-		const base = stateFor(manager);
-		Reflect.deleteProperty(base, "activeDeliveries");
+		const base = stateFor(manager, 2);
 		const version2 = {
 			...base,
 			version: 2,
@@ -489,6 +496,7 @@ describe("Quality Slice Q5 dedupe metadata persistence", () => {
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			activeDeliveries: [],
 			dedupeHashes: [{ hash: "a".repeat(64) }, { hash: "b".repeat(64) }],
+			recentFindings: [],
 		});
 	});
 });
