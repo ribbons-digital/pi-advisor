@@ -951,6 +951,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						deliveryId: "restored-delivery-absent",
 						reviewId: "restored-review-absent",
 						turnNumber: 1,
+						tag: "possible-duplicate",
 					},
 				],
 			}),
@@ -977,6 +978,9 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			});
 			await harness.session.prompt("materialize recovered active delivery");
 			expect(JSON.stringify(primary.requests[0]?.context)).toContain(advice.note);
+			expect(JSON.stringify(primary.requests[0]?.context)).toContain(
+				'tag=\\"possible-duplicate\\"',
+			);
 			expect(runtime?.getStatus().notesDelivered).toBe(1);
 		} finally {
 			await harness.dispose();

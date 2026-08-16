@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
 	SessionManager,
 	type ExtensionAPI,
+	type ExtensionContext,
 	type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
@@ -471,6 +472,115 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 				notesDelivered: 2,
 				notesSuppressed: 0,
 			});
+		} finally {
+			await harness.dispose();
+		}
+	});
+});
+
+describe("Quality Slice Q5 dedupe active-delivery byte bound", () => {
+	it("suppresses tagged deliveries at the byte bound instead of failing the review", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "fill the active queue" }] },
+		]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => undefined);
+			await harness.session.prompt("fill active delivery queue");
+
+			// Seed prior metadata for many finding keys so every fill delivery is a
+			// possible-duplicate re-delivery carrying the tag. The seeded signature is
+			// the bitwise complement of the fill note signature, so similarity is
+			// always 0 and every admission is tagged.
+			const fillNote = "Fill note " + "x".repeat(1_500);
+			const seededSignature = (~noteSignature(fillNote) & 0xffffffffffffffffn)
+				.toString(16)
+				.padStart(16, "0");
+			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			const seededKeys = Array.from({ length: 700 }, (_, index) => ({
+				hash: adviceDedupeKey({
+					note: fillNote,
+					severity: "concern" as const,
+					intent: "review" as const,
+					findingKeyHash: index.toString(16).padStart(64, "0"),
+				}),
+				metadata: {
+					severity: "concern" as const,
+					signature: seededSignature,
+					lastDeliveryTurn: 1,
+				},
+			}));
+			dedupe.restoreEntries(seededKeys);
+
+			// A fabricated non-idle context keeps every fill on the active steering path
+			// so the serialized active-delivery byte bound is exercised.
+			const hostContext = Reflect.get(activeRuntime, "hostContext") as ExtensionContext;
+			const ctx = {
+				mode: "rpc",
+				signal: hostContext.signal,
+				isIdle: () => false,
+				sessionManager: hostContext.sessionManager,
+			} as unknown as ExtensionContext;
+			const deliver = Reflect.get(activeRuntime, "deliver") as (
+				advice: unknown,
+				context: ExtensionContext,
+				stale: boolean,
+				newerInstructionInput: boolean,
+				forceDeferred: boolean,
+				turnNumber: number,
+				reviewId: string,
+			) => "active" | "deferred" | undefined;
+			let suppressed = false;
+			let threw: unknown;
+			for (
+				let index = 0;
+				index < seededKeys.length && !suppressed && threw === undefined;
+				index++
+			) {
+				const advice = {
+					intent: "review" as const,
+					note: fillNote,
+					severity: "concern" as const,
+					findingKeyHash: index.toString(16).padStart(64, "0"),
+					truncated: false,
+					originalCharacters: fillNote.length,
+					originalEstimatedTokens: Math.ceil(fillNote.length / 4),
+					createdAt: Date.now(),
+				};
+				try {
+					const result = deliver.call(
+						activeRuntime,
+						advice,
+						ctx,
+						false,
+						false,
+						false,
+						1,
+						"byte-bound-fill",
+					);
+					if (result === undefined) suppressed = true;
+				} catch (error) {
+					threw = error;
+				}
+			}
+			expect(threw).toBeUndefined();
+			expect(suppressed).toBe(true);
+			expect(activeRuntime.getStatus().deliveryFailures).toBe(0);
+			expect(() =>
+				(Reflect.get(activeRuntime, "persistState") as () => void).call(activeRuntime),
+			).not.toThrow();
+			sendMessage.mockRestore();
 		} finally {
 			await harness.dispose();
 		}

@@ -3071,6 +3071,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				identity: pending.identity,
 				deliveryId: pending.deliveryId,
 				turnNumber: pending.turnNumber,
+				...(pending.tag === undefined ? {} : { tag: pending.tag }),
 			}));
 			if (serializedJsonBytes(candidateDeliveries) > MAX_PERSISTED_ACTIVE_DELIVERIES_BYTES) {
 				this.status.notesSuppressed++;
