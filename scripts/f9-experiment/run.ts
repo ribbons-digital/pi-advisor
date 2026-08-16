@@ -239,12 +239,13 @@ async function writeEvaluationNote(options: {
 	const rows = results
 		.map((result) => {
 			const expectation = F9_DATASET.find((item) => item.id === result.itemId)?.expectation;
-			const expected = expectation?.kind === "finding" ? expectation.terms.join(" | ") : "silence";
+			const expected =
+				expectation?.kind === "finding" ? expectation.terms.join(", ") : "silence";
 			const detail =
 				result.verdict === "run-error"
 					? `run error: ${result.errorMessage ?? result.stopReason}`
 					: (result.note ?? "(silence)").replaceAll("\n", " ");
-			return `| ${result.itemId} | ${result.arm} | ${result.verdict} | ${expected} | ${detail.slice(0, 140)} |`;
+			return `| ${result.itemId} | ${result.arm} | ${result.verdict} | ${expected.replaceAll("|", "\\|")} | ${detail.slice(0, 140).replaceAll("|", "\\|")} |`;
 		})
 		.join("\n");
 	const summary = summaries
