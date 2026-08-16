@@ -279,6 +279,7 @@ describe("WATCHDOG configuration", () => {
 		const custom = vi.fn().mockResolvedValue("fixture/advisor");
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("high")
 			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
@@ -1292,5 +1293,56 @@ describe("Quality Slice Q6 batched configuration warnings (F14)", () => {
 		const withUi = { hasUI: true, ui: { notify } } as unknown as ExtensionCommandContext;
 		publishConfigurationWarnings(withUi, []);
 		expect(notify).not.toHaveBeenCalled();
+	});
+});
+
+describe("Quality Slice Q6 configure menu model gate (F12)", () => {
+	it("refuses Apply without a model, notifies, and loops back to the menu", async () => {
+		const select = vi
+			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Apply and save configuration")
+			.mockResolvedValueOnce("Cancel");
+		const notify = vi.fn();
+		const configured = await pickAdvisorInteractiveConfiguration(
+			{
+				mode: "rpc",
+				modelRegistry: {
+					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
+				} as ExtensionCommandContext["modelRegistry"],
+				ui: { select, editor: vi.fn(), notify } as unknown as ExtensionCommandContext["ui"],
+			},
+			structuredClone(DEFAULT_ADVISOR_CONFIG),
+		);
+		expect(configured).toBeUndefined();
+		expect(notify).toHaveBeenCalledWith(
+			expect.stringContaining("Select an Advisor model first"),
+			"warning",
+		);
+		expect(select).toHaveBeenCalledTimes(2);
+	});
+
+	it("applies normally once a model is selected in the menu", async () => {
+		const select = vi
+			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
+			.mockResolvedValueOnce("fixture/advisor")
+			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Apply and save configuration");
+		const configured = await pickAdvisorInteractiveConfiguration(
+			{
+				mode: "rpc",
+				modelRegistry: {
+					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
+				} as ExtensionCommandContext["modelRegistry"],
+				ui: {
+					select,
+					editor: vi.fn(),
+					notify: vi.fn(),
+				} as unknown as ExtensionCommandContext["ui"],
+			},
+			structuredClone(DEFAULT_ADVISOR_CONFIG),
+		);
+		expect(configured).toMatchObject({ model: "fixture/advisor", effort: "high" });
+		expect(select).toHaveBeenCalledTimes(4);
 	});
 });

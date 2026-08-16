@@ -19,7 +19,7 @@
  *   runtime; this harness builds both prompt arms directly.
  * - The evaluation note is written to `docs/f9-evaluation.md`.
  */
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -93,6 +93,9 @@ function lastAssistantUsage(session: AgentSession): {
 			tokens,
 			costUsd: assistant.usage.cost.total,
 			...(assistant.responseModel === undefined ? {} : { responseModel: assistant.responseModel }),
+			...(assistant.responseModel === undefined && assistant.model.length > 0
+				? { responseModel: assistant.model }
+				: {}),
 		};
 	}
 	return { tokens: 0, costUsd: 0 };
@@ -262,6 +265,7 @@ This experiment never ships as default behavior without measurement review and s
 - Same configured model and effort for both arms; exact provider-reported model recorded per run.
 - Metrics: note quality (note mentions an expected defect term), false-positive rate, silence correctness.
 - Budget ceilings: ${String(REVIEW_TOKEN_CEILING)} review tokens and $${String(COST_CEILING_USD)}, enforced through the existing \`limits.sessionTokenSoftCap\` and \`limits.sessionCostSoftCapUsd\` fields; crossing either stops the experiment.
+- When the configured provider reports zero cost (for example a local proxy), the dollar ceiling cannot trip and the token ceiling is the effective budget bound.
 - Scripted fixture providers cannot measure model judgment, so this evaluation uses bounded live-model runs under the ceilings above.
 
 ## Model identity
@@ -287,6 +291,7 @@ ${rows}
 
 - A higher silence-correct rate and a lower false-positive rate on the tiered arm support the F9 hypothesis that the conditional rule blocks reduce distraction on updates where they are irrelevant.
 - A lower finding-hit rate on the tiered arm would indicate that the omitted blocks carry material review value.
+- A single run on this 26-item dataset is subject to model variance; the arms swapped positions between two consecutive runs, so the observed deltas are within noise and do not justify shipping the tiered prompt. Multiple runs (or a larger dataset) are required before a measurement-based decision.
 - The tiered prompt is selected in the runtime only by the non-public internal flag \`PI_ADVISOR_TIERED_PROMPT_EXPERIMENT=1\` and changes nothing when the flag is off.
 - No configuration fields were added.
 `;
@@ -297,55 +302,51 @@ ${rows}
 }
 
 /**
- * Loads user provider-registering extensions (for example a local proxy
- * extension) so the configured Advisor model can resolve with real
- * credentials. Each extension runs against a minimal adapter that forwards
- * provider registration into the experiment model runtime.
+ * Loads the user provider extension whose directory name matches the
+ * configured model's provider id (for example `vibeproxy` for
+ * `vibeproxy/claude-opus-4-8`) so the configured Advisor model can resolve
+ * with real credentials. Only that single extension is executed, and only
+ * its provider registration is forwarded into the experiment model runtime.
+ * This still runs user code outside Pi's normal extension loading path, so
+ * the harness prints a warning before executing anything.
  */
 async function registerUserProviderExtensions(
 	agentDir: string,
+	providerId: string,
 	modelRuntime: ModelRuntime,
 ): Promise<string[]> {
 	const extensionsDir = join(agentDir, "extensions");
-	let entries: string[];
+	const entryPath = join(extensionsDir, providerId, "index.ts");
 	try {
-		entries = await readdir(extensionsDir, { withFileTypes: true }).then((items) =>
-			items.filter((item) => item.isDirectory()).map((item) => item.name),
+		const module = (await import(pathToFileURL(entryPath).href)) as {
+			default?: (pi: ExtensionAPI) => Promise<void> | void;
+		};
+		if (typeof module.default !== "function") return [];
+		console.warn(
+			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
 		);
-	} catch {
+		const adapter = {
+			registerProvider: (registeredProviderId: string, config: unknown) => {
+				modelRuntime.registerProvider(
+					registeredProviderId,
+					config as Parameters<ModelRuntime["registerProvider"]>[1],
+				);
+			},
+			registerCommand: () => {
+				// The experiment harness needs only provider registration.
+			},
+			on: () => {
+				// Event hooks are irrelevant to provider registration.
+			},
+		} as unknown as ExtensionAPI;
+		await Promise.resolve(module.default(adapter));
+		return [providerId];
+	} catch (error) {
+		console.warn(
+			`[f9] provider extension ${providerId} could not load: ${error instanceof Error ? error.message : String(error)}`,
+		);
 		return [];
 	}
-	const registered: string[] = [];
-	for (const name of entries) {
-		const entryPath = join(extensionsDir, name, "index.ts");
-		try {
-			const module = (await import(pathToFileURL(entryPath).href)) as {
-				default?: (pi: ExtensionAPI) => Promise<void> | void;
-			};
-			if (typeof module.default !== "function") continue;
-			const adapter = {
-				registerProvider: (providerId: string, config: unknown) => {
-					modelRuntime.registerProvider(
-						providerId,
-						config as Parameters<ModelRuntime["registerProvider"]>[1],
-					);
-				},
-				registerCommand: () => {
-					// The experiment harness needs only provider registration.
-				},
-				on: () => {
-					// Event hooks are irrelevant to provider registration.
-				},
-			} as unknown as ExtensionAPI;
-			await Promise.resolve(module.default(adapter));
-			registered.push(name);
-		} catch (error) {
-			console.warn(
-				`[f9] provider extension ${name} could not load: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	}
-	return registered;
 }
 
 async function main(): Promise<void> {
@@ -377,9 +378,10 @@ async function main(): Promise<void> {
 	const registry = new ModelRegistry(modelRuntime);
 	let available = registry.getAvailable();
 	if (!available.some((model) => `${model.provider}/${model.id}` === modelReference)) {
-		const loaded = await registerUserProviderExtensions(agentDir, modelRuntime);
+		const providerId = modelReference.slice(0, modelReference.indexOf("/"));
+		const loaded = await registerUserProviderExtensions(agentDir, providerId, modelRuntime);
 		if (loaded.length > 0) {
-			console.log(`[f9] loaded provider extensions: ${loaded.join(", ")}`);
+			console.log(`[f9] loaded provider extension: ${loaded.join(", ")}`);
 			await registry.refresh();
 			available = registry.getAvailable();
 		}

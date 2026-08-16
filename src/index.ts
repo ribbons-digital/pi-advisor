@@ -184,7 +184,16 @@ export async function pickAdvisorInteractiveConfiguration(
 		];
 		const choice = await ctx.ui.select("Configure Advisor (edit one section, then Apply)", choices);
 		if (choice === undefined || choice === "Cancel") return undefined;
-		if (choice === "Apply and save configuration") return draft;
+		if (choice === "Apply and save configuration") {
+			if (draft.model === undefined) {
+				ctx.ui.notify(
+					"Select an Advisor model first. Advisor never selects a model automatically, so configuration cannot be applied without one.",
+					"warning",
+				);
+				continue;
+			}
+			return draft;
+		}
 		if (choice.startsWith("Model and reasoning")) {
 			const modelAndEffort = await pickAdvisorModelAndEffort(ctx, draft);
 			if (modelAndEffort === undefined) continue;
