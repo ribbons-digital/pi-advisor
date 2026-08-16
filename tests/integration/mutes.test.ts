@@ -157,22 +157,22 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(mutesFile).toContain(shortId);
 			expect(mutesFile).toContain(KEY_A);
 
-			// The muted finding beats Q5 similarity delivery and escalation re-raise.
-			// Each prompt waits for its review to settle so the scripted provider
-			// is never raced by supersession or retry churn.
+			// The muted finding beats the queued delivery, Q5 similarity delivery,
+			// and escalation re-raise. Each prompt waits for its review to settle so
+			// the scripted provider is never raced by supersession or retry churn.
 			await harness.session.prompt("deliver deferred note");
-			await waitFor(() => (runtime?.getStatus().notesDelivered ?? 0) >= 1);
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
 			await harness.session.prompt("review two");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 3);
 			await harness.session.prompt("review three");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 4);
 			expect(runtime?.getStatus()).toMatchObject({
-				notesDelivered: 1,
+				notesDelivered: 0,
 				notesSuppressed: 0,
-				mutedSuppressions: 2,
+				mutedSuppressions: 3,
 			});
-			const context = JSON.stringify(primary.requests[2]?.context);
+			const context = JSON.stringify(primary.requests[3]?.context);
 			expect(context).not.toContain(NOTE_A_PARAPHRASE);
 			expect(context).not.toContain('tag=\\"possible-duplicate\\"');
 			expect(context).not.toContain('tag=\\"re-raised\\"');
@@ -421,6 +421,128 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(result?.message).toContain(hashB.slice(0, 9));
 			expect(result?.message).toContain(COLLISION_KEY_A);
 			expect(result?.message).toContain(COLLISION_KEY_B);
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("drops a queued deferred note at materialization when the finding is muted after queueing", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "one" }] },
+			{ content: [{ type: "text", text: "two" }] },
+		]);
+		const advisor = createAdvisorProvider([reviewAdvice(NOTE_A, KEY_A), { content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			setup: (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+			},
+		});
+		try {
+			await harness.session.prompt("review one");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);
+
+			// Mute after the note is already queued as deferred advice.
+			const hashA = findingHash(KEY_A);
+			const muted = await runtime?.muteFinding(hashA, KEY_A);
+			expect(muted?.ok).toBe(true);
+
+			// The next user turn materializes the deferred queue; the muted note
+			// must be dropped without entering model context or the delivered count.
+			await harness.session.prompt("deliver deferred note");
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
+			expect(runtime?.getStatus()).toMatchObject({
+				notesDelivered: 0,
+				mutedSuppressions: 1,
+			});
+			const context = JSON.stringify(primary.requests[1]?.context);
+			expect(context).not.toContain(NOTE_A);
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("drops restored-after-resume deferred advice when its finding is muted", async () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const hashA = findingHash(KEY_A);
+		const branch = manager.getBranch();
+		const state: PersistedAdvisorRuntimeState = {
+			version: ADVISOR_RUNTIME_STATE_VERSION,
+			sessionId: manager.getSessionId(),
+			savedAt: Date.now(),
+			cursor: cursorAtTail(branch),
+			activeDeliveries: [],
+			deferredAdvice: [
+				{
+					advice: {
+						intent: "review",
+						note: NOTE_A,
+						severity: "concern",
+						findingKeyHash: hashA,
+						findingKey: KEY_A,
+						truncated: false,
+						originalCharacters: NOTE_A.length,
+						originalEstimatedTokens: Math.ceil(NOTE_A.length / 4),
+						createdAt: Date.now(),
+					},
+					stale: false,
+					branchWindow: cursorAtTail(branch),
+					displayedInEntry: false,
+				},
+			],
+			dedupeHashes: [],
+			recentFindings: [],
+			memorySuggestions: {
+				meaningfulTurnCount: 0,
+				admittedCount: 0,
+				deliveredCount: 0,
+				sessionCapReached: false,
+			},
+			notesDelivered: 0,
+		};
+		manager.appendCustomEntry(ADVISOR_RUNTIME_STATE_ENTRY_TYPE, state);
+
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "resumed" }] }]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const harness = await createSessionHarness({
+			sessionManager: manager,
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			setup: async (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+				await writeFile(
+					join(agentDir, MUTES_FILE_NAME),
+					JSON.stringify([{ id: hashA, label: KEY_A }]),
+					"utf8",
+				);
+			},
+		});
+		try {
+			await harness.session.prompt("resumed session");
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
+			expect(runtime?.getStatus()).toMatchObject({
+				notesDelivered: 0,
+				mutedSuppressions: 1,
+			});
+			const context = JSON.stringify(primary.requests[0]?.context);
+			expect(context).not.toContain(NOTE_A);
 		} finally {
 			await harness.dispose();
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

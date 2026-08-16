@@ -345,6 +345,7 @@ Every delivered review note that carries a `findingKey` shows a short mute ID on
 Mute IDs are 8-to-64-character hex prefixes and resolve fail-closed against the last 128 delivered findings: exactly one match changes state, zero matches change nothing, and a prefix collision lists the colliding labels so you can repeat with a longer prefix.
 A finding older than the 128-entry index cannot be muted by ID; this is a documented bound.
 A muted finding suppresses delivery ahead of similarity redelivery and escalation re-raise and is counted separately from ordinary suppression in `/advisor status full`.
+The mute also applies to notes already queued as deferred advice (including notes restored after a compatible resume): they are dropped at the next user-turn materialization without entering the Executor context or the delivered count.
 
 Mutes are durable user data, not configuration:
 

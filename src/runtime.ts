@@ -3459,17 +3459,40 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				pending.tag,
 			),
 		);
-		const pending = batch.map(({ value, rendered }) => ({
-			...value,
-			stale: isStale(value),
-			formatted: rendered,
-		}));
+		const pending = batch
+			.map(({ value, rendered }) => ({
+				...value,
+				stale: isStale(value),
+				formatted: rendered,
+			}))
+			.filter((entry) => {
+				// A muted finding suppresses delivery here too: the finding may have
+				// been muted after the note was queued (including restored-after-resume
+				// notes). The entry is already dequeued by the rendered prefix, so it
+				// is dropped without entering model context, without dedupe history,
+				// and without the delivered count, exactly like the deliver() gate.
+				const advice = entry.advice;
+				if (
+					advice.intent === "review" &&
+					advice.findingKeyHash !== undefined &&
+					this.mutes?.isMuted(advice.findingKeyHash) === true
+				) {
+					this.status.mutedSuppressions++;
+					return false;
+				}
+				return true;
+			});
 		for (const { advice } of pending) {
 			this.adviceDedupe.add(advice, this.meaningfulTurnCount);
 			this.recordDeliveredFinding(advice);
 		}
 
 		this.refreshDeferredAdviceStatus();
+		if (pending.length === 0) {
+			this.persistState();
+			this.publishStatus();
+			return undefined;
+		}
 		this.status.notesDelivered += pending.length;
 		this.status.memorySuggestionsDelivered += pending.filter(
 			({ advice }) => advice.intent === "memory-suggestion",
