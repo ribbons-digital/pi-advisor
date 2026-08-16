@@ -353,9 +353,13 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 			],
 		},
 		delivery: {
-			// The merged defaults above make the fallback implicit for configs
-			// built against the pre-Q3 shape.
-			activeIdleSeverities: merged.delivery.activeIdleSeverities.filter(
+			// The merged defaults above cover a wholly missing group; a
+			// present-but-partial group (for example `delivery: {}` from a
+			// programmatic config) still needs the sub-field fallback.
+			activeIdleSeverities: (
+				(merged.delivery as Partial<AdvisorConfig["delivery"]>).activeIdleSeverities ??
+				defaults.delivery.activeIdleSeverities
+			).filter(
 				(severity, index, values) =>
 					isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
 			),

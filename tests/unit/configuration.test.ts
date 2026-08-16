@@ -1374,4 +1374,23 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
 		expect(normalized.tools).toEqual(["read", "grep", "find", "ls"]);
 	});
+
+	it("normalizes present-but-partial groups against the release defaults", () => {
+		const partial = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		partial.delivery = {} as AdvisorConfig["delivery"];
+		partial.security = {} as AdvisorConfig["security"];
+		partial.dedupe = {} as AdvisorConfig["dedupe"];
+		partial.review = {} as AdvisorConfig["review"];
+		partial.context = {} as AdvisorConfig["context"];
+		partial.limits = {} as AdvisorConfig["limits"];
+		const normalized = normalizeAdvisorConfig(partial);
+		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
+		expect(normalized.security.additionalProtectedPaths).toEqual([]);
+		expect(normalized.security.protectedPathExceptions).toEqual([]);
+		expect(normalized.dedupe.similarityRedeliveryThreshold).toBe(0.5);
+		expect(normalized.dedupe.reRaiseMinTurns).toBe(4);
+		expect(normalized.review.skipNonMaterialTurns).toBe(false);
+		expect(normalized.context.maxFraction).toBe(0.65);
+		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
+	});
 });
