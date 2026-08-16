@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 import {
 	calculateContextTokens,
@@ -28,9 +29,11 @@ import {
 	createStrictAdviseTool,
 	formatAdviceForDelivery,
 	type AcceptedAdvice,
+	type AcceptedReviewAdvice,
 	type AdviceDedupeTag,
 	type AdviceCollector,
 	type AdviceDelivery,
+	type AdviceSeverity,
 	type MemorySuggestionQueueState,
 } from "./advice.js";
 import {
@@ -46,6 +49,13 @@ import {
 	type AdviseSchemaMode,
 } from "./compatibility/constrained-sampling.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
+import {
+	findingMuteId,
+	MUTES_FILE_NAME,
+	MuteStore,
+	RecentFindingsIndex,
+	type RecentFinding,
+} from "./mutes.js";
 import { HARD_LIMITS, normalizeAdvisorConfig, type AdvisorConfig } from "./config.js";
 import {
 	BoundedKeyedByteFifo,
@@ -58,6 +68,7 @@ import {
 } from "./delivery.js";
 import {
 	ADVISOR_LATE_ENTRY_TYPE,
+	reviewNoteMuteId,
 	type AdviceMessageDetails,
 	type AdvicePresentationNote,
 	type LateAdviceEntryData,
@@ -113,6 +124,8 @@ const FAILURE_PAUSE_COUNT = 3;
 export const MAX_ADVISOR_RETRIES_PER_UPDATE = 1;
 export const ADVISOR_RETRY_DELAY_MS = 250;
 export const MAX_ADVISOR_DUMP_BYTES = 16 * 1_024;
+export const MIN_MUTE_ID_PREFIX_CHARACTERS = 8;
+export const MAX_MUTE_ID_PREFIX_CHARACTERS = 64;
 export const ADVISOR_ARGUMENT_VALIDATION_FAILURE =
 	'The selected Advisor model returned "advise" arguments that did not match the internal schema. Run /advisor configure to select another model. Run /advisor on to retry after correcting configuration or after a transient model failure.';
 export const ADVISOR_INTERNAL_EXECUTION_FAILURE =
@@ -348,6 +361,7 @@ export interface AdvisorRuntimeStatus {
 	backlog: boolean;
 	reviewing: boolean;
 	pendingTranscriptBytes: number;
+	queuedReviews: number;
 	maxPendingTranscriptBytesObserved: number;
 	retryPending: boolean;
 	retryDelayMs: number;
@@ -379,6 +393,11 @@ export interface AdvisorRuntimeStatus {
 	restoredDeferredNotesPending: number;
 	oldestDeferredAdviceAgeMs: number;
 	notesSuppressed: number;
+	mutedSuppressions: number;
+	mutedFindings: number;
+	lastNoteCreatedAt?: number;
+	lastNoteSeverity?: AdviceSeverity;
+	lastNoteFindingKey?: string;
 	memorySuggestionCapability: MemorySuggestCapability;
 	memorySuggestionsEnabled: boolean;
 	memorySuggestionsDelivered: number;
@@ -478,9 +497,20 @@ interface OutstandingAdvice extends PendingAdvice {
  * the snapshot writer and the pre-admission byte estimate so the two can never
  * diverge over a field like the dedupe tag.
  */
+/**
+ * Runtime state version 4 (batch A) does not yet persist the display label; the
+ * label joins persisted accepted advice with runtime state version 5 (Q6-A1).
+ */
+function withoutFindingLabel(advice: AcceptedAdvice): AcceptedAdvice {
+	if (advice.intent !== "review" || advice.findingKey === undefined) return advice;
+	const clone = structuredClone(advice) as AcceptedReviewAdvice & { findingKey?: string };
+	delete clone.findingKey;
+	return clone;
+}
+
 function persistedActiveDelivery(pending: OutstandingAdvice): PersistedAdvisorActiveDelivery {
 	return {
-		advice: structuredClone(pending.advice),
+		advice: withoutFindingLabel(structuredClone(pending.advice)),
 		stale: pending.stale,
 		branchWindow: { ...pending.branchWindow },
 		displayedInEntry: pending.displayedInEntry,
@@ -949,6 +979,9 @@ export class AdvisorRuntime {
 	private automaticMemoryFollowUpDeliveryId?: string;
 	private automaticReviewFollowUpDeliveryId?: string;
 	private readonly adviceDedupe = new BoundedAdviceDedupe();
+	private readonly recentFindings = new RecentFindingsIndex();
+	private mutes: MuteStore | undefined;
+	private mutesLoadError: string | undefined;
 	private readonly transcriptRecords: PersistedAdvisorTranscriptRecord[] = [];
 	private readonly collector: AdviceCollector = {
 		validCalls: 0,
@@ -974,6 +1007,7 @@ export class AdvisorRuntime {
 			backlog: false,
 			reviewing: false,
 			pendingTranscriptBytes: 0,
+			queuedReviews: 0,
 			maxPendingTranscriptBytesObserved: 0,
 			retryPending: false,
 			retryDelayMs: 0,
@@ -1005,6 +1039,8 @@ export class AdvisorRuntime {
 			restoredDeferredNotesPending: 0,
 			oldestDeferredAdviceAgeMs: 0,
 			notesSuppressed: 0,
+			mutedSuppressions: 0,
+			mutedFindings: 0,
 			memorySuggestionCapability: {
 				state: "absent",
 				reason: "memory_suggest capability has not been inspected",
@@ -1043,7 +1079,113 @@ export class AdvisorRuntime {
 		this.refreshDeferredAdviceStatus();
 		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
 		this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
+		this.status.mutedFindings = this.mutes?.list().length ?? 0;
 		return structuredClone(this.status);
+	}
+
+	private async loadMutes(forceReload = false): Promise<void> {
+		if (this.mutes !== undefined && !forceReload) return;
+		const path = join(getAgentDir(), MUTES_FILE_NAME);
+		const loaded = await MuteStore.load(path);
+		if (loaded.error !== undefined) {
+			if (this.mutesLoadError !== loaded.error) {
+				this.mutesLoadError = loaded.error;
+				this.warn(loaded.error);
+			}
+			this.mutes ??= loaded.store;
+		} else {
+			this.mutesLoadError = undefined;
+			this.mutes = loaded.store;
+		}
+	}
+
+	/**
+	 * Fail-closed Q6-A1 resolution: 8-to-64-character hex prefix against the
+	 * bounded recent-findings index. Zero matches fail closed, two or more
+	 * matches fail closed with the colliding labels.
+	 */
+	resolveMuteTarget(
+		prefix: string,
+	):
+		| { kind: "unknown" }
+		| { kind: "collision"; matches: readonly RecentFinding[] }
+		| { kind: "match"; hash: string; label: string } {
+		const matches = this.recentFindings.resolve(prefix);
+		if (matches.length === 0) return { kind: "unknown" };
+		if (matches.length === 1) {
+			const match = matches[0];
+			if (match === undefined) return { kind: "unknown" };
+			return { kind: "match", hash: match.hash, label: match.label };
+		}
+		return { kind: "collision", matches };
+	}
+
+	async muteFinding(hash: string, label: string): Promise<{ ok: boolean; message?: string }> {
+		await this.loadMutes();
+		if (this.mutes === undefined) {
+			return { ok: false, message: "The mutes file could not be loaded; no mute was applied." };
+		}
+		if (this.mutes.isMuted(hash)) return { ok: true, message: "Finding is already muted." };
+		const before = this.mutes.list();
+		this.mutes.mute(hash, label);
+		try {
+			await this.mutes.save();
+		} catch {
+			this.mutes.replace(before);
+			this.warn("The Advisor mutes file could not be saved; the mute was not applied.");
+			return {
+				ok: false,
+				message: "The Advisor mutes file could not be saved; the mute was not applied.",
+			};
+		}
+		return { ok: true, message: `Muted ${findingMuteId(hash)} (${label}).` };
+	}
+
+	async unmuteFinding(prefix: string): Promise<{ ok: boolean; message?: string }> {
+		await this.loadMutes();
+		if (this.mutes === undefined) {
+			return { ok: false, message: "The mutes file could not be loaded; no unmute was applied." };
+		}
+		const matches = this.mutes.resolve(prefix);
+		if (matches.length === 0) {
+			return {
+				ok: false,
+				message: `No muted finding matches ${prefix}. Run /advisor mute list to see muted findings.`,
+			};
+		}
+		if (matches.length > 1) {
+			const labels = matches
+				.map((entry) => `${findingMuteId(entry.hash)} ${entry.label}`)
+				.join("\n");
+			return {
+				ok: false,
+				message: `Multiple muted findings match ${prefix}. Repeat with a longer prefix:\n${labels}`,
+			};
+		}
+		const match = matches[0];
+		if (match === undefined) {
+			return { ok: false, message: `No muted finding matches ${prefix}.` };
+		}
+		const before = this.mutes.list();
+		this.mutes.unmute(match.hash);
+		try {
+			await this.mutes.save();
+		} catch {
+			this.mutes.replace(before);
+			this.warn("The Advisor mutes file could not be saved; the unmute was not applied.");
+			return {
+				ok: false,
+				message: "The Advisor mutes file could not be saved; the unmute was not applied.",
+			};
+		}
+		return { ok: true, message: `Unmuted ${findingMuteId(match.hash)} (${match.label}).` };
+	}
+
+	muteList(): { id: string; label: string }[] {
+		return (this.mutes?.list() ?? []).map((entry) => ({
+			id: findingMuteId(entry.hash),
+			label: entry.label,
+		}));
 	}
 
 	private refreshMemorySuggestionCapability(): MemorySuggestCapability {
@@ -1120,6 +1262,7 @@ export class AdvisorRuntime {
 		this.sessionInitialized = true;
 		this.sessionId = sessionId;
 		this.hostContext = ctx;
+		await this.loadMutes();
 		this.restorePersistedState(ctx);
 		this.refreshDeferredAdviceStatus();
 		this.publishStatus();
@@ -1189,6 +1332,7 @@ export class AdvisorRuntime {
 			await this.enable(ctx, activationSource);
 			this.seedLifecycleReprime(ctx.sessionManager.getBranch(), "configuration-apply");
 		}
+		await this.loadMutes(true);
 		this.persistState();
 		this.publishStatus();
 	}
@@ -1431,7 +1575,7 @@ export class AdvisorRuntime {
 		const retainDeferred = this.config.limits.deferredAdviceRetentionHours > 0;
 		const deferredAdvice: PersistedDeferredAdvice[] = retainDeferred
 			? this.pendingAdvice.values().map((pending) => ({
-					advice: structuredClone(pending.advice),
+					advice: withoutFindingLabel(structuredClone(pending.advice)),
 					stale: pending.stale,
 					branchWindow: { ...pending.branchWindow },
 					displayedInEntry: pending.displayedInEntry,
@@ -1589,7 +1733,18 @@ export class AdvisorRuntime {
 			value.intent === "review" &&
 			(value.severity === "nit" || value.severity === "concern" || value.severity === "blocker")
 		) {
-			return { ...common, intent: "review", severity: value.severity };
+			const findingKey =
+				typeof value.findingKey === "string" &&
+				Array.from(value.findingKey).length > 0 &&
+				Array.from(value.findingKey).length <= 128
+					? value.findingKey
+					: undefined;
+			return {
+				...common,
+				intent: "review",
+				severity: value.severity,
+				...(findingKey === undefined ? {} : { findingKey }),
+			};
 		}
 		if (
 			value.intent !== "memory-suggestion" ||
@@ -1650,6 +1805,7 @@ export class AdvisorRuntime {
 				this.status.notesDelivered++;
 				if (advice !== undefined) {
 					this.adviceDedupe.add(advice, active.turnNumber);
+					this.recordDeliveredFinding(advice);
 					if (advice.intent === "memory-suggestion") {
 						this.recordMemorySuggestionAdmission(advice, active.turnNumber);
 						this.status.memorySuggestionsDelivered++;
@@ -2944,6 +3100,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			...(displayedInEntry ? { displayedInEntry: true as const } : {}),
 			...(restoredAfterResume ? { restoredAfterResume: true as const } : {}),
 		};
+		const muteId = advice.intent === "review" ? reviewNoteMuteId(advice) : undefined;
 		return advice.intent === "memory-suggestion"
 			? {
 					...common,
@@ -2956,6 +3113,8 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					intent: advice.intent,
 					severity: advice.severity,
 					...(tag === undefined ? {} : { tag }),
+					...(muteId === undefined ? {} : { muteId }),
+					...(advice.findingKey === undefined ? {} : { findingKey: advice.findingKey }),
 				};
 	}
 
@@ -2972,6 +3131,21 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.lastMemorySuggestionTurn = turnNumber;
 		this.lastMemorySuggestionAt = Date.now();
 		this.refreshMemorySuggestionCapability();
+	}
+
+	/**
+	 * Records a delivered review finding in the bounded recent-findings index
+	 * and the status last-note line (Q6-D1, Q6-A1).
+	 */
+	private recordDeliveredFinding(advice: AcceptedAdvice): void {
+		if (advice.intent !== "review") return;
+		if (advice.findingKeyHash !== undefined && advice.findingKey !== undefined) {
+			this.recentFindings.add(advice.findingKeyHash, advice.findingKey);
+		}
+		this.status.lastNoteCreatedAt = advice.createdAt;
+		this.status.lastNoteSeverity = advice.severity;
+		if (advice.findingKey === undefined) delete this.status.lastNoteFindingKey;
+		else this.status.lastNoteFindingKey = advice.findingKey;
 	}
 
 	private publishLateAdviceEntry(pending: PendingAdvice): void {
@@ -3007,6 +3181,14 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		const identity = adviceDedupeKey(advice);
 		if (this.pendingAdvice.has(identity) || this.activeAdvice.has(identity)) {
 			this.status.notesSuppressed++;
+			return undefined;
+		}
+		if (
+			advice.intent === "review" &&
+			advice.findingKeyHash !== undefined &&
+			this.mutes?.isMuted(advice.findingKeyHash) === true
+		) {
+			this.status.mutedSuppressions++;
 			return undefined;
 		}
 		const dedupeDecision = this.adviceDedupe.decide(advice, turnNumber, this.config.dedupe);
@@ -3052,6 +3234,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				return undefined;
 			}
 			this.adviceDedupe.add(advice, turnNumber);
+			this.recordDeliveredFinding(advice);
 			this.recordMemorySuggestionAdmission(advice, turnNumber);
 			this.refreshDeferredAdviceStatus();
 			this.persistState();
@@ -3099,6 +3282,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			const previousTurn = this.lastMemorySuggestionTurn;
 			const previousAt = this.lastMemorySuggestionAt;
 			this.adviceDedupe.add(advice, turnNumber);
+			this.recordDeliveredFinding(advice);
 			this.recordMemorySuggestionAdmission(advice, turnNumber);
 			if (dispatch === "followUp" && advice.intent === "review") {
 				this.automaticReviewFollowUpDeliveryId = deliveryId;
@@ -3223,7 +3407,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			stale: isStale(value),
 			formatted: rendered,
 		}));
-		for (const { advice } of pending) this.adviceDedupe.add(advice, this.meaningfulTurnCount);
+		for (const { advice } of pending) {
+			this.adviceDedupe.add(advice, this.meaningfulTurnCount);
+			this.recordDeliveredFinding(advice);
+		}
 
 		this.refreshDeferredAdviceStatus();
 		this.status.notesDelivered += pending.length;
@@ -3283,6 +3470,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		);
 		this.status.notesDelivered++;
 		this.adviceDedupe.add(removed.value.advice, removed.value.turnNumber);
+		this.recordDeliveredFinding(removed.value.advice);
 		if (this.activeReview?.reviewId === removed.value.reviewId) {
 			delete this.activeReview;
 			this.status.restoredActiveReviewPending = false;
@@ -3600,6 +3788,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			utf8TextSetBytes(pending?.successfulMemoryTexts ?? new Set());
 		this.status.pendingTranscriptBytes = bytes;
 		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
+		this.status.queuedReviews = pending === undefined ? 0 : 1;
 		this.status.backlog = bytes > 0 || this.activeReview !== undefined || this.status.retryPending;
 		this.status.maxPendingTranscriptBytesObserved = Math.max(
 			this.status.maxPendingTranscriptBytesObserved,
@@ -3642,8 +3831,73 @@ export function formatAdvisorFooterStatus(status: AdvisorRuntimeStatus): string 
 		return `Advisor reviewing${modelLabel}`;
 	}
 	const state = status.paused ? "paused" : status.active ? "active" : "inactive";
-	const queuedUnit = status.pendingTranscriptBytes === 1 ? "byte" : "bytes";
-	return `Advisor ${state}${modelLabel}${status.backlog ? ` · ${String(status.pendingTranscriptBytes)} ${queuedUnit} queued` : ""}`;
+	const queued = status.queuedReviews;
+	return `Advisor ${state}${modelLabel}${queued > 0 ? ` · ${String(queued)} review${queued === 1 ? "" : "s"} queued` : ""}`;
+}
+
+export function formatAdvisorStatusShort(status: AdvisorRuntimeStatus, now = Date.now()): string {
+	const state = !status.enabled
+		? "off"
+		: status.paused
+			? "paused"
+			: status.active
+				? "active"
+				: "inactive";
+	const lines = [`Advisor: ${state}`];
+	lines.push(`Model: ${status.model ?? "not configured"} (${status.effort})`);
+	lines.push(
+		`Queued reviews: ${String(status.queuedReviews)}${status.retryPending ? ", retry pending" : ""}`,
+	);
+	const lastNote =
+		status.lastNoteCreatedAt === undefined || status.lastNoteSeverity === undefined
+			? "none"
+			: `${formatAge(status.lastNoteCreatedAt, now)}, ${status.lastNoteSeverity}` +
+				(status.lastNoteFindingKey === undefined ? "" : ` (${status.lastNoteFindingKey})`);
+	lines.push(
+		`Notes: ${String(status.activeNotesPending)} active, ${String(status.deferredNotesPending)} deferred; last note ${lastNote}`,
+	);
+	lines.push(
+		`Session: ${String(status.usage.total)} tokens, $${status.usage.costUsd.toFixed(4)}; caps ${formatCaps(status)}`,
+	);
+	const capability =
+		status.memorySuggestionCapability.state === "available"
+			? `available (${String(status.memorySuggestionsRemaining)} remaining)`
+			: `unavailable (${status.memorySuggestionCapability.reason ?? status.memorySuggestionCapability.state})`;
+	lines.push(
+		`Memory suggestions: ${status.memorySuggestionsEnabled ? "enabled" : "disabled"}; capability ${capability}`,
+	);
+	if (status.inactiveReason) lines.push(`Inactive reason: ${status.inactiveReason}`);
+	if (status.pauseReason) lines.push(`Pause reason: ${status.pauseReason}`);
+	return lines.join("\n");
+}
+
+function formatAge(createdAt: number, now: number): string {
+	const seconds = Math.max(0, Math.floor((now - createdAt) / 1_000));
+	if (seconds < 60) return `${String(seconds)}s ago`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${String(minutes)}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${String(hours)}h ago`;
+	return `${String(Math.floor(hours / 24))}d ago`;
+}
+
+function formatCaps(status: AdvisorRuntimeStatus): string {
+	const tokenCap =
+		status.sessionTokenSoftCap === "off"
+			? "off"
+			: String(status.sessionTokenSoftCap) +
+				(status.paused && status.pauseReason === "Advisor session token soft cap reached"
+					? " reached"
+					: "");
+	const costCap =
+		status.sessionCostSoftCapUsd === "off"
+			? "off"
+			: `$${String(status.sessionCostSoftCapUsd)}` +
+				(status.paused && status.pauseReason === "Advisor session cost soft cap reached"
+					? " reached"
+					: "");
+	if (tokenCap === "off" && costCap === "off") return "off";
+	return `token ${tokenCap}, cost ${costCap}`;
 }
 
 export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
@@ -3672,7 +3926,7 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.retryAttempts)} retry attempts`,
 		`Delivery failures: ${String(status.deliveryFailures)}`,
 		`Lifecycle: ${String(status.branchResets)} resets, ${String(status.staleQueuedMessagesDiscarded)} stale queued messages discarded`,
-		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
+		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.mutedSuppressions)} muted-suppressed, ${String(status.mutedFindings)} muted findings, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
 		`Memory suggestions: ${status.memorySuggestionsEnabled ? "enabled" : "disabled"}, capability ${status.memorySuggestionCapability.state}, ${String(status.memorySuggestionsDelivered)} delivered, ${String(status.memorySuggestionsRemaining)} remaining, ${String(status.memorySuggestionsPolicySuppressed)} policy-suppressed, ${String(status.memorySuggestionsLimitSuppressed)} limit-suppressed`,
 		`Memory suggestion next eligibility: turn ${String(status.memorySuggestionNextEligibleTurn)}, ${new Date(status.memorySuggestionNextEligibleAt).toISOString()}`,
 		`Restart recovery: active review ${status.restoredActiveReviewPending ? "pending" : "none"}, queued review ${status.restoredQueuedReviewPending ? "pending" : "none"}, ${String(status.restoredActiveDeliveriesPending)} active deliveries pending, replay count ${String(status.restoredReplayCount)}, ${String(status.poisonReviewDrops)} poison drops`,

@@ -17,6 +17,7 @@ import type {
 	MemorySuggestionQueueState,
 } from "./advice.js";
 import { HARD_LIMITS } from "./config.js";
+import { findingMuteId } from "./mutes.js";
 import {
 	isMemorySuggestionBasis,
 	isMemorySuggestionCategory,
@@ -45,6 +46,10 @@ export interface ReviewAdvicePresentationNote extends AdvicePresentationBase {
 	intent: "review";
 	severity: AdviceSeverity;
 	tag?: AdviceDedupeTag;
+	/** First 8 hex characters of the findingKeyHash; shown only with a display label. */
+	muteId?: string;
+	/** Bounded redacted display label of the raw findingKey; never command input. */
+	findingKey?: string;
 }
 
 export interface MemorySuggestionPresentationNote extends AdvicePresentationBase {
@@ -248,8 +253,28 @@ function renderAdviceCardMarkdown(text: string, theme: Theme): Component {
 	);
 }
 
+export function reviewNoteMuteId(advice: {
+	intent: "review";
+	findingKeyHash?: string;
+	findingKey?: string;
+}): string | undefined {
+	return advice.findingKeyHash !== undefined && advice.findingKey !== undefined
+		? findingMuteId(advice.findingKeyHash)
+		: undefined;
+}
+
 function isAdviceSeverity(value: unknown): value is AdviceSeverity {
 	return value === "nit" || value === "concern" || value === "blocker";
+}
+
+function isMuteId(value: unknown): value is string {
+	return typeof value === "string" && /^[a-f0-9]{8}$/u.test(value);
+}
+
+function isFindingLabel(value: unknown): value is string {
+	return (
+		typeof value === "string" && Array.from(value).length > 0 && Array.from(value).length <= 128
+	);
 }
 
 function isAdviceDelivery(value: unknown): value is AdviceDelivery {
@@ -310,6 +335,10 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 			intent: "review",
 			severity: note.severity,
 			...(note.tag === "possible-duplicate" || note.tag === "re-raised" ? { tag: note.tag } : {}),
+			...(note.muteId === undefined || !isMuteId(note.muteId) ? {} : { muteId: note.muteId }),
+			...(note.findingKey === undefined || !isFindingLabel(note.findingKey)
+				? {}
+				: { findingKey: note.findingKey }),
 		};
 	}
 	if (
@@ -430,6 +459,7 @@ export function renderAdviceCards(
 				? ["possible duplicate"]
 				: []),
 			...(note.intent === "review" && note.tag === "re-raised" ? ["re-raised"] : []),
+			...(note.intent === "review" && note.muteId !== undefined ? [`mute ${note.muteId}`] : []),
 		];
 		box.addChild(new Spacer(1));
 		box.addChild(new Text(theme.fg(note.stale ? "warning" : "muted", metadata.join(" · ")), 0, 0));

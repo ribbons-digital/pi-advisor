@@ -72,6 +72,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		backlog: false,
 		reviewing: false,
 		pendingTranscriptBytes: 0,
+		queuedReviews: 0,
 		maxPendingTranscriptBytesObserved: 0,
 		retryPending: false,
 		retryDelayMs: 0,
@@ -103,6 +104,8 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		restoredDeferredNotesPending: 0,
 		oldestDeferredAdviceAgeMs: 0,
 		notesSuppressed: 0,
+		mutedSuppressions: 0,
+		mutedFindings: 0,
 		memorySuggestionCapability: { state: "available" },
 		memorySuggestionsEnabled: true,
 		memorySuggestionsDelivered: 0,
@@ -140,20 +143,20 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 		expect(formatAdvisorFooterStatus({ ...status, modelName: "Grok 4.5" })).toBe(
 			"Advisor active (Grok 4.5)",
 		);
-		expect(formatAdvisorFooterStatus({ ...status, backlog: true, pendingTranscriptBytes: 1 })).toBe(
-			"Advisor active · 1 byte queued",
+		expect(formatAdvisorFooterStatus({ ...status, queuedReviews: 1, backlog: true })).toBe(
+			"Advisor active · 1 review queued",
 		);
 		expect(
 			formatAdvisorFooterStatus({
 				...status,
 				modelName: "Grok 4.5",
+				queuedReviews: 2,
 				backlog: true,
-				pendingTranscriptBytes: 2048,
 			}),
-		).toBe("Advisor active (Grok 4.5) · 2048 bytes queued");
-		expect(
-			formatAdvisorFooterStatus({ ...status, backlog: true, pendingTranscriptBytes: 2048 }),
-		).toBe("Advisor active · 2048 bytes queued");
+		).toBe("Advisor active (Grok 4.5) · 2 reviews queued");
+		expect(formatAdvisorFooterStatus({ ...status, queuedReviews: 1, backlog: true })).toBe(
+			"Advisor active · 1 review queued",
+		);
 		expect(
 			formatAdvisorFooterStatus({
 				...status,
@@ -175,9 +178,10 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 				active: false,
 				paused: true,
 				reviewing: true,
+				queuedReviews: 1,
 				backlog: true,
 			}),
-		).toBe("Advisor paused · 0 bytes queued");
+		).toBe("Advisor paused · 1 review queued");
 		expect(formatAdvisorFooterStatus({ ...status, active: false, paused: true })).toBe(
 			"Advisor paused",
 		);

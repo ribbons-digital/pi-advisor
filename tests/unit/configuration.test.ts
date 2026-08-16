@@ -210,10 +210,14 @@ describe("WATCHDOG configuration", () => {
 	it("opens the RPC instructions editor only after Add is selected", async () => {
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Add custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Add custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const editor = vi.fn().mockResolvedValue("Focus on migration safety.");
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
@@ -231,9 +235,13 @@ describe("WATCHDOG configuration", () => {
 			tools: ["read", "grep", "find", "ls"],
 			instructions: "Focus on migration safety.",
 		});
-		expect(select).toHaveBeenLastCalledWith(
+		expect(select.mock.calls).toContainEqual([
 			"Choose optional User Advisor instructions for this configuration",
 			["Continue without custom instructions", "Add custom instructions"],
+		]);
+		expect(select).toHaveBeenLastCalledWith(
+			"Configure Advisor (edit one section, then Apply)",
+			expect.arrayContaining(["Apply and save configuration", "Cancel"]),
 		);
 		expect(editor).toHaveBeenCalledWith(expect.stringContaining("Configuration step: add"), "");
 	});
@@ -241,10 +249,14 @@ describe("WATCHDOG configuration", () => {
 	it("normalizes whitespace-only editor input to no instructions", async () => {
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Add custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Add custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
 				mode: "rpc",
@@ -267,8 +279,11 @@ describe("WATCHDOG configuration", () => {
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
 			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Continue without custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Continue without custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const editor = vi.fn();
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
@@ -282,10 +297,10 @@ describe("WATCHDOG configuration", () => {
 		);
 		expect(configured?.instructions).toBe("");
 		expect(editor).not.toHaveBeenCalled();
-		expect(select).toHaveBeenLastCalledWith(
+		expect(select.mock.calls).toContainEqual([
 			"Choose optional User Advisor instructions for this configuration",
 			["Continue without custom instructions", "Add custom instructions"],
-		);
+		]);
 	});
 
 	it("offers deliberate keep, edit, and clear choices for existing instructions", async () => {
@@ -297,10 +312,14 @@ describe("WATCHDOG configuration", () => {
 		for (const testCase of cases) {
 			const select = vi
 				.fn<ExtensionCommandContext["ui"]["select"]>()
+				.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 				.mockResolvedValueOnce("fixture/advisor")
 				.mockResolvedValueOnce("high")
+				.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 				.mockResolvedValueOnce("Done - use 4 read-only tools")
-				.mockResolvedValueOnce(testCase.choice);
+				.mockResolvedValueOnce("Instructions: set")
+				.mockResolvedValueOnce(testCase.choice)
+				.mockResolvedValueOnce("Apply and save configuration");
 			const editor = vi.fn().mockResolvedValue("Updated focus.");
 			const current = structuredClone(DEFAULT_ADVISOR_CONFIG);
 			current.instructions = "Current focus.";
@@ -315,10 +334,10 @@ describe("WATCHDOG configuration", () => {
 				current,
 			);
 			expect(configured?.instructions).toBe(testCase.expected);
-			expect(select).toHaveBeenLastCalledWith(
+			expect(select.mock.calls).toContainEqual([
 				"Choose optional User Advisor instructions for this configuration",
 				["Keep current instructions", "Edit instructions", "Clear instructions"],
-			);
+			]);
 			if (testCase.opensEditor) {
 				expect(editor).toHaveBeenCalledWith(
 					expect.stringContaining("Configuration step: edit"),
@@ -336,11 +355,15 @@ describe("WATCHDOG configuration", () => {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("low")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("[x] ls - list directories")
 			.mockResolvedValueOnce("Done - use 3 read-only tools")
-			.mockResolvedValueOnce("Add custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Add custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const notify = vi.fn();
 		const confirm = vi.fn().mockResolvedValue(true);
 		const applyConfiguration = vi.fn().mockResolvedValue(undefined);
@@ -396,10 +419,14 @@ describe("WATCHDOG configuration", () => {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("medium")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Continue without custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Continue without custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const editor = vi.fn();
 		const confirm = vi.fn().mockResolvedValue(true);
 		const applyConfiguration = vi.fn().mockResolvedValue(undefined);
@@ -434,7 +461,16 @@ describe("WATCHDOG configuration", () => {
 		const scenarios = [
 			{
 				name: "instructions choice",
-				selections: ["fixture/advisor", "medium", "Done - use 4 read-only tools", undefined],
+				selections: [
+					"Model and reasoning: not configured (high)",
+					"fixture/advisor",
+					"medium",
+					"Read-only tools: read, grep, find, ls",
+					"Done - use 4 read-only tools",
+					"Instructions: none",
+					undefined,
+					"Cancel",
+				],
 				editorResult: "unused",
 				confirmResult: true,
 				expectedConfirmCalls: 0,
@@ -442,10 +478,14 @@ describe("WATCHDOG configuration", () => {
 			{
 				name: "instructions editor",
 				selections: [
+					"Model and reasoning: not configured (high)",
 					"fixture/advisor",
 					"medium",
+					"Read-only tools: read, grep, find, ls",
 					"Done - use 4 read-only tools",
+					"Instructions: none",
 					"Add custom instructions",
+					"Cancel",
 				],
 				editorResult: undefined,
 				confirmResult: true,
@@ -454,10 +494,14 @@ describe("WATCHDOG configuration", () => {
 			{
 				name: "final confirmation",
 				selections: [
+					"Model and reasoning: not configured (high)",
 					"fixture/advisor",
 					"medium",
+					"Read-only tools: read, grep, find, ls",
 					"Done - use 4 read-only tools",
+					"Instructions: none",
 					"Continue without custom instructions",
+					"Apply and save configuration",
 				],
 				editorResult: "unused",
 				confirmResult: false,
