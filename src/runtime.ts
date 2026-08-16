@@ -473,6 +473,26 @@ interface OutstandingAdvice extends PendingAdvice {
 	epoch: number;
 }
 
+/**
+ * Single projection of an outstanding delivery into its persisted shape, shared by
+ * the snapshot writer and the pre-admission byte estimate so the two can never
+ * diverge over a field like the dedupe tag.
+ */
+function persistedActiveDelivery(pending: OutstandingAdvice): PersistedAdvisorActiveDelivery {
+	return {
+		advice: structuredClone(pending.advice),
+		stale: pending.stale,
+		branchWindow: { ...pending.branchWindow },
+		displayedInEntry: pending.displayedInEntry,
+		...(pending.restoredAfterResume ? { restoredAfterResume: true as const } : {}),
+		reviewId: pending.reviewId,
+		identity: pending.identity,
+		deliveryId: pending.deliveryId,
+		turnNumber: pending.turnNumber,
+		...(pending.tag === undefined ? {} : { tag: pending.tag }),
+	};
+}
+
 function emptyUsage(): AdvisorUsageTotals {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, costUsd: 0 };
 }
@@ -1422,18 +1442,7 @@ export class AdvisorRuntime {
 			: [];
 		const activeDeliveries: PersistedAdvisorActiveDelivery[] = this.activeAdvice
 			.values()
-			.map((pending) => ({
-				advice: structuredClone(pending.advice),
-				stale: pending.stale,
-				branchWindow: { ...pending.branchWindow },
-				displayedInEntry: pending.displayedInEntry,
-				...(pending.restoredAfterResume ? { restoredAfterResume: true as const } : {}),
-				reviewId: pending.reviewId,
-				identity: pending.identity,
-				deliveryId: pending.deliveryId,
-				turnNumber: pending.turnNumber,
-				...(pending.tag === undefined ? {} : { tag: pending.tag }),
-			}));
+			.map(persistedActiveDelivery);
 		if (serializedJsonBytes(activeDeliveries) > MAX_PERSISTED_ACTIVE_DELIVERIES_BYTES) {
 			throw new Error("Advisor invariant violated: active delivery serialized bound exceeded");
 		}
@@ -3061,18 +3070,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				epoch: this.status.epoch,
 				...(tag === undefined ? {} : { tag }),
 			};
-			const candidateDeliveries = [...this.activeAdvice.values(), outstanding].map((pending) => ({
-				advice: pending.advice,
-				stale: pending.stale,
-				branchWindow: pending.branchWindow,
-				displayedInEntry: pending.displayedInEntry,
-				...(pending.restoredAfterResume ? { restoredAfterResume: true as const } : {}),
-				reviewId: pending.reviewId,
-				identity: pending.identity,
-				deliveryId: pending.deliveryId,
-				turnNumber: pending.turnNumber,
-				...(pending.tag === undefined ? {} : { tag: pending.tag }),
-			}));
+			const candidateDeliveries = [...this.activeAdvice.values(), outstanding].map(
+				persistedActiveDelivery,
+			);
 			if (serializedJsonBytes(candidateDeliveries) > MAX_PERSISTED_ACTIVE_DELIVERIES_BYTES) {
 				this.status.notesSuppressed++;
 				if (!this.activeAdviceWarningEmitted) {
