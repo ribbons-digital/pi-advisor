@@ -123,8 +123,6 @@ const FAILURE_PAUSE_COUNT = 3;
 export const MAX_ADVISOR_RETRIES_PER_UPDATE = 1;
 export const ADVISOR_RETRY_DELAY_MS = 250;
 export const MAX_ADVISOR_DUMP_BYTES = 16 * 1_024;
-export const MIN_MUTE_ID_PREFIX_CHARACTERS = 8;
-export const MAX_MUTE_ID_PREFIX_CHARACTERS = 64;
 export const ADVISOR_ARGUMENT_VALIDATION_FAILURE =
 	'The selected Advisor model returned "advise" arguments that did not match the internal schema. Run /advisor configure to select another model. Run /advisor on to retry after correcting configuration or after a transient model failure.';
 export const ADVISOR_INTERNAL_EXECUTION_FAILURE =

@@ -10,6 +10,7 @@ import {
 	formatAdviceForDelivery,
 	formatAdvisorDiagnosticsDump,
 	formatAdvisorFooterStatus,
+	formatAdvisorStatusShort,
 	shouldAnimateAdvisorFooter,
 	HARD_LIMITS,
 	MAX_ADVISOR_DUMP_BYTES,
@@ -583,5 +584,82 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 		const fallback: unknown = JSON.parse(fallbackDump.slice(fallbackDump.indexOf("\n") + 1));
 		expect(Buffer.byteLength(fallbackDump, "utf8")).toBeLessThanOrEqual(MAX_ADVISOR_DUMP_BYTES);
 		expect(fallback).toMatchObject({ truncated: true });
+	});
+});
+
+describe("Quality Slice Q6 short status and card mute IDs", () => {
+	it("renders the Q6-D1 short status line set with cap and memory state", () => {
+		const status = runtimeStatus();
+		const lines = formatAdvisorStatusShort(status, 1_700_000_000_000).split("\n");
+		expect(lines[0]).toBe("Advisor: active");
+		expect(lines[1]).toBe("Model: fixture/model (high)");
+		expect(lines[2]).toBe("Queued reviews: 0");
+		expect(lines[3]).toBe("Notes: 0 active, 0 deferred; last note none");
+		expect(lines[4]).toBe("Session: 10 tokens, $0.0100; caps off");
+		expect(lines[5]).toBe("Memory suggestions: enabled; capability available (5 remaining)");
+		expect(lines).toHaveLength(6);
+	});
+
+	it("shows queued count, last note age and severity, and cap and pause state", () => {
+		const status = runtimeStatus();
+		const now = 1_700_000_120_000;
+		const rendered = formatAdvisorStatusShort(
+			{
+				...status,
+				queuedReviews: 2,
+				activeNotesPending: 1,
+				deferredNotesPending: 1,
+				lastNoteCreatedAt: 1_700_000_000_000,
+				lastNoteSeverity: "blocker",
+				lastNoteFindingKey: "defect-rollback",
+				paused: true,
+				pauseReason: "Advisor session token soft cap reached",
+				sessionTokenSoftCap: 1_000_000,
+				sessionCostSoftCapUsd: "off",
+			},
+			now,
+		).split("\n");
+		expect(rendered[2]).toBe("Queued reviews: 2");
+		expect(rendered[3]).toBe(
+			"Notes: 1 active, 1 deferred; last note 2m ago, blocker (defect-rollback)",
+		);
+		expect(rendered[4]).toBe("Session: 10 tokens, $0.0100; caps token 1000000 reached, cost off");
+		expect(rendered.at(-1)).toBe("Pause reason: Advisor session token soft cap reached");
+	});
+
+	it("shows an inactive reason and memory availability in the short form", () => {
+		const status = runtimeStatus();
+		const rendered = formatAdvisorStatusShort({
+			...status,
+			enabled: true,
+			active: false,
+			inactiveReason: "model credentials unavailable",
+			memorySuggestionCapability: {
+				state: "available",
+			},
+			memorySuggestionsRemaining: 5,
+		}).split("\n");
+		expect(rendered[0]).toBe("Advisor: inactive");
+		expect(rendered).toContain("Memory suggestions: enabled; capability available (5 remaining)");
+		expect(rendered.at(-1)).toBe("Inactive reason: model credentials unavailable");
+	});
+
+	it("renders the short mute ID on review cards carrying a findingKey", () => {
+		const note = presentationNote({
+			muteId: "a1b2c3d4",
+			findingKey: "defect-rollback",
+		});
+		const lines = renderAdviceCards([note], false, fixtureTheme(true)).render(40);
+		const rendered = lines.join("\n");
+		expect(rendered).toContain("mute a1b2c3d4");
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(40);
+		}
+	});
+
+	it("omits the mute ID when the finding has no display label", () => {
+		const note = presentationNote({});
+		const lines = renderAdviceCards([note], false, fixtureTheme(true)).render(40);
+		expect(lines.join("\n")).not.toContain("mute ");
 	});
 });

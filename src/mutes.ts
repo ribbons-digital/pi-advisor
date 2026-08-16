@@ -128,10 +128,24 @@ export class RecentFindingsIndex {
 	}
 }
 
-function isMutesDocument(value: unknown): value is RecentFinding[] {
+function isMutesFileEntry(value: unknown): value is { id: string; label: string } {
+	if (typeof value !== "object" || value === null) return false;
+	const entry = value as Record<string, unknown>;
+	return (
+		Object.keys(entry).length === 2 &&
+		typeof entry.id === "string" &&
+		HASH_PATTERN.test(entry.id) &&
+		typeof entry.label === "string" &&
+		Array.from(entry.label).length > 0 &&
+		Array.from(entry.label).length <= MAX_FINDING_LABEL_CHARACTERS &&
+		redactSecrets(entry.label).text === entry.label
+	);
+}
+
+function isMutesDocument(value: unknown): value is { id: string; label: string }[] {
 	if (!Array.isArray(value) || value.length > MAX_MUTE_ENTRIES) return false;
-	if (!value.every(isRecentFinding)) return false;
-	return new Set(value.map((entry) => entry.hash)).size === value.length;
+	if (!value.every(isMutesFileEntry)) return false;
+	return new Set(value.map((entry) => entry.id)).size === value.length;
 }
 
 /**
@@ -242,7 +256,8 @@ export class MuteStore {
 					error: `${path} is malformed; mutes are inactive until the file is repaired.`,
 				};
 			}
-			return { store: new MuteStore(path, parsed) };
+			const entries = parsed.map((entry) => ({ hash: entry.id, label: entry.label }));
+			return { store: new MuteStore(path, entries) };
 		} catch {
 			return {
 				store: new MuteStore(path),

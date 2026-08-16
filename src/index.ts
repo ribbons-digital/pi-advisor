@@ -43,7 +43,7 @@ export interface PiAdvisorExtensionOptions {
 	};
 }
 
-function publishConfigurationWarnings(
+export function publishConfigurationWarnings(
 	ctx: ExtensionCommandContext | Parameters<AdvisorRuntime["startSession"]>[0],
 	warnings: ConfigurationWarning[],
 ): void {
@@ -528,6 +528,7 @@ export * from "./config.js";
 export * from "./configuration.js";
 export * from "./delivery.js";
 export * from "./model-picker.js";
+export * from "./mutes.js";
 export * from "./persistence.js";
 export * from "./presentation.js";
 export * from "./redaction.js";

@@ -355,10 +355,13 @@ function isPersistedRecentFinding(value: unknown): value is PersistedRecentFindi
 		hasOnlyKeys(entry, ["hash", "label"]) &&
 		typeof entry.hash === "string" &&
 		/^[a-f0-9]{64}$/u.test(entry.hash) &&
+		typeof entry.label === "string" &&
+		Array.from(entry.label).length > 0 &&
 		isBoundedSafeText(entry.label, MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS)
 	);
 }
 
+export const MAX_PERSISTED_RECENT_FINDINGS = MAX_MUTE_ENTRIES;
 export const MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS = 128;
 
 function isPersistedDeferredAdvice(

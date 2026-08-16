@@ -19,6 +19,7 @@ import {
 	pickAdvisorInteractiveConfiguration,
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
+	publishConfigurationWarnings,
 	saveUserConfigurationAtomic,
 	serializeUserConfiguration,
 } from "../../src/index.js";
@@ -1261,5 +1262,35 @@ describe("Quality Slice Q5 dedupe configuration", () => {
 			similarityRedeliveryThreshold: 0.5,
 			reRaiseMinTurns: 0,
 		});
+	});
+});
+
+describe("Quality Slice Q6 batched configuration warnings (F14)", () => {
+	it("publishes one combined notify with one line per warning", () => {
+		const notify = vi.fn();
+		const ctx = {
+			hasUI: true,
+			ui: { notify },
+		} as unknown as ExtensionCommandContext;
+		publishConfigurationWarnings(ctx, [
+			{ source: "user", path: "~/.pi/agent/WATCHDOG.yml", message: "first warning" },
+			{ source: "project", path: ".pi/WATCHDOG.yml", message: "second warning" },
+			{ source: "user", path: "~/.pi/agent/WATCHDOG.yml", message: "third warning" },
+		]);
+		expect(notify).toHaveBeenCalledTimes(1);
+		expect(notify).toHaveBeenCalledWith("first warning\nsecond warning\nthird warning", "warning");
+	});
+
+	it("stays silent without a UI and without warnings", () => {
+		const notify = vi.fn();
+		const ctx = {
+			hasUI: false,
+			ui: { notify },
+		} as unknown as ExtensionCommandContext;
+		publishConfigurationWarnings(ctx, [{ source: "user", path: "x", message: "ignored" }]);
+		expect(notify).not.toHaveBeenCalled();
+		const withUi = { hasUI: true, ui: { notify } } as unknown as ExtensionCommandContext;
+		publishConfigurationWarnings(withUi, []);
+		expect(notify).not.toHaveBeenCalled();
 	});
 });
