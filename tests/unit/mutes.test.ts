@@ -9,8 +9,10 @@ import {
 	findingMuteId,
 	isHexPrefix,
 	MAX_MUTE_ENTRIES,
+	MutesFileChangedError,
 	MuteStore,
 	RecentFindingsIndex,
+	shortestUniquePrefixes,
 } from "../../src/mutes.js";
 
 const HASH_A = "a".repeat(64);
@@ -180,5 +182,54 @@ describe("Quality Slice Q6 durable mutes file (Q6-D2)", () => {
 		expect(loaded.store.resolve("3acae811")).toHaveLength(2);
 		expect(loaded.store.resolve("3acae8117b")).toHaveLength(1);
 		expect(loaded.store.resolve("f".repeat(8))).toHaveLength(0);
+	});
+
+	it("computes actionable longer prefixes for colliding hashes", () => {
+		const first = "3acae8117b9278b6abcd0af81be30e421e0f8f274c6dff6fae7b34aed748788b";
+		const second = "3acae811e1737ad5fc3f01ceb252dad1df95e3729b89966d410e69352564839c";
+		const unique = shortestUniquePrefixes([first, second]);
+		expect(unique.get(first)).toBe("3acae8117");
+		expect(unique.get(second)).toBe("3acae811e");
+		expect(unique.get(first)).toHaveLength(9);
+		expect(unique.get(second)).toHaveLength(9);
+		const distinct = shortestUniquePrefixes([HASH_A, HASH_B]);
+		expect(distinct.get(HASH_A)).toBe(HASH_A.slice(0, 8));
+		expect(distinct.get(HASH_B)).toBe(HASH_B.slice(0, 8));
+	});
+
+	it("refuses a save whose source changed and succeeds after reload (concurrent merge)", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-advisor-mutes-"));
+		const path = join(directory, "mutes.yml");
+		const first = new MuteStore(path);
+		first.mute(HASH_A, "alpha");
+		await first.save();
+
+		// A stale session holds the pre-write content, while a concurrent
+		// session adds another mute.
+		const staleLoad = await MuteStore.load(path);
+		const concurrent = new MuteStore(path);
+		concurrent.mute(HASH_B, "beta");
+		await concurrent.save();
+
+		// The stale session's save must fail closed instead of clobbering.
+		staleLoad.store.mute(HASH_A, "alpha-again");
+		await expect(staleLoad.store.save(staleLoad.fingerprint)).rejects.toBeInstanceOf(
+			MutesFileChangedError,
+		);
+		const afterReject = await MuteStore.load(path);
+		expect(afterReject.store.list().map((entry) => entry.label)).toEqual(["beta"]);
+
+		// Reloading merges: the fresh session applies its add on top of the
+		// concurrent entry and the freshness check passes.
+		const fresh = await MuteStore.load(path);
+		fresh.store.mute(HASH_A, "alpha-again");
+		await fresh.store.save(fresh.fingerprint);
+		const merged = await MuteStore.load(path);
+		expect(
+			merged.store
+				.list()
+				.map((entry) => entry.label)
+				.sort(),
+		).toEqual(["alpha-again", "beta"]);
 	});
 });

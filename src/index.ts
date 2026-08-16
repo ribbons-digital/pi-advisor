@@ -34,7 +34,7 @@ import {
 	shouldAnimateAdvisorFooter,
 	type AdvisorRuntimeHooks,
 } from "./runtime.js";
-import { isHexPrefix } from "./mutes.js";
+import { isHexPrefix, shortestUniquePrefixes } from "./mutes.js";
 
 export interface PiAdvisorExtensionOptions {
 	config?: AdvisorConfig;
@@ -421,8 +421,11 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 						"info",
 					);
 				} else if (resolved.kind === "collision") {
+					const uniquePrefixes = shortestUniquePrefixes(
+						resolved.matches.map((match) => match.hash),
+					);
 					ctx.ui.notify(
-						`Multiple recent findings match ${prefix}. Repeat with a longer prefix:\n${resolved.matches.map((match) => `${match.hash.slice(0, 8)} ${match.label}`).join("\n")}`,
+						`Multiple recent findings match ${prefix}. Use one of these longer prefixes:\n${resolved.matches.map((match) => `${uniquePrefixes.get(match.hash) ?? match.hash.slice(0, 8)} ${match.label}`).join("\n")}`,
 						"info",
 					);
 				} else {

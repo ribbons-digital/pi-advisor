@@ -351,6 +351,7 @@ Mutes are durable user data, not configuration:
 - They live in a dedicated user-scope file at `~/.pi/agent/mutes.yml`, next to the User WATCHDOG configuration.
 - The file is written atomically by the runtime, holds at most 128 entries with oldest-first replacement, and is never written by `/advisor configure` saves, so a package downgrade cannot erase mutes.
 - Mutes survive epoch changes, branch resets, compatible resumes, and new Pi sessions; the runtime caches the file per session and reloads it on configuration apply.
+- Every mute or unmute write reloads the file first, applies the single change on top of the fresh entries, and verifies the file is unchanged immediately before the atomic rename, so concurrent Pi sessions merge their mutes instead of clobbering each other.
 - A malformed or unreadable mutes file fails closed: no mutes are applied, one warning is shown, and the file is never overwritten.
 - Raw `findingKey` text is display only and never command input; labels are redacted and bounded to 128 characters.
 

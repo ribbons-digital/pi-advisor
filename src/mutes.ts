@@ -153,6 +153,36 @@ function isMutesDocument(value: unknown): value is { id: string; label: string }
  * Durable user-scope mute list backed by an atomically written YAML file.
  * The file is the source of truth; a failed save reverts the in-memory change.
  */
+export class MutesFileChangedError extends Error {
+	constructor() {
+		super("The mutes file changed on disk since it was loaded; retry against the fresh content.");
+		this.name = "MutesFileChangedError";
+	}
+}
+
+/**
+ * Shortest prefix per hash that is unique among the given hashes, starting at
+ * `minimumLength`. Collision messages use these so the suggested remediation
+ * is actionable even though cards and lists display only 8 hex characters.
+ */
+export function shortestUniquePrefixes(
+	hashes: readonly string[],
+	minimumLength = 8,
+): ReadonlyMap<string, string> {
+	const result = new Map<string, string>();
+	for (const hash of hashes) {
+		let length = minimumLength;
+		while (length < hash.length) {
+			const prefix = hash.slice(0, length);
+			const collides = hashes.some((other) => other !== hash && other.startsWith(prefix));
+			if (!collides) break;
+			length++;
+		}
+		result.set(hash, hash.slice(0, length));
+	}
+	return result;
+}
+
 export class MuteStore {
 	private entries: RecentFinding[];
 
@@ -201,8 +231,14 @@ export class MuteStore {
 		return this.entries.filter((entry) => entry.hash.startsWith(normalized));
 	}
 
-	/** Atomic same-directory temp file, fsync, rename. */
-	async save(): Promise<void> {
+	/**
+	 * Atomic same-directory temp file, fsync, rename. When
+	 * `expectFingerprint` is given, the current file content must still match
+	 * it immediately before the rename; a concurrent writer makes the save
+	 * throw {@link MutesFileChangedError} so the caller can reload and retry
+	 * instead of clobbering the other session's mutes.
+	 */
+	async save(expectFingerprint?: string): Promise<void> {
 		const serialized = stringify(
 			this.entries.map((entry) => ({ id: entry.hash, label: entry.label })),
 			{ lineWidth: 0 },
@@ -217,6 +253,12 @@ export class MuteStore {
 			} finally {
 				await handle.close();
 			}
+			if (expectFingerprint !== undefined) {
+				const current = await MuteStore.fingerprint(this.path);
+				if (current !== expectFingerprint) {
+					throw new MutesFileChangedError();
+				}
+			}
 			await rename(temporary, this.path);
 		} catch (error) {
 			await rm(temporary, { force: true });
@@ -229,7 +271,21 @@ export class MuteStore {
 	 * yields an empty store. A malformed or oversized file yields an error plus
 	 * an empty store; the malformed file is never overwritten.
 	 */
-	static async load(path: string): Promise<{ store: MuteStore; error?: string }> {
+	/**
+	 * Current raw file content as a fingerprint, or an empty string when the
+	 * file is missing. Used by the freshness check before a rename.
+	 */
+	static async fingerprint(path: string): Promise<string> {
+		try {
+			return (await readBounded(path, MAX_MUTES_FILE_BYTES)) ?? "";
+		} catch {
+			return "";
+		}
+	}
+
+	static async load(
+		path: string,
+	): Promise<{ store: MuteStore; error?: string; fingerprint?: string }> {
 		let text: string | undefined;
 		try {
 			// Bounded read: at most MAX_MUTES_FILE_BYTES + 1 bytes are materialized,
@@ -242,7 +298,7 @@ export class MuteStore {
 			};
 		}
 		if (text === undefined) {
-			return { store: new MuteStore(path) };
+			return { store: new MuteStore(path), fingerprint: "" };
 		}
 		if (Buffer.byteLength(text, "utf8") > MAX_MUTES_FILE_BYTES) {
 			return {
@@ -259,7 +315,7 @@ export class MuteStore {
 				};
 			}
 			const entries = parsed.map((entry) => ({ hash: entry.id, label: entry.label }));
-			return { store: new MuteStore(path, entries) };
+			return { store: new MuteStore(path, entries), fingerprint: text };
 		} catch {
 			return {
 				store: new MuteStore(path),

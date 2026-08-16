@@ -12,6 +12,7 @@ import {
 	cursorAtTail,
 	DEFAULT_ADVISOR_CONFIG,
 	MUTES_FILE_NAME,
+	MuteStore,
 	normalizeAdviceForDedupe,
 	type AdvisorConfig,
 	type AdvisorRuntime,
@@ -131,13 +132,11 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 		try {
 			await harness.session.prompt("review one");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
-			await harness.session.prompt("deliver deferred note");
-			await waitFor(() => (runtime?.getStatus().notesDelivered ?? 0) >= 1);
 
 			const hashA = findingHash(KEY_A);
 			const shortId = hashA.slice(0, 8);
 			expect(runtime?.getStatus()).toMatchObject({
-				notesDelivered: 1,
+				notesDelivered: 0,
 				notesSuppressed: 0,
 				lastNoteSeverity: "concern",
 				lastNoteFindingKey: KEY_A,
@@ -148,6 +147,8 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 				label: KEY_A,
 			});
 
+			// Mute before any later review so the suppression path is exercised
+			// deterministically, then let the deferred note materialize.
 			const muted = await runtime?.muteFinding(hashA, KEY_A);
 			expect(muted).toEqual({ ok: true, message: `Muted ${shortId} (${KEY_A}).` });
 			expect(runtime?.muteList()).toEqual([{ id: shortId, label: KEY_A }]);
@@ -157,16 +158,21 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(mutesFile).toContain(KEY_A);
 
 			// The muted finding beats Q5 similarity delivery and escalation re-raise.
-			await harness.session.prompt("review two");
+			// Each prompt waits for its review to settle so the scripted provider
+			// is never raced by supersession or retry churn.
+			await harness.session.prompt("deliver deferred note");
+			await waitFor(() => (runtime?.getStatus().notesDelivered ?? 0) >= 1);
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
-			await harness.session.prompt("review three");
+			await harness.session.prompt("review two");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 3);
+			await harness.session.prompt("review three");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 4);
 			expect(runtime?.getStatus()).toMatchObject({
 				notesDelivered: 1,
 				notesSuppressed: 0,
 				mutedSuppressions: 2,
 			});
-			const context = JSON.stringify(primary.requests[3]?.context);
+			const context = JSON.stringify(primary.requests[2]?.context);
 			expect(context).not.toContain(NOTE_A_PARAPHRASE);
 			expect(context).not.toContain('tag=\\"possible-duplicate\\"');
 			expect(context).not.toContain('tag=\\"re-raised\\"');
@@ -337,6 +343,84 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(repaired).toContain("existing-mute");
 			expect(repaired).toContain(KEY_A);
 			expect(runtime?.muteList()).toHaveLength(2);
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("merges a concurrent session's mutes instead of clobbering them", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "one" }] }]);
+		const advisor = createAdvisorProvider([reviewAdvice(NOTE_A, KEY_A)]);
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			setup: (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+			},
+		});
+		try {
+			await harness.session.prompt("review one");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			const hashA = findingHash(KEY_A);
+			await runtime?.muteFinding(hashA, KEY_A);
+
+			// A concurrent Pi session reloads the file, adds its own mute, and
+			// saves on top of the fresh content.
+			const concurrentLoad = await MuteStore.load(join(harness.agentDir, MUTES_FILE_NAME));
+			concurrentLoad.store.mute("c".repeat(64), "concurrent-mute");
+			await concurrentLoad.store.save(concurrentLoad.fingerprint);
+
+			// Our unmute must reload the file, apply on top of the fresh entries,
+			// and preserve the concurrent mute.
+			const result = await runtime?.unmuteFinding(hashA.slice(0, 8));
+			expect(result?.ok).toBe(true);
+			const after = await MuteStore.load(join(harness.agentDir, MUTES_FILE_NAME));
+			expect(after.store.list().map((entry) => entry.label)).toEqual(["concurrent-mute"]);
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("suggests actionable longer prefixes on a mute collision", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "one" }] }]);
+		const advisor = createAdvisorProvider([reviewAdvice(NOTE_A, COLLISION_KEY_A)]);
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			setup: (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+			},
+		});
+		try {
+			await harness.session.prompt("review one");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			const hashA = findingHash(COLLISION_KEY_A);
+			const hashB = findingHash(COLLISION_KEY_B);
+			// Both colliding findings are muted so the unmute prefix resolution
+			// reports the collision with actionable longer prefixes.
+			await runtime?.muteFinding(hashA, COLLISION_KEY_A);
+			await runtime?.muteFinding(hashB, COLLISION_KEY_B);
+			const result = await runtime?.unmuteFinding(hashA.slice(0, 8));
+			expect(result?.ok).toBe(false);
+			expect(result?.message).toContain("Use one of these longer prefixes");
+			expect(result?.message).toContain(hashA.slice(0, 9));
+			expect(result?.message).toContain(hashB.slice(0, 9));
+			expect(result?.message).toContain(COLLISION_KEY_A);
+			expect(result?.message).toContain(COLLISION_KEY_B);
 		} finally {
 			await harness.dispose();
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

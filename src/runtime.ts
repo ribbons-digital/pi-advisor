@@ -52,8 +52,10 @@ import { buildTieredAdvisorSystemPrompt, isTieredPromptExperimentEnabled } from 
 import {
 	findingMuteId,
 	MUTES_FILE_NAME,
+	MutesFileChangedError,
 	MuteStore,
 	RecentFindingsIndex,
+	shortestUniquePrefixes,
 	type RecentFinding,
 } from "./mutes.js";
 import { HARD_LIMITS, normalizeAdvisorConfig, type AdvisorConfig } from "./config.js";
@@ -980,6 +982,7 @@ export class AdvisorRuntime {
 	private readonly recentFindings = new RecentFindingsIndex();
 	private mutes: MuteStore | undefined;
 	private mutesLoadError: string | undefined;
+	private mutesFingerprint = "";
 	private experimentUpdateText?: string;
 	private readonly transcriptRecords: PersistedAdvisorTranscriptRecord[] = [];
 	private readonly collector: AdviceCollector = {
@@ -1095,6 +1098,7 @@ export class AdvisorRuntime {
 		} else {
 			this.mutesLoadError = undefined;
 			this.mutes = loaded.store;
+			this.mutesFingerprint = loaded.fingerprint ?? "";
 		}
 	}
 
@@ -1120,95 +1124,101 @@ export class AdvisorRuntime {
 	}
 
 	/**
-	 * Fail-closed write gate for the mutes file: returns a bounded reason when
-	 * a write must not proceed. A file that failed to load is retried once;
-	 * only a clean load (missing file counts as clean) unlocks writes, so a
-	 * malformed or unreadable mutes file is never overwritten.
+	 * Write gate for the mutes file. Always reloads the file so concurrent Pi
+	 * sessions merge instead of clobbering: the single add or remove is applied
+	 * on top of the freshly loaded entries. Returns undefined when the reload
+	 * failed, which fails the write closed so a malformed or unreadable mutes
+	 * file is never overwritten.
 	 */
-	private async mutesWriteGate(): Promise<string | undefined> {
-		await this.loadMutes();
-		let mutes = this.mutes;
-		if (mutes === undefined) return "The mutes file could not be loaded.";
-		if (this.mutesLoadError === undefined) return undefined;
+	private async mutesWriteGate(): Promise<MuteStore | undefined> {
 		await this.loadMutes(true);
-		mutes = this.mutes;
-		if (mutes === undefined) return "The mutes file could not be loaded.";
-		return this.mutesLoadError;
+		return this.mutesLoadError === undefined ? this.mutes : undefined;
 	}
 
 	async muteFinding(hash: string, label: string): Promise<{ ok: boolean; message?: string }> {
-		const loadError = await this.mutesWriteGate();
-		if (loadError !== undefined) {
-			return {
-				ok: false,
-				message: `${loadError} No mute was applied and the existing file was not modified.`,
-			};
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const mutes = await this.mutesWriteGate();
+			if (mutes === undefined) {
+				return {
+					ok: false,
+					message: `${this.mutesLoadError ?? "The mutes file could not be loaded."} No mute was applied and the existing file was not modified.`,
+				};
+			}
+			const fingerprint = this.mutesFingerprint;
+			if (mutes.isMuted(hash)) return { ok: true, message: "Finding is already muted." };
+			const before = mutes.list();
+			mutes.mute(hash, label);
+			try {
+				await mutes.save(fingerprint);
+				return { ok: true, message: `Muted ${findingMuteId(hash)} (${label}).` };
+			} catch (error) {
+				mutes.replace(before);
+				if (error instanceof MutesFileChangedError) continue;
+				this.warn("The Advisor mutes file could not be saved; the mute was not applied.");
+				return {
+					ok: false,
+					message: "The Advisor mutes file could not be saved; the mute was not applied.",
+				};
+			}
 		}
-		const mutes = this.mutes;
-		if (mutes === undefined) {
-			return { ok: false, message: "The mutes file could not be loaded; no mute was applied." };
-		}
-		if (mutes.isMuted(hash)) return { ok: true, message: "Finding is already muted." };
-		const before = mutes.list();
-		mutes.mute(hash, label);
-		try {
-			await mutes.save();
-		} catch {
-			mutes.replace(before);
-			this.warn("The Advisor mutes file could not be saved; the mute was not applied.");
-			return {
-				ok: false,
-				message: "The Advisor mutes file could not be saved; the mute was not applied.",
-			};
-		}
-		return { ok: true, message: `Muted ${findingMuteId(hash)} (${label}).` };
+		return {
+			ok: false,
+			message: "The mutes file changed concurrently; the mute was not applied. Try again.",
+		};
 	}
 
 	async unmuteFinding(prefix: string): Promise<{ ok: boolean; message?: string }> {
-		const loadError = await this.mutesWriteGate();
-		if (loadError !== undefined) {
-			return {
-				ok: false,
-				message: `${loadError} No unmute was applied and the existing file was not modified.`,
-			};
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const mutes = await this.mutesWriteGate();
+			if (mutes === undefined) {
+				return {
+					ok: false,
+					message: `${this.mutesLoadError ?? "The mutes file could not be loaded."} No unmute was applied and the existing file was not modified.`,
+				};
+			}
+			const fingerprint = this.mutesFingerprint;
+			const matches = mutes.resolve(prefix);
+			if (matches.length === 0) {
+				return {
+					ok: false,
+					message: `No muted finding matches ${prefix}. Run /advisor mute list to see muted findings.`,
+				};
+			}
+			if (matches.length > 1) {
+				const uniquePrefixes = shortestUniquePrefixes(matches.map((entry) => entry.hash));
+				const labels = matches
+					.map(
+						(entry) => `${uniquePrefixes.get(entry.hash) ?? entry.hash.slice(0, 8)} ${entry.label}`,
+					)
+					.join("\n");
+				return {
+					ok: false,
+					message: `Multiple muted findings match ${prefix}. Use one of these longer prefixes:\n${labels}`,
+				};
+			}
+			const match = matches[0];
+			if (match === undefined) {
+				return { ok: false, message: `No muted finding matches ${prefix}.` };
+			}
+			const before = mutes.list();
+			mutes.unmute(match.hash);
+			try {
+				await mutes.save(fingerprint);
+				return { ok: true, message: `Unmuted ${findingMuteId(match.hash)} (${match.label}).` };
+			} catch (error) {
+				mutes.replace(before);
+				if (error instanceof MutesFileChangedError) continue;
+				this.warn("The Advisor mutes file could not be saved; the unmute was not applied.");
+				return {
+					ok: false,
+					message: "The Advisor mutes file could not be saved; the unmute was not applied.",
+				};
+			}
 		}
-		const mutes = this.mutes;
-		if (mutes === undefined) {
-			return { ok: false, message: "The mutes file could not be loaded; no unmute was applied." };
-		}
-		const matches = mutes.resolve(prefix);
-		if (matches.length === 0) {
-			return {
-				ok: false,
-				message: `No muted finding matches ${prefix}. Run /advisor mute list to see muted findings.`,
-			};
-		}
-		if (matches.length > 1) {
-			const labels = matches
-				.map((entry) => `${findingMuteId(entry.hash)} ${entry.label}`)
-				.join("\n");
-			return {
-				ok: false,
-				message: `Multiple muted findings match ${prefix}. Repeat with a longer prefix:\n${labels}`,
-			};
-		}
-		const match = matches[0];
-		if (match === undefined) {
-			return { ok: false, message: `No muted finding matches ${prefix}.` };
-		}
-		const before = mutes.list();
-		mutes.unmute(match.hash);
-		try {
-			await mutes.save();
-		} catch {
-			mutes.replace(before);
-			this.warn("The Advisor mutes file could not be saved; the unmute was not applied.");
-			return {
-				ok: false,
-				message: "The Advisor mutes file could not be saved; the unmute was not applied.",
-			};
-		}
-		return { ok: true, message: `Unmuted ${findingMuteId(match.hash)} (${match.label}).` };
+		return {
+			ok: false,
+			message: "The mutes file changed concurrently; the unmute was not applied. Try again.",
+		};
 	}
 
 	muteList(): { id: string; label: string }[] {
