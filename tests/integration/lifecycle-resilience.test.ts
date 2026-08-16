@@ -1394,6 +1394,15 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			for (let index = 0; index < MAX_PERSISTED_DEDUPE_HASHES; index++) {
 				dedupe.add(reviewAdvice(`Persist priority dedupe ${String(index)}.`));
 			}
+			const recentFindings = Reflect.get(activeRuntime, "recentFindings") as {
+				add(hash: string, label: string): void;
+			};
+			for (let index = 0; index < 128; index++) {
+				recentFindings.add(
+					index.toString(16).padStart(64, "0"),
+					`Persist priority finding ${String(index)}.`,
+				);
+			}
 			const persistState = Reflect.get(activeRuntime, "persistState") as () => void;
 			persistState.call(activeRuntime);
 			const latest = [...manager.getBranch()]
@@ -1413,6 +1422,12 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			expect(state.queuedReview?.text).toContain("QUEUED-REVIEW-TAIL");
 			expect(state.queuedReview?.truncated).toBe(true);
 			expect(state.dedupeHashes).toHaveLength(MAX_PERSISTED_DEDUPE_HASHES);
+			// The index sits after deferred advice and dedupe hashes in the
+			// snapshot-pressure drop order, so it survives while deferred advice
+			// absorbs the pressure, and it compacts oldest-first when reached.
+			expect(state.recentFindings).toHaveLength(128);
+			expect(state.recentFindings[0]?.label).toBe("Persist priority finding 0.");
+			expect(state.recentFindings.at(-1)?.label).toBe("Persist priority finding 127.");
 			expect(state.deferredAdvice.length).toBeLessThan(500);
 			expect(state.deferredAdvice.at(-1)?.advice.note).toContain("DEFERRED-499");
 			expect(state.deferredAdvice[0]?.advice.note).not.toContain("DEFERRED-000");

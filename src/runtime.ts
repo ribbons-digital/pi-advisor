@@ -48,6 +48,7 @@ import {
 	type AdviseSchemaMode,
 } from "./compatibility/constrained-sampling.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
+import { buildTieredAdvisorSystemPrompt, isTieredPromptExperimentEnabled } from "./experiment.js";
 import {
 	findingMuteId,
 	MUTES_FILE_NAME,
@@ -884,7 +885,14 @@ function escapePromptTagContent(value: string): string {
 	return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function buildAdvisorSystemPrompt(config: AdvisorConfig, projectInstructions = ""): string {
+export function buildAdvisorSystemPrompt(
+	config: AdvisorConfig,
+	projectInstructions = "",
+	tieredContext?: { updateText: string },
+): string {
+	if (tieredContext !== undefined && isTieredPromptExperimentEnabled()) {
+		return buildTieredAdvisorSystemPrompt(config, tieredContext.updateText, projectInstructions);
+	}
 	return `You are Advisor, an isolated secondary reviewer for a Pi Executor session.
 Review each bounded update for one material correctness, safety, scope, or verification issue.
 Silence is the normal successful outcome when the Executor is on track.
@@ -972,6 +980,7 @@ export class AdvisorRuntime {
 	private readonly recentFindings = new RecentFindingsIndex();
 	private mutes: MuteStore | undefined;
 	private mutesLoadError: string | undefined;
+	private experimentUpdateText?: string;
 	private readonly transcriptRecords: PersistedAdvisorTranscriptRecord[] = [];
 	private readonly collector: AdviceCollector = {
 		validCalls: 0,
@@ -1995,7 +2004,14 @@ export class AdvisorRuntime {
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
-			systemPromptOverride: () => buildAdvisorSystemPrompt(this.config, this.projectInstructions),
+			systemPromptOverride: () =>
+				buildAdvisorSystemPrompt(
+					this.config,
+					this.projectInstructions,
+					this.experimentUpdateText === undefined
+						? undefined
+						: { updateText: this.experimentUpdateText },
+				),
 			appendSystemPromptOverride: () => [],
 		});
 		await resourceLoader.reload();
@@ -2866,6 +2882,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			let thrownFailure: string | undefined;
 			try {
 				this.status.reviewRequests++;
+				this.experimentUpdateText = update.text;
 				await session.prompt(promptForAttempt, {
 					expandPromptTemplates: false,
 					source: "extension",
@@ -2873,6 +2890,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			} catch (error) {
 				thrownFailure = boundedReason(error);
 			} finally {
+				delete this.experimentUpdateText;
 				delete this.currentRun;
 				delete this.collector.memoryPolicy;
 			}
