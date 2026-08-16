@@ -177,7 +177,7 @@ Mutes are durable user data in a dedicated file next to the User WATCHDOG config
 Advice created during an active run reaches Pi's next steering boundary and does not abort a running tool.
 Ordinary late or interruption-time advice waits for the next user-driven turn without triggering another completion.
 An eligible Memory suggestion that arrives while the Executor is idle starts one automatic Executor follow-up when no newer user or instruction-bearing input has superseded its evidence window.
-Newer Executor assistant text does not prevent that follow-up, and a continuation with materially newer Executor activity (a non-read-only tool call or its result, a context-included user bash execution, or a compaction or branch-summary entry) still does not prevent it even though the suggestion is then marked potentially stale.
+Newer Executor assistant text does not prevent that follow-up, and a continuation with materially newer Executor activity (a non-read-only tool call or its result, or a compaction or branch-summary entry) still does not prevent it even though the suggestion is then marked potentially stale.
 Any newer user message, instruction-bearing extension message, or bash execution blocks automatic follow-up, including a context-excluded `!!` command.
 The Executor must verify, revise, or decline the suggestion against its latest context and can submit only through a compatible `memory_suggest` tool with explicit `status: "pending"`.
 The automatic follow-up can add one primary-model completion per accepted Memory suggestion, bounded by the configured cadence and session cap.

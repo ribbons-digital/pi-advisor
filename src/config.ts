@@ -343,10 +343,17 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 			protectedPathExceptions: [...input.security.protectedPathExceptions],
 		},
 		delivery: {
-			activeIdleSeverities: input.delivery.activeIdleSeverities.filter(
-				(severity, index, values) =>
-					isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
-			),
+			// Programmatic configs created against the pre-Q3 shape may omit the
+			activeIdleSeverities:
+				// delivery key even though the type marks it required; fall back to
+				// the release default instead of crashing at extension load.
+				(
+					(input as Partial<AdvisorConfig>).delivery?.activeIdleSeverities ??
+					defaults.delivery.activeIdleSeverities
+				).filter(
+					(severity, index, values) =>
+						isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
+				),
 		},
 		review: normalizeReviewConfig(input.review, input.limits.minTurnsBetweenReviews),
 		dedupe: {

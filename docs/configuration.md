@@ -355,6 +355,7 @@ Mutes are durable user data, not configuration:
 - Every mute or unmute write reloads the file first, applies the single change on top of the fresh entries, and verifies the file is unchanged immediately before the atomic rename, so concurrent Pi sessions merge their mutes instead of clobbering each other.
 - A malformed or unreadable mutes file fails closed: no mutes are applied, one warning is shown, and the file is never overwritten.
 - Raw `findingKey` text is display only and never command input; labels are redacted and bounded to 128 characters.
+- Labels are authored by the Advisor model, and pattern-based redaction cannot guarantee that every secret inside a model-authored key is removed; a key may therefore contain an unrecognized secret that is stored locally (mutes file mode `0600`) and rendered on advice cards.
 
 ## Security, privacy, network, and cost warnings
 

@@ -16,6 +16,7 @@ import {
 	MAX_WATCHDOG_YAML_BYTES,
 	mergeProjectConfiguration,
 	normalizeAdvisorConfig,
+	type AdvisorConfig,
 	pickAdvisorInteractiveConfiguration,
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
@@ -1344,5 +1345,14 @@ describe("Quality Slice Q6 configure menu model gate (F12)", () => {
 		);
 		expect(configured).toMatchObject({ model: "fixture/advisor", effort: "high" });
 		expect(select).toHaveBeenCalledTimes(4);
+	});
+});
+
+describe("Quality Slice Q6 legacy programmatic configuration (verified defect fix)", () => {
+	it("normalizes a pre-Q3 programmatic config without the delivery key", () => {
+		const legacy = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		delete (legacy as Partial<AdvisorConfig>).delivery;
+		const normalized = normalizeAdvisorConfig(legacy);
+		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
 	});
 });
