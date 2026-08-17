@@ -12,6 +12,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -387,9 +388,8 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 			// The follow-up continuation is an in-flight toolUse turn, so the review
 			// follow-up delivery id is still pending when the epoch changes.
 			await waitFor(() => {
-				if (primary.requests.length < 2) return false;
-				const id: unknown = Reflect.get(runtime as object, "automaticReviewFollowUpDeliveryId");
-				return typeof id === "string";
+				if (runtime === undefined || primary.requests.length < 2) return false;
+				return typeof runtimeInternals(runtime).automaticReviewFollowUpDeliveryId === "string";
 			});
 			expect(runtime?.getStatus()).toMatchObject({ reviewFollowUpsTriggered: 1 });
 
@@ -403,9 +403,7 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 			expect(runtime.getStatus().active).toBe(false);
 			await applying;
 			expect(runtime.getStatus().epoch).toBeGreaterThan(before);
-			expect(
-				Reflect.get(runtime as object, "automaticReviewFollowUpDeliveryId") as unknown,
-			).toBeUndefined();
+			expect(runtimeInternals(runtime).automaticReviewFollowUpDeliveryId).toBeUndefined();
 
 			holdBarrier.release();
 			await waitFor(() => primary.requests.length === 3);

@@ -1,4 +1,4 @@
-import type { ExtensionContext, InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +12,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -142,9 +143,7 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			await waitFor(() => advisor.requests.length === 1 && runtime !== undefined);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const collector = Reflect.get(activeRuntime, "collector") as {
-				suppressedCalls: number;
-			};
+			const collector = runtimeInternals(activeRuntime).collector;
 			collector.suppressedCalls = 1;
 			firstAttempt.release();
 			await waitFor(() => advisor.requests.length === 2);
@@ -189,9 +188,7 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			await waitFor(() => advisor.requests.length === 1 && runtime !== undefined);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const collector = Reflect.get(activeRuntime, "collector") as {
-				suppressedCalls: number;
-			};
+			const collector = runtimeInternals(activeRuntime).collector;
 			collector.suppressedCalls = 1;
 			firstAttempt.release();
 			await waitFor(() => advisor.requests.length === 2);
@@ -372,27 +369,24 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			// Simulate advise-started immunity so the failing final attempt is not
 			// superseded by the queued evidence: Q4 supersession only aborts attempts
 			// that have not started advise.
-			const currentRun = Reflect.get(runtime as object, "currentRun") as
-				| { adviseExecutionStartedCallIds?: Set<string> }
-				| undefined;
-			currentRun?.adviseExecutionStartedCallIds?.add("test-immunity");
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			runtimeInternals(activeRuntime).currentRun?.adviseExecutionStartedCallIds.add(
+				"test-immunity",
+			);
 			await harness.session.prompt("queue evidence while the active review is failing");
-			await waitFor(
-				() =>
-					(
-						Reflect.get(runtime as object, "pendingUpdate") as { text: string } | undefined
-					)?.text.includes("QUEUED-WHILE-FAILING") === true,
+			await waitFor(() =>
+				Boolean(
+					runtimeInternals(activeRuntime).pendingUpdate?.text.includes("QUEUED-WHILE-FAILING"),
+				),
 			);
 			finalFailure.release();
 			await waitFor(
-				() =>
-					runtime?.getStatus().paused === true &&
-					Reflect.get(runtime as object, "draining") === false,
+				() => activeRuntime.getStatus().paused && !runtimeInternals(activeRuntime).draining,
 			);
-			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const activeRuntime = runtime;
-			expect(Reflect.get(activeRuntime, "pendingUpdate")).toBeUndefined();
-			expect(Reflect.get(activeRuntime, "throttledUpdate")).toBeDefined();
+			const internals = runtimeInternals(activeRuntime);
+			expect(internals.pendingUpdate).toBeUndefined();
+			expect(internals.throttledUpdate).toBeDefined();
 
 			const latest = harness.sessionManager
 				.getBranch()
@@ -407,7 +401,7 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			expect(state.queuedReview?.text).toContain("QUEUED-WHILE-FAILING");
 			expect(state.queuedReview?.turnNumber).toBe(4);
 			expect(state.lastReviewSubmittedTurn).toBe(3);
-			expect(Reflect.get(activeRuntime, "lastReviewSubmittedTurn")).toBe(3);
+			expect(internals.lastReviewSubmittedTurn).toBe(3);
 
 			await harness.session.prompt("/advisor on");
 			await waitFor(() => advisor.requests.length === 7);
@@ -451,14 +445,14 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			await harness.session.prompt("create evidence whose review crosses the soft cap");
 			await waitFor(
 				() =>
-					runtime?.getStatus().paused === true &&
-					Reflect.get(runtime as object, "draining") === false,
+					runtime !== undefined &&
+					runtime.getStatus().paused &&
+					!runtimeInternals(runtime).draining,
 			);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const stranded = Reflect.get(activeRuntime, "activeReview") as
-				| { reviewId: string; restoredReplayCount: number; text: string }
-				| undefined;
+			const internals = runtimeInternals(activeRuntime);
+			const stranded = internals.activeReview;
 			if (stranded === undefined) throw new Error("Expected a stranded active review");
 			expect(stranded.text).toContain("STRANDED-ACTIVE-EVIDENCE");
 			expect(stranded.restoredReplayCount).toBe(0);
@@ -468,20 +462,13 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			expect(JSON.stringify(advisor.requests[1]?.context.messages)).toContain(
 				"STRANDED-ACTIVE-EVIDENCE",
 			);
-			expect((Reflect.get(activeRuntime, "activeReview") as { reviewId: string }).reviewId).toBe(
-				stranded.reviewId,
-			);
+			expect(internals.activeReview?.reviewId).toBe(stranded.reviewId);
 
 			await harness.session.prompt("queue newer evidence while the claimed review resumes");
 			await waitFor(
-				() =>
-					(
-						Reflect.get(activeRuntime, "pendingUpdate") as { text: string } | undefined
-					)?.text.includes("NEWER-EVIDENCE-AFTER-UNPAUSE") === true,
+				() => internals.pendingUpdate?.text.includes("NEWER-EVIDENCE-AFTER-UNPAUSE") === true,
 			);
-			expect((Reflect.get(activeRuntime, "activeReview") as { reviewId: string }).reviewId).toBe(
-				stranded.reviewId,
-			);
+			expect(internals.activeReview?.reviewId).toBe(stranded.reviewId);
 			const whileQueued = harness.sessionManager
 				.getBranch()
 				.slice()
@@ -501,14 +488,12 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 					JSON.stringify(request.context.messages).includes("NEWER-EVIDENCE-AFTER-UNPAUSE"),
 				),
 			);
-			const newerClaim = Reflect.get(activeRuntime, "activeReview") as
-				| { reviewId: string }
-				| undefined;
+			const newerClaim = internals.activeReview;
 			expect(newerClaim?.reviewId).not.toBe(stranded.reviewId);
 			newerReview.release();
 			await waitFor(() => activeRuntime.getStatus().reviewsCompleted >= 1);
 			expect(activeRuntime.getStatus()).toMatchObject({ paused: false, backlog: false });
-			expect(Reflect.get(activeRuntime, "activeReview")).toBeUndefined();
+			expect(internals.activeReview).toBeUndefined();
 		} finally {
 			resumedReview.release();
 			newerReview.release();
@@ -584,13 +569,13 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			await harness.session.prompt("start reset-sensitive retry");
 			await waitFor(() => runtime?.getStatus().retryPending === true);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const nested = Reflect.get(runtime, "session") as {
-				steer(text: string): Promise<void>;
-				pendingMessageCount: number;
-			};
+			const internals = runtimeInternals(runtime);
+			const nested = internals.session;
+			if (nested === undefined) throw new Error("Expected nested Advisor session");
 			await nested.steer("STALE-NESTED-QUEUED-OUTPUT");
 			expect(nested.pendingMessageCount).toBe(1);
-			const ctx = Reflect.get(runtime, "hostContext") as ExtensionContext;
+			const ctx = internals.hostContext;
+			if (ctx === undefined) throw new Error("Expected Advisor host context");
 
 			await runtime.handleBranchChange(ctx);
 			await new Promise((resolve) => setTimeout(resolve, 350));

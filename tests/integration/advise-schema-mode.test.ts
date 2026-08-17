@@ -1,4 +1,4 @@
-import type { AgentSession, InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +12,7 @@ import {
 	type AdvisorConfig,
 	type AdvisorRuntime,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import { probeConstrainedSamplingSupport } from "../../src/compatibility/constrained-sampling.js";
 import {
@@ -38,8 +39,7 @@ function advisorExtension(
 }
 
 function nestedAdviseTool(runtime: AdvisorRuntime): Record<string, unknown> {
-	const session = Reflect.get(runtime, "session") as AgentSession | undefined;
-	const tool = session?.getToolDefinition("advise");
+	const tool = runtimeInternals(runtime).session?.getToolDefinition("advise");
 	if (tool === undefined) throw new Error("Expected nested advise tool");
 	return tool as unknown as Record<string, unknown>;
 }

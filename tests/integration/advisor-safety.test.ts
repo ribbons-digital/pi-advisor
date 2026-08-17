@@ -2,7 +2,6 @@ import {
 	defineTool,
 	type CustomEntry,
 	type CustomMessageEntry,
-	type ExtensionAPI,
 	type ExtensionContext,
 	type InlineExtension,
 	type SessionManager,
@@ -23,10 +22,10 @@ import {
 	DEFAULT_ADVISOR_CONFIG,
 	MAX_PENDING_ADVICE_BYTES,
 	type AcceptedAdvice,
-	type BoundedKeyedByteFifo,
 	type AdvisorConfig,
 	type AdvisorRuntime,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -258,7 +257,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			try {
 				if (runtime === undefined) throw new Error("Expected Advisor runtime");
 				const activeRuntime = runtime;
-				const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+				const extensionApi = runtimeInternals(activeRuntime).pi;
 				const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => {
 					throw new Error("scripted active delivery failure");
 				});
@@ -266,9 +265,8 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				try {
 					await adviseStarted.promise;
 					if (governorOutcome !== undefined) {
-						const currentRun = Reflect.get(activeRuntime, "currentRun") as {
-							governorFailure?: string;
-						};
+						const currentRun = runtimeInternals(activeRuntime).currentRun;
+						if (currentRun === undefined) throw new Error("Expected current Advisor run");
 						currentRun.governorFailure = governorOutcome;
 					}
 					secondExecutorTurn.release();
@@ -468,7 +466,8 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await waitFor(() => runtime?.getStatus().activeNotesPending === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const hostContext = Reflect.get(activeRuntime, "hostContext") as ExtensionContext;
+			const hostContext = runtimeInternals(activeRuntime).hostContext;
+			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 
 			harness.session.clearQueue();
 			const branchChange = activeRuntime.handleBranchChange(hostContext);
@@ -513,15 +512,9 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			};
 			const identity = adviceDedupeKey(advice);
 			const deliveryId = `direct-append:${identity}`;
+			const reviewId = "direct-append-review";
 			const branchWindow = cursorAtTail(harness.sessionManager.getBranch());
-			const activeAdvice = Reflect.get(activeRuntime, "activeAdvice") as BoundedKeyedByteFifo<{
-				advice: AcceptedAdvice;
-				stale: boolean;
-				branchWindow: { expectedIndex: number };
-				identity: string;
-				deliveryId: string;
-				epoch: number;
-			}>;
+			const activeAdvice = runtimeInternals(activeRuntime).activeAdvice;
 			expect(
 				activeAdvice.enqueue(
 					identity,
@@ -529,8 +522,11 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 						advice,
 						stale: false,
 						branchWindow,
+						displayedInEntry: false,
 						identity,
 						deliveryId,
+						reviewId,
+						turnNumber: 1,
 						epoch: activeRuntime.getStatus().epoch,
 					},
 					Buffer.byteLength(advice.note, "utf8"),
@@ -548,8 +544,10 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(activeRuntime.getStatus().notesDelivered).toBe(0);
 			harness.sessionManager.appendCustomMessageEntry("pi-advisor-note", "direct append", true, {
 				deliveryId,
+				reviewId,
 			});
-			const hostContext = Reflect.get(activeRuntime, "hostContext") as ExtensionContext;
+			const hostContext = runtimeInternals(activeRuntime).hostContext;
+			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 
 			await activeRuntime.settleActiveAdvice(hostContext);
 
@@ -712,7 +710,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		});
 		try {
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const extensionApi = Reflect.get(runtime, "pi") as ExtensionAPI;
+			const extensionApi = runtimeInternals(runtime).pi;
 			const appendEntry = vi.spyOn(extensionApi, "appendEntry").mockImplementation(() => {
 				throw new Error("TOKEN=late-card-secret-value");
 			});
@@ -775,17 +773,14 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await waitFor(() => advisor.activeRequests === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const hostContext = Reflect.get(activeRuntime, "hostContext") as ExtensionContext;
+			const hostContext = runtimeInternals(activeRuntime).hostContext;
+			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 			Reflect.set(activeRuntime, "hostContext", {
 				...hostContext,
 				hasUI: true,
 				ui: { ...hostContext.ui, notify },
 			});
-			const pendingAdvice = Reflect.get(activeRuntime, "pendingAdvice") as BoundedKeyedByteFifo<{
-				advice: AcceptedAdvice;
-				stale: boolean;
-				branchWindow: { expectedIndex: number };
-			}>;
+			const pendingAdvice = runtimeInternals(activeRuntime).pendingAdvice;
 			const seededAdvice: AcceptedAdvice = {
 				intent: "review",
 				note: "Existing queued note.",
@@ -798,7 +793,12 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(
 				pendingAdvice.enqueue(
 					"full-queue-entry",
-					{ advice: seededAdvice, stale: false, branchWindow: { expectedIndex: 0 } },
+					{
+						advice: seededAdvice,
+						stale: false,
+						branchWindow: { expectedIndex: 0 },
+						displayedInEntry: false,
+					},
 					MAX_PENDING_ADVICE_BYTES,
 				),
 			).toBe("accepted");
@@ -1223,7 +1223,8 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(JSON.stringify(harness.sessionManager.getEntries())).not.toContain(privateArgument);
 			expect(runtime?.getNestedMessageCount()).toBe(0);
 			expect(runtime?.getStatus().notesDelivered).toBe(0);
-			expect(Reflect.get(runtime as object, "currentRun")).toBeUndefined();
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			expect(runtimeInternals(runtime).currentRun).toBeUndefined();
 		} finally {
 			await harness.dispose();
 		}
@@ -1259,7 +1260,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			const turn = harness.session.prompt("trigger validated execution failure");
 			await waitFor(() => advisor.activeRequests === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const activeConfig = Reflect.get(runtime, "config") as AdvisorConfig;
+			const activeConfig = runtimeInternals(runtime).config;
 			originalMaximum = activeConfig.limits.maxAdviceCharacters;
 			Object.defineProperty(activeConfig.limits, "maxAdviceCharacters", {
 				configurable: true,
@@ -1276,11 +1277,11 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(ADVISOR_INTERNAL_EXECUTION_FAILURE).not.toContain("/advisor configure");
 			expect(ADVISOR_INTERNAL_EXECUTION_FAILURE).not.toContain(rawExecutionError);
 			expect(JSON.stringify(harness.sessionManager.getEntries())).not.toContain(rawExecutionError);
-			expect(Reflect.get(runtime, "currentRun")).toBeUndefined();
+			expect(runtimeInternals(runtime).currentRun).toBeUndefined();
 		} finally {
 			advisorBarrier.release();
 			if (runtime !== undefined && originalMaximum !== undefined) {
-				const activeConfig = Reflect.get(runtime, "config") as AdvisorConfig;
+				const activeConfig = runtimeInternals(runtime).config;
 				Object.defineProperty(activeConfig.limits, "maxAdviceCharacters", {
 					configurable: true,
 					writable: true,
@@ -1578,9 +1579,8 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				await waitFor(() => advisor.activeRequests === 1);
 				if (runtime === undefined) throw new Error("Expected Advisor runtime");
 				const activeRuntime = runtime;
-				const currentRun = Reflect.get(activeRuntime, "currentRun") as {
-					governorFailure?: string;
-				};
+				const currentRun = runtimeInternals(activeRuntime).currentRun;
+				if (currentRun === undefined) throw new Error("Expected current Advisor run");
 				currentRun.governorFailure = outcome;
 				advisorBarrier.release();
 				await waitFor(() => activeRuntime.getStatus().governorSkippedReviews === 1);
@@ -1713,36 +1713,30 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await harness.session.prompt("initialize metadata bounds");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			interface QueuedUpdate {
-				text: string;
-				window: { expectedIndex: number };
-				turnNumber: number;
-				successfulMemoryTexts: Set<string>;
-			}
-			const coalesce = Reflect.get(runtime, "coalescePending") as (
-				current: QueuedUpdate,
-				incoming: QueuedUpdate,
-			) => QueuedUpdate;
+			const internals = runtimeInternals(runtime);
 			const oldMetadata = `old-${"o".repeat(20)}`;
 			const sharedMetadata = `shared-${"s".repeat(17)}`;
 			const newMetadata = `new-${"n".repeat(20)}`;
-			const current: QueuedUpdate = {
+			const current = {
 				text: "older transcript ".repeat(10),
+				entryCount: 1,
+				truncated: false,
 				window: { expectedIndex: 1 },
 				turnNumber: 1,
 				successfulMemoryTexts: new Set([oldMetadata, sharedMetadata]),
 			};
-			const incoming: QueuedUpdate = {
+			const incoming = {
 				text: "newest transcript ".repeat(10),
+				entryCount: 1,
+				truncated: false,
 				window: { expectedIndex: 2 },
 				turnNumber: 2,
 				successfulMemoryTexts: new Set([sharedMetadata, newMetadata]),
 			};
-			const retained = coalesce.call(runtime, current, incoming);
+			const retained = internals.coalescePending(current, incoming);
 			expect([...retained.successfulMemoryTexts]).toEqual([sharedMetadata, newMetadata]);
-			Reflect.set(runtime, "pendingUpdate", retained);
-			const updateBacklogStatus = Reflect.get(runtime, "updateBacklogStatus") as () => void;
-			updateBacklogStatus.call(runtime);
+			internals.pendingUpdate = retained;
+			internals.updateBacklogStatus();
 			const retainedBytes =
 				Buffer.byteLength(retained.text, "utf8") +
 				[...retained.successfulMemoryTexts].reduce(
@@ -2132,11 +2126,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const branchBeforePrompt = harness.sessionManager.getBranch();
-			const pendingAdvice = Reflect.get(runtime, "pendingAdvice") as BoundedKeyedByteFifo<{
-				advice: AcceptedAdvice;
-				stale: boolean;
-				branchWindow: { expectedIndex: number; lastEntryId?: string };
-			}>;
+			const pendingAdvice = runtimeInternals(runtime).pendingAdvice;
 			const queued = pendingAdvice.values()[0];
 			expect(queued?.stale).toBe(false);
 			expect(

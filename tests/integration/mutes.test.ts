@@ -2,12 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-	SessionManager,
-	defineTool,
-	type ExtensionAPI,
-	type InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+import { SessionManager, defineTool, type InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 
@@ -25,6 +20,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -830,7 +826,7 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 		try {
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const extensionApi = runtimeInternals(activeRuntime).pi;
 			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => {
 				throw new Error("scripted active delivery failure");
 			});

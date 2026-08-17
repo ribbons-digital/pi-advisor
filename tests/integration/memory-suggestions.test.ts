@@ -1,7 +1,6 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	defineTool,
-	type ExtensionAPI,
 	type InlineExtension,
 	type SessionManager,
 	type ToolDefinition,
@@ -12,11 +11,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	createPiAdvisorExtension,
 	DEFAULT_ADVISOR_CONFIG,
-	type AcceptedAdvice,
-	type BoundedKeyedByteFifo,
 	type AdvisorConfig,
 	type AdvisorRuntime,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -526,9 +524,7 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 			const activeTurn = harness.session.prompt("start active Memory delivery");
 			await waitFor(() => runtime?.getStatus().activeNotesPending === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const activeQueue = Reflect.get(runtime, "activeAdvice") as BoundedKeyedByteFifo<{
-				advice: AcceptedAdvice;
-			}>;
+			const activeQueue = runtimeInternals(runtime).activeAdvice;
 			expect(activeQueue.totalBytes).toBe(
 				Buffer.byteLength(memoryRationale, "utf8") + Buffer.byteLength(proposed, "utf8"),
 			);
@@ -675,7 +671,7 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 			const activeTurn = harness.session.prompt("start active capability-loss delivery");
 			await waitFor(() => advisor.activeRequests === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const extensionApi = Reflect.get(runtime, "pi") as ExtensionAPI;
+			const extensionApi = runtimeInternals(runtime).pi;
 			extensionApi.setActiveTools(["hold"]);
 			advisorBarrier.release();
 			await waitFor(() => runtime?.getStatus().activeNotesPending === 1);
@@ -712,9 +708,8 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 			await harness.session.prompt("govern the Memory suggestion update");
 			await waitFor(() => advisor.activeRequests === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const currentRun = Reflect.get(runtime, "currentRun") as {
-				governorFailure?: string;
-			};
+			const currentRun = runtimeInternals(runtime).currentRun;
+			if (currentRun === undefined) throw new Error("Expected current Advisor run");
 			currentRun.governorFailure = "Advisor tool-call limit reached";
 			advisorBarrier.release();
 			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 1);
@@ -1364,7 +1359,7 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 			await harness.session.prompt("queue before capability loss");
 			await waitFor(() => advisor.activeRequests === 1);
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
-			const extensionApi = Reflect.get(runtime, "pi") as ExtensionAPI;
+			const extensionApi = runtimeInternals(runtime).pi;
 			extensionApi.setActiveTools([]);
 			advisorBarrier.release();
 			await waitFor(() => runtime?.getStatus().deferredNotesPending === 1);

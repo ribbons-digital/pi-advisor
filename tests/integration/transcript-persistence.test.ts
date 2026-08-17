@@ -249,7 +249,8 @@ describe.sequential("local redacted activity records", () => {
 					entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
 					typeof entry.data === "object" &&
 					entry.data !== null &&
-					Reflect.get(entry.data, "kind") === "tool-attempt"
+					"kind" in entry.data &&
+					entry.data.kind === "tool-attempt"
 						? [entry.data as Record<string, unknown>]
 						: [],
 				)[0];

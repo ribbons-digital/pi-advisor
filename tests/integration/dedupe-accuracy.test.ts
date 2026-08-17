@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 
 import {
 	SessionManager,
-	type ExtensionAPI,
 	type ExtensionContext,
 	type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
@@ -18,9 +17,9 @@ import {
 	noteSignature,
 	type AdvisorConfig,
 	type AdvisorRuntime,
-	type BoundedAdviceDedupe,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -364,7 +363,7 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 			await harness.session.prompt("review two");
 			await waitFor(() => activeRuntime.getStatus().reviewsCompleted === 2);
 
-			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const extensionApi = runtimeInternals(activeRuntime).pi;
 			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => {
 				throw new Error("scripted tagged delivery failure");
 			});
@@ -376,7 +375,7 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 				consecutiveFailures: 1,
 			});
 
-			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			const dedupe = runtimeInternals(activeRuntime).adviceDedupe;
 			const findingHash = createHash("sha256")
 				.update(`review-finding:${ROLLBACK_KEY}`)
 				.digest("hex");
@@ -505,32 +504,25 @@ describe("Quality Slice Q5 dedupe snapshot tag guard", () => {
 		try {
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const extensionApi = runtimeInternals(activeRuntime).pi;
 			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => undefined);
 			await harness.session.prompt("activate for live persist");
 
-			const hostContext = Reflect.get(activeRuntime, "hostContext") as ExtensionContext;
+			const hostContext = runtimeInternals(activeRuntime).hostContext;
+			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 			const ctx = {
 				mode: "rpc",
 				signal: hostContext.signal,
 				isIdle: () => false,
 				sessionManager: hostContext.sessionManager,
 			} as unknown as ExtensionContext;
-			const deliver = Reflect.get(activeRuntime, "deliver") as (
-				advice: unknown,
-				context: ExtensionContext,
-				stale: boolean,
-				newerInstructionInput: boolean,
-				forceDeferred: boolean,
-				turnNumber: number,
-				reviewId: string,
-			) => "active" | "deferred" | undefined;
+			const internals = runtimeInternals(activeRuntime);
 
 			const fillNote = "Persist note " + "y".repeat(300);
 			const seededSignature = (~noteSignature(fillNote) & 0xffffffffffffffffn)
 				.toString(16)
 				.padStart(16, "0");
-			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			const dedupe = runtimeInternals(activeRuntime).adviceDedupe;
 			dedupe.restoreEntries([
 				{
 					hash: adviceDedupeKey({
@@ -556,19 +548,10 @@ describe("Quality Slice Q5 dedupe snapshot tag guard", () => {
 				originalEstimatedTokens: Math.ceil(fillNote.length / 4),
 				createdAt: Date.now(),
 			};
-			const result = deliver.call(
-				activeRuntime,
-				advice,
-				ctx,
-				false,
-				false,
-				false,
-				1,
-				"persist-guard",
-			);
+			const result = internals.deliver(advice, ctx, false, false, false, 1, "persist-guard");
 			expect(result).toBe("active");
 
-			(Reflect.get(activeRuntime, "persistState") as () => void).call(activeRuntime);
+			runtimeInternals(activeRuntime).persistState();
 			const persisted = latestRuntimeState(harness.sessionManager);
 			const persistedDelivery = persisted?.activeDeliveries.find(
 				(delivery) => delivery.identity === adviceDedupeKey(advice),
@@ -598,7 +581,7 @@ describe("Quality Slice Q5 dedupe active-delivery byte bound", () => {
 		try {
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");
 			const activeRuntime = runtime;
-			const extensionApi = Reflect.get(activeRuntime, "pi") as ExtensionAPI;
+			const extensionApi = runtimeInternals(activeRuntime).pi;
 			const sendMessage = vi.spyOn(extensionApi, "sendMessage").mockImplementation(() => undefined);
 			await harness.session.prompt("fill active delivery queue");
 
@@ -610,7 +593,7 @@ describe("Quality Slice Q5 dedupe active-delivery byte bound", () => {
 			const seededSignature = (~noteSignature(fillNote) & 0xffffffffffffffffn)
 				.toString(16)
 				.padStart(16, "0");
-			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			const dedupe = runtimeInternals(activeRuntime).adviceDedupe;
 			const seededKeys = Array.from({ length: 700 }, (_, index) => ({
 				hash: adviceDedupeKey({
 					note: fillNote,
@@ -628,22 +611,15 @@ describe("Quality Slice Q5 dedupe active-delivery byte bound", () => {
 
 			// A fabricated non-idle context keeps every fill on the active steering path
 			// so the serialized active-delivery byte bound is exercised.
-			const hostContext = Reflect.get(activeRuntime, "hostContext") as ExtensionContext;
+			const hostContext = runtimeInternals(activeRuntime).hostContext;
+			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 			const ctx = {
 				mode: "rpc",
 				signal: hostContext.signal,
 				isIdle: () => false,
 				sessionManager: hostContext.sessionManager,
 			} as unknown as ExtensionContext;
-			const deliver = Reflect.get(activeRuntime, "deliver") as (
-				advice: unknown,
-				context: ExtensionContext,
-				stale: boolean,
-				newerInstructionInput: boolean,
-				forceDeferred: boolean,
-				turnNumber: number,
-				reviewId: string,
-			) => "active" | "deferred" | undefined;
+			const internals = runtimeInternals(activeRuntime);
 			let suppressed = false;
 			let threw: unknown;
 			for (
@@ -662,16 +638,7 @@ describe("Quality Slice Q5 dedupe active-delivery byte bound", () => {
 					createdAt: Date.now(),
 				};
 				try {
-					const result = deliver.call(
-						activeRuntime,
-						advice,
-						ctx,
-						false,
-						false,
-						false,
-						1,
-						"byte-bound-fill",
-					);
+					const result = internals.deliver(advice, ctx, false, false, false, 1, "byte-bound-fill");
 					if (result === undefined) suppressed = true;
 				} catch (error) {
 					threw = error;
@@ -680,9 +647,7 @@ describe("Quality Slice Q5 dedupe active-delivery byte bound", () => {
 			expect(threw).toBeUndefined();
 			expect(suppressed).toBe(true);
 			expect(activeRuntime.getStatus().deliveryFailures).toBe(0);
-			expect(() =>
-				(Reflect.get(activeRuntime, "persistState") as () => void).call(activeRuntime),
-			).not.toThrow();
+			expect(() => runtimeInternals(activeRuntime).persistState()).not.toThrow();
 			sendMessage.mockRestore();
 		} finally {
 			await harness.dispose();
