@@ -10,6 +10,7 @@ import {
 	SessionManager,
 	SettingsManager,
 	type AgentSession,
+	type CreateAgentSessionOptions,
 	type InlineExtension,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -76,22 +77,25 @@ export async function createSessionHarness(
 			compaction: { enabled: false },
 			retry: { enabled: false },
 		});
-		const resourceLoader = new DefaultResourceLoader({
+		const resourceLoaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = {
 			cwd,
 			agentDir,
 			settingsManager,
-			...(options.extensions === undefined ? {} : { extensionFactories: options.extensions }),
 			noSkills: true,
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
 			systemPromptOverride: () => "Scripted Pi Advisor test session.",
 			appendSystemPromptOverride: () => [],
-		});
+		};
+		if (options.extensions !== undefined) {
+			resourceLoaderOptions.extensionFactories = options.extensions;
+		}
+		const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
 		await resourceLoader.reload();
 
 		const sessionManager = options.sessionManager ?? SessionManager.inMemory(cwd);
-		({ session } = await createAgentSession({
+		const sessionOptions: CreateAgentSessionOptions = {
 			cwd,
 			agentDir,
 			modelRuntime,
@@ -100,9 +104,10 @@ export async function createSessionHarness(
 			resourceLoader,
 			sessionManager,
 			settingsManager,
-			...(options.customTools === undefined ? {} : { customTools: options.customTools }),
-			...(options.tools === undefined ? {} : { tools: options.tools }),
-		}));
+		};
+		if (options.customTools !== undefined) sessionOptions.customTools = options.customTools;
+		if (options.tools !== undefined) sessionOptions.tools = options.tools;
+		({ session } = await createAgentSession(sessionOptions));
 		await session.bindExtensions({ mode: options.mode ?? "json" });
 
 		let disposed = false;

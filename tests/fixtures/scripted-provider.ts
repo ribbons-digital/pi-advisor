@@ -66,43 +66,47 @@ export function registerScriptedProvider(
 	provider: ScriptedProvider,
 	options: ScriptedProviderRegistrationOptions = {},
 ): void {
-	modelRuntime.registerProvider(provider.model.provider, {
-		...(options.name === undefined ? {} : { name: options.name }),
+	type ProviderConfig = Parameters<ModelRuntime["registerProvider"]>[1];
+	type ProviderModel = NonNullable<ProviderConfig["models"]>[number];
+	const model: ProviderModel = {
+		id: provider.model.id,
+		name: provider.model.name,
+		api: provider.model.api,
+		baseUrl: provider.model.baseUrl,
+		reasoning: provider.model.reasoning,
+		input: provider.model.input,
+		cost: provider.model.cost,
+		contextWindow: provider.model.contextWindow,
+		maxTokens: provider.model.maxTokens,
+	};
+	if (options.modelHeaders !== undefined) model.headers = options.modelHeaders;
+	const config: ProviderConfig = {
 		baseUrl: provider.model.baseUrl,
 		api: provider.model.api,
-		...(options.providerHeaders === undefined ? {} : { headers: options.providerHeaders }),
 		streamSimple: provider.streamSimple,
-		models: [
-			{
-				id: provider.model.id,
-				name: provider.model.name,
-				api: provider.model.api,
-				baseUrl: provider.model.baseUrl,
-				reasoning: provider.model.reasoning,
-				input: provider.model.input,
-				cost: provider.model.cost,
-				contextWindow: provider.model.contextWindow,
-				maxTokens: provider.model.maxTokens,
-				...(options.modelHeaders === undefined ? {} : { headers: options.modelHeaders }),
-			},
-		],
-	});
+		models: [model],
+	};
+	if (options.name !== undefined) config.name = options.name;
+	if (options.providerHeaders !== undefined) config.headers = options.providerHeaders;
+	modelRuntime.registerProvider(provider.model.provider, config);
 }
 
 function copyContext(context: Context): Context {
-	return {
-		...(context.systemPrompt === undefined ? {} : { systemPrompt: context.systemPrompt }),
-		messages: structuredClone(context.messages),
-		...(context.tools === undefined
-			? {}
+	const copied: Context =
+		context.systemPrompt === undefined
+			? { messages: structuredClone(context.messages) }
 			: {
-					tools: context.tools.map((tool) => ({
-						name: tool.name,
-						description: tool.description,
-						parameters: JSON.parse(JSON.stringify(tool.parameters)) as typeof tool.parameters,
-					})),
-				}),
-	};
+					systemPrompt: context.systemPrompt,
+					messages: structuredClone(context.messages),
+				};
+	if (context.tools !== undefined) {
+		copied.tools = context.tools.map((tool) => ({
+			name: tool.name,
+			description: tool.description,
+			parameters: JSON.parse(JSON.stringify(tool.parameters)) as typeof tool.parameters,
+		}));
+	}
+	return copied;
 }
 
 function toUsage(scripted: ScriptedUsage | undefined): Usage {
@@ -170,10 +174,11 @@ export class ScriptedProvider {
 	private responseIndex = 0;
 
 	constructor(options: ScriptedProviderOptions) {
-		this.responses = options.responses.map((response) => ({
-			...response,
-			...(response.content === undefined ? {} : { content: structuredClone(response.content) }),
-		}));
+		this.responses = options.responses.map((response) => {
+			const copied: ScriptedResponse = { ...response };
+			if (response.content !== undefined) copied.content = structuredClone(response.content);
+			return copied;
+		});
 		this.model = {
 			id: options.modelId,
 			name: options.modelId,
