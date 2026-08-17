@@ -656,8 +656,9 @@ export function parsePersistedAdvisorRuntimeState(
 		) {
 			return undefined;
 		}
+		const current = structuredClone(value) as Record<string, unknown>;
 		return {
-			...(structuredClone(value) as unknown as Omit<
+			...(current as Omit<
 				PersistedAdvisorRuntimeState,
 				"version" | "dedupeHashes" | "recentFindings"
 			>),
@@ -674,7 +675,7 @@ export function parsePersistedAdvisorRuntimeState(
 	}
 	const migrated = structuredClone(value) as Record<string, unknown>;
 	return {
-		...(migrated as unknown as Omit<
+		...(migrated as Omit<
 			PersistedAdvisorRuntimeState,
 			"version" | "activeDeliveries" | "dedupeHashes" | "recentFindings"
 		>),

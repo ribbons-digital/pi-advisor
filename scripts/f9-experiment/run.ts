@@ -346,7 +346,15 @@ async function registerUserProviderExtensions(
 		console.warn(
 			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
 		);
-		const adapter = {
+		function providerRegistrationApi(api: {
+			registerProvider(registeredProviderId: string, config: unknown): void;
+			registerCommand(): void;
+			on(): void;
+		}): ExtensionAPI;
+		function providerRegistrationApi(api: ExtensionAPI | object): ExtensionAPI | object {
+			return api;
+		}
+		const adapter = providerRegistrationApi({
 			registerProvider: (registeredProviderId: string, config: unknown) => {
 				modelRuntime.registerProvider(
 					registeredProviderId,
@@ -359,7 +367,7 @@ async function registerUserProviderExtensions(
 			on: () => {
 				// Event hooks are irrelevant to provider registration.
 			},
-		} as unknown as ExtensionAPI;
+		});
 		await Promise.resolve(module.default(adapter));
 		return [providerId];
 	} catch (error) {

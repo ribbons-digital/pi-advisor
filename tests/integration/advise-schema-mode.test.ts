@@ -1,4 +1,4 @@
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -38,10 +38,10 @@ function advisorExtension(
 	};
 }
 
-function nestedAdviseTool(runtime: AdvisorRuntime): Record<string, unknown> {
+function nestedAdviseTool(runtime: AdvisorRuntime): ToolDefinition {
 	const tool = runtimeInternals(runtime).session?.getToolDefinition("advise");
 	if (tool === undefined) throw new Error("Expected nested advise tool");
-	return tool as unknown as Record<string, unknown>;
+	return tool;
 }
 
 const runtimeSupportsConstrainedSampling = await probeConstrainedSamplingSupport();
