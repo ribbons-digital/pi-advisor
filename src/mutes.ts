@@ -109,7 +109,7 @@ export function isHexPrefix(value: string): boolean {
 	);
 }
 
-function isRecentFinding(value: unknown): value is RecentFinding {
+function isRecentFinding<T>(value: T): value is T & RecentFinding {
 	if (typeof value !== "object" || value === null) return false;
 	const entry = value as Record<string, unknown>;
 	return (
@@ -181,7 +181,7 @@ export class RecentFindingsIndex {
 	}
 }
 
-function isMutesFileEntry(value: unknown): value is { id: string; label: string } {
+function isMutesFileEntry<T>(value: T): value is T & { id: string; label: string } {
 	if (typeof value !== "object" || value === null) return false;
 	const entry = value as Record<string, unknown>;
 	return (
@@ -196,10 +196,13 @@ function isMutesFileEntry(value: unknown): value is { id: string; label: string 
 	);
 }
 
-function isMutesDocument(value: unknown): value is { id: string; label: string }[] {
+function isMutesDocument<T>(value: T): value is T & { id: string; label: string }[] {
 	if (!Array.isArray(value) || value.length > MAX_MUTE_ENTRIES) return false;
-	if (!value.every(isMutesFileEntry)) return false;
-	return new Set(value.map((entry) => entry.id)).size === value.length;
+	// SAFETY: Array.isArray(value) already established an array; this only
+	// prevents the array from widening to any[] for the remaining checks.
+	const entries = value as unknown[];
+	if (!entries.every((entry) => isMutesFileEntry(entry))) return false;
+	return new Set(entries.map((entry) => entry.id)).size === entries.length;
 }
 
 /**
