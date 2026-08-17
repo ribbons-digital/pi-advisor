@@ -38,10 +38,22 @@ function advisorExtension(
 	};
 }
 
-function nestedAdviseTool(runtime: AdvisorRuntime): Record<string, unknown> {
+interface InspectedAdviseTool {
+	parameters: unknown;
+	constrainedSampling?: unknown;
+}
+
+function inspectAdviseTool(tool: InspectedAdviseTool): InspectedAdviseTool;
+function inspectAdviseTool(
+	tool: InspectedAdviseTool | { name?: string },
+): InspectedAdviseTool | { name?: string } {
+	return tool;
+}
+
+function nestedAdviseTool(runtime: AdvisorRuntime): InspectedAdviseTool {
 	const tool = runtimeInternals(runtime).session?.getToolDefinition("advise");
 	if (tool === undefined) throw new Error("Expected nested advise tool");
-	return tool as unknown as Record<string, unknown>;
+	return inspectAdviseTool(tool);
 }
 
 const runtimeSupportsConstrainedSampling = await probeConstrainedSamplingSupport();

@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 
-import {
-	SessionManager,
-	type ExtensionContext,
-	type InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+import { SessionManager, type InlineExtension } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -511,11 +507,10 @@ describe("Quality Slice Q5 dedupe snapshot tag guard", () => {
 			const hostContext = runtimeInternals(activeRuntime).hostContext;
 			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 			const ctx = {
-				mode: "rpc",
-				signal: hostContext.signal,
+				...hostContext,
+				mode: "rpc" as const,
 				isIdle: () => false,
-				sessionManager: hostContext.sessionManager,
-			} as unknown as ExtensionContext;
+			};
 			const internals = runtimeInternals(activeRuntime);
 
 			const fillNote = "Persist note " + "y".repeat(300);
@@ -614,11 +609,10 @@ describe("Quality Slice Q5 dedupe active-delivery byte bound", () => {
 			const hostContext = runtimeInternals(activeRuntime).hostContext;
 			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 			const ctx = {
-				mode: "rpc",
-				signal: hostContext.signal,
+				...hostContext,
+				mode: "rpc" as const,
 				isIdle: () => false,
-				sessionManager: hostContext.sessionManager,
-			} as unknown as ExtensionContext;
+			};
 			const internals = runtimeInternals(activeRuntime);
 			let suppressed = false;
 			let threw: unknown;

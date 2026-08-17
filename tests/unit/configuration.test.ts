@@ -17,6 +17,7 @@ import {
 	mergeProjectConfiguration,
 	normalizeAdvisorConfig,
 	type AdvisorConfig,
+	type AdvisorRuntime,
 	pickAdvisorInteractiveConfiguration,
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
@@ -40,6 +41,36 @@ async function fixture() {
 afterEach(async () => {
 	await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+type CommandUiStub = Partial<{
+	select: ExtensionCommandContext["ui"]["select"];
+	custom: ExtensionCommandContext["ui"]["custom"];
+	editor: ExtensionCommandContext["ui"]["editor"];
+	confirm: ExtensionCommandContext["ui"]["confirm"];
+	notify: ExtensionCommandContext["ui"]["notify"];
+}>;
+
+interface CommandContextStub {
+	hasUI: boolean;
+	cwd?: string;
+	isProjectTrusted?: () => boolean;
+	modelRegistry?: { getAvailable: () => readonly unknown[] };
+	ui: CommandUiStub;
+}
+
+function commandUi(ui: CommandUiStub): ExtensionCommandContext["ui"] {
+	return ui as ExtensionCommandContext["ui"];
+}
+
+function commandContext(ctx: CommandContextStub): ExtensionCommandContext {
+	return ctx as ExtensionCommandContext;
+}
+
+function configureRuntime(
+	applyConfiguration: AdvisorRuntime["applyConfiguration"],
+): AdvisorRuntime {
+	return { applyConfiguration } as AdvisorRuntime;
+}
 
 function availableModel(
 	provider: string,
@@ -82,7 +113,7 @@ describe("WATCHDOG configuration", () => {
 					}),
 				],
 			} as ExtensionCommandContext["modelRegistry"],
-			ui: { select, notify: vi.fn() } as unknown as ExtensionCommandContext["ui"],
+			ui: commandUi({ select, notify: vi.fn() }),
 		});
 		expect(result).toEqual({ model: "alpha/model-a", effort: "max" });
 		expect(select.mock.calls[0]?.[1]).toEqual(["alpha/model-a", "zeta/model-z"]);
@@ -99,7 +130,7 @@ describe("WATCHDOG configuration", () => {
 			modelRegistry: {
 				getAvailable: () => [availableModel("alpha", "plain", { reasoning: false })],
 			} as ExtensionCommandContext["modelRegistry"],
-			ui: { select, notify: vi.fn() } as unknown as ExtensionCommandContext["ui"],
+			ui: commandUi({ select, notify: vi.fn() }),
 		});
 		expect(result).toEqual({ model: "alpha/plain", effort: "off" });
 		expect(select.mock.calls[1]?.[1]).toEqual(["off"]);
@@ -118,7 +149,7 @@ describe("WATCHDOG configuration", () => {
 				modelRegistry: {
 					getAvailable: () => [availableModel("alpha", "model-a")],
 				} as ExtensionCommandContext["modelRegistry"],
-				ui: { select, notify } as unknown as ExtensionCommandContext["ui"],
+				ui: commandUi({ select, notify }),
 			},
 			{ model: "other/old", effort: "high" },
 		);
@@ -143,7 +174,7 @@ describe("WATCHDOG configuration", () => {
 						availableModel("alpha", "model-a", { thinkingLevelMap: { high: null } }),
 					],
 				} as ExtensionCommandContext["modelRegistry"],
-				ui: { select, notify } as unknown as ExtensionCommandContext["ui"],
+				ui: commandUi({ select, notify }),
 			},
 			{ model: "other/old", effort: "high" },
 		);
@@ -160,7 +191,7 @@ describe("WATCHDOG configuration", () => {
 			{
 				mode: "tui",
 				modelRegistry: { getAvailable: () => [model] } as ExtensionCommandContext["modelRegistry"],
-				ui: { custom, select, notify: vi.fn() } as unknown as ExtensionCommandContext["ui"],
+				ui: commandUi({ custom, select, notify: vi.fn() }),
 			},
 			{ model: "alpha/model-a", effort: "high" },
 		);
@@ -173,11 +204,11 @@ describe("WATCHDOG configuration", () => {
 			await pickAdvisorModelAndEffort({
 				mode: "tui",
 				modelRegistry: { getAvailable: () => [model] } as ExtensionCommandContext["modelRegistry"],
-				ui: {
+				ui: commandUi({
 					custom: cancelModel,
 					select,
 					notify: vi.fn(),
-				} as unknown as ExtensionCommandContext["ui"],
+				}),
 			}),
 		).toBeUndefined();
 		const cancelEffort = vi
@@ -188,7 +219,7 @@ describe("WATCHDOG configuration", () => {
 			await pickAdvisorModelAndEffort({
 				mode: "rpc",
 				modelRegistry: { getAvailable: () => [model] } as ExtensionCommandContext["modelRegistry"],
-				ui: { select: cancelEffort, notify: vi.fn() } as unknown as ExtensionCommandContext["ui"],
+				ui: commandUi({ select: cancelEffort, notify: vi.fn() }),
 			}),
 		).toBeUndefined();
 	});
@@ -199,10 +230,7 @@ describe("WATCHDOG configuration", () => {
 			.mockResolvedValueOnce("[x] grep - search file contents")
 			.mockResolvedValueOnce("[ ] ls - list directories")
 			.mockResolvedValueOnce("Done - use 3 read-only tools");
-		const tools = await pickAdvisorTools(
-			{ ui: { select } as unknown as ExtensionCommandContext["ui"] },
-			["read", "grep", "find"],
-		);
+		const tools = await pickAdvisorTools({ ui: commandUi({ select }) }, ["read", "grep", "find"]);
 		expect(tools).toEqual(["read", "find", "ls"]);
 		expect(
 			select.mock.calls.flatMap((call) => call[1]).some((choice) => choice.includes("bash")),
@@ -227,7 +255,7 @@ describe("WATCHDOG configuration", () => {
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
-				ui: { select, editor, notify: vi.fn() } as unknown as ExtensionCommandContext["ui"],
+				ui: commandUi({ select, editor, notify: vi.fn() }),
 			},
 			structuredClone(DEFAULT_ADVISOR_CONFIG),
 		);
@@ -265,11 +293,11 @@ describe("WATCHDOG configuration", () => {
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
-				ui: {
+				ui: commandUi({
 					select,
 					editor: vi.fn().mockResolvedValue(" \n\t "),
 					notify: vi.fn(),
-				} as unknown as ExtensionCommandContext["ui"],
+				}),
 			},
 			structuredClone(DEFAULT_ADVISOR_CONFIG),
 		);
@@ -294,7 +322,7 @@ describe("WATCHDOG configuration", () => {
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
-				ui: { custom, select, editor, notify: vi.fn() } as unknown as ExtensionCommandContext["ui"],
+				ui: commandUi({ custom, select, editor, notify: vi.fn() }),
 			},
 			structuredClone(DEFAULT_ADVISOR_CONFIG),
 		);
@@ -332,7 +360,7 @@ describe("WATCHDOG configuration", () => {
 					modelRegistry: {
 						getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 					} as ExtensionCommandContext["modelRegistry"],
-					ui: { select, editor, notify: vi.fn() } as unknown as ExtensionCommandContext["ui"],
+					ui: commandUi({ select, editor, notify: vi.fn() }),
 				},
 				current,
 			);
@@ -370,24 +398,24 @@ describe("WATCHDOG configuration", () => {
 		const notify = vi.fn();
 		const confirm = vi.fn().mockResolvedValue(true);
 		const applyConfiguration = vi.fn().mockResolvedValue(undefined);
-		const ctx = {
+		const ctx = commandContext({
 			hasUI: true,
 			cwd,
 			isProjectTrusted: () => false,
 			modelRegistry: {
 				getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 			},
-			ui: {
+			ui: commandUi({
 				select,
 				editor: vi.fn().mockResolvedValue("Review public API compatibility."),
 				confirm,
 				notify,
-			},
-		} as unknown as ExtensionCommandContext;
+			}),
+		});
 		try {
 			await configureAdvisor(
 				ctx,
-				{ applyConfiguration } as unknown as Parameters<typeof configureAdvisor>[1],
+				configureRuntime(applyConfiguration),
 				structuredClone(DEFAULT_ADVISOR_CONFIG),
 			);
 			const saved = await readFile(join(agentDir, "WATCHDOG.yml"), "utf8");
@@ -433,19 +461,19 @@ describe("WATCHDOG configuration", () => {
 		const editor = vi.fn();
 		const confirm = vi.fn().mockResolvedValue(true);
 		const applyConfiguration = vi.fn().mockResolvedValue(undefined);
-		const ctx = {
+		const ctx = commandContext({
 			hasUI: true,
 			cwd,
 			isProjectTrusted: () => false,
 			modelRegistry: {
 				getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 			},
-			ui: { select, editor, confirm, notify: vi.fn() },
-		} as unknown as ExtensionCommandContext;
+			ui: commandUi({ select, editor, confirm, notify: vi.fn() }),
+		});
 		try {
 			await configureAdvisor(
 				ctx,
-				{ applyConfiguration } as unknown as Parameters<typeof configureAdvisor>[1],
+				configureRuntime(applyConfiguration),
 				structuredClone(DEFAULT_ADVISOR_CONFIG),
 			);
 			const saved = await readFile(join(agentDir, "WATCHDOG.yml"), "utf8");
@@ -530,18 +558,18 @@ describe("WATCHDOG configuration", () => {
 				const editor = vi.fn().mockResolvedValue(scenario.editorResult);
 				const confirm = vi.fn().mockResolvedValue(scenario.confirmResult);
 				const applyConfiguration = vi.fn().mockResolvedValue(undefined);
-				const ctx = {
+				const ctx = commandContext({
 					hasUI: true,
 					cwd,
 					isProjectTrusted: () => false,
 					modelRegistry: {
 						getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 					},
-					ui: { select, editor, confirm, notify: vi.fn() },
-				} as unknown as ExtensionCommandContext;
+					ui: commandUi({ select, editor, confirm, notify: vi.fn() }),
+				});
 				await configureAdvisor(
 					ctx,
-					{ applyConfiguration } as unknown as Parameters<typeof configureAdvisor>[1],
+					configureRuntime(applyConfiguration),
 					structuredClone(DEFAULT_ADVISOR_CONFIG),
 				);
 				expect(await readFile(path, "utf8"), scenario.name).toBe(priorYaml);
@@ -1270,10 +1298,10 @@ describe("Quality Slice Q5 dedupe configuration", () => {
 describe("Quality Slice Q6 batched configuration warnings (F14)", () => {
 	it("publishes one combined notify with one line per warning", () => {
 		const notify = vi.fn();
-		const ctx = {
+		const ctx = commandContext({
 			hasUI: true,
-			ui: { notify },
-		} as unknown as ExtensionCommandContext;
+			ui: commandUi({ notify }),
+		});
 		publishConfigurationWarnings(ctx, [
 			{ source: "user", path: "~/.pi/agent/WATCHDOG.yml", message: "first warning" },
 			{ source: "project", path: ".pi/WATCHDOG.yml", message: "second warning" },
@@ -1285,13 +1313,13 @@ describe("Quality Slice Q6 batched configuration warnings (F14)", () => {
 
 	it("stays silent without a UI and without warnings", () => {
 		const notify = vi.fn();
-		const ctx = {
+		const ctx = commandContext({
 			hasUI: false,
-			ui: { notify },
-		} as unknown as ExtensionCommandContext;
+			ui: commandUi({ notify }),
+		});
 		publishConfigurationWarnings(ctx, [{ source: "user", path: "x", message: "ignored" }]);
 		expect(notify).not.toHaveBeenCalled();
-		const withUi = { hasUI: true, ui: { notify } } as unknown as ExtensionCommandContext;
+		const withUi = commandContext({ hasUI: true, ui: commandUi({ notify }) });
 		publishConfigurationWarnings(withUi, []);
 		expect(notify).not.toHaveBeenCalled();
 	});
@@ -1310,7 +1338,7 @@ describe("Quality Slice Q6 configure menu model gate (F12)", () => {
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
-				ui: { select, editor: vi.fn(), notify } as unknown as ExtensionCommandContext["ui"],
+				ui: commandUi({ select, editor: vi.fn(), notify }),
 			},
 			structuredClone(DEFAULT_ADVISOR_CONFIG),
 		);
@@ -1335,11 +1363,11 @@ describe("Quality Slice Q6 configure menu model gate (F12)", () => {
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
-				ui: {
+				ui: commandUi({
 					select,
 					editor: vi.fn(),
 					notify: vi.fn(),
-				} as unknown as ExtensionCommandContext["ui"],
+				}),
 			},
 			structuredClone(DEFAULT_ADVISOR_CONFIG),
 		);

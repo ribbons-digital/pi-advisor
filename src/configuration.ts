@@ -822,7 +822,7 @@ export async function loadAdvisorConfiguration(options: {
 			if (text !== undefined) {
 				const parsed = parseYamlDocument(text, "project", paths.projectYaml, warnings);
 				if (parsed !== undefined) {
-					project = parsed.known as unknown as AdvisorProjectConfig;
+					project = parsed.known as AdvisorProjectConfig;
 					projectInstructions = boundInstructions(
 						project.instructions ?? "",
 						"project",
