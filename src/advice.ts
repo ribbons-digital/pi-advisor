@@ -880,7 +880,7 @@ function selectedOwnValue(
 	input: Readonly<Record<string, unknown>>,
 	key: string,
 	fallback: unknown,
-): unknown {
+) {
 	return Object.hasOwn(input, key) ? input[key] : fallback;
 }
 
@@ -911,7 +911,7 @@ function isStrictSemanticArguments(input: Readonly<Record<string, unknown>>): bo
 	);
 }
 
-function prepareStrictAdviseArguments(raw: unknown): unknown {
+function prepareStrictAdviseArguments(raw: unknown) {
 	if (!isObjectRecord(raw)) {
 		throw new Error("Advise arguments did not match the internal schema");
 	}

@@ -53,7 +53,7 @@ describe("constrained-sampling runtime probe", () => {
 	});
 
 	it.each([
-		["missing export", () => Promise.resolve({ other: () => true })],
+		["missing export", () => Promise.resolve({})],
 		["non-function export", () => Promise.resolve({ resolveJsonSchemaStrictSampling: true })],
 		["module resolution rejection", () => Promise.reject(new Error("not found"))],
 		[

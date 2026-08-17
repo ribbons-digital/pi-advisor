@@ -1,19 +1,24 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 export type AdviseSchemaMode = "strict" | "portable";
-export type ConstrainedSamplingImporter = () => Promise<unknown>;
+export interface ConstrainedSamplingModule {
+	readonly resolveJsonSchemaStrictSampling?: unknown;
+}
+export type ConstrainedSamplingImporter = () => Promise<ConstrainedSamplingModule>;
 export type ConstrainedSamplingProbe = () => Promise<boolean>;
 
 const CONSTRAINED_SAMPLING_MODULE = "@earendil-works/pi-ai/api/constrained-sampling";
 
-const defaultImporter: ConstrainedSamplingImporter = async () =>
-	import(CONSTRAINED_SAMPLING_MODULE);
+const defaultImporter: ConstrainedSamplingImporter = async () => {
+	// SAFETY: this optional Pi subpath is untyped; the probe only checks whether
+	// resolveJsonSchemaStrictSampling is a function.
+	return (await import(CONSTRAINED_SAMPLING_MODULE)) as ConstrainedSamplingModule;
+};
 
 const probeCache = new WeakMap<ConstrainedSamplingImporter, Promise<boolean>>();
 
-function hasStrictSamplingResolver(module: unknown): boolean {
-	if (module === null || typeof module !== "object") return false;
-	return typeof (module as Record<string, unknown>).resolveJsonSchemaStrictSampling === "function";
+function hasStrictSamplingResolver(module: ConstrainedSamplingModule): boolean {
+	return typeof module.resolveJsonSchemaStrictSampling === "function";
 }
 
 /**

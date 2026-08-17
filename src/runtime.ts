@@ -630,10 +630,23 @@ function boundedPersistedValue(value: unknown, maximumBytes = 64 * 1_024): strin
 	);
 }
 
-function redactDiagnosticValue(value: unknown): unknown {
+type RedactedDiagnostic =
+	| string
+	| number
+	| boolean
+	| null
+	| readonly RedactedDiagnostic[]
+	| { readonly [key: string]: RedactedDiagnostic };
+
+function redactDiagnosticValue(value: unknown): RedactedDiagnostic {
 	if (typeof value === "string") return redactSecrets(value).text;
 	if (Array.isArray(value)) return value.map((item) => redactDiagnosticValue(item));
-	if (typeof value !== "object" || value === null) return value;
+	if (value === null) return null;
+	if (typeof value !== "object") {
+		if (typeof value === "number") return value;
+		if (value === true || value === false) return value;
+		return null;
+	}
 	return Object.fromEntries(
 		Object.entries(value).map(([key, nested]) => [key, redactDiagnosticValue(nested)]),
 	);
