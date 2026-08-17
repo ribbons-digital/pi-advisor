@@ -242,7 +242,7 @@ export function advisorConfigurationPaths(agentDir: string, cwd: string) {
 	};
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord<T>(value: T): value is T & Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

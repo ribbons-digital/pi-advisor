@@ -206,7 +206,7 @@ function finiteAtLeast(value: number, minimum: number, fallback: number): number
 	return Number.isFinite(value) ? Math.max(minimum, value) : fallback;
 }
 
-function isActiveIdleSeverity(value: unknown): value is ActiveIdleSeverity {
+function isActiveIdleSeverity<T>(value: T): value is T & ActiveIdleSeverity {
 	return value === "concern" || value === "blocker";
 }
 
