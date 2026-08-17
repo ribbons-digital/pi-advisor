@@ -112,7 +112,7 @@ function latestRuntimeState(manager: SessionManager): PersistedAdvisorRuntimeSta
 }
 
 describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
-	it("mutes a delivered finding by its 8-hex ID and suppresses similarity and escalation redelivery", async () => {
+	it("mutes a delivered finding by its 8-hex ID and suppresses redelivery", async () => {
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "one" }] },
 			{ content: [{ type: "text", text: "two" }] },
@@ -121,8 +121,8 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 		]);
 		const advisor = createAdvisorProvider([
 			reviewAdvice(NOTE_A, KEY_A, "concern"),
-			reviewAdvice(NOTE_A_PARAPHRASE, KEY_A, "concern"),
-			reviewAdvice(NOTE_A, KEY_A, "blocker"),
+			{ content: [] },
+			reviewAdvice(NOTE_A_PARAPHRASE, KEY_A, "blocker"),
 			{ content: [] },
 		]);
 		let runtime: AdvisorRuntime | undefined;
@@ -150,8 +150,24 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 
 			const hashA = findingHash(KEY_A);
 			const shortId = hashA.slice(0, 8);
+			// A deferred note is not committed until it materializes: while it
+			// waits in the queue it is neither mute-resolvable nor surfaced as
+			// the last note, exactly like the active path before its send.
 			expect(runtime?.getStatus()).toMatchObject({
 				notesDelivered: 0,
+				notesSuppressed: 0,
+				deferredNotesPending: 1,
+			});
+			expect(runtime?.getStatus().lastNoteSeverity).toBeUndefined();
+			expect(runtime?.getStatus().lastNoteCreatedAt).toBeUndefined();
+			expect(runtime?.resolveMuteTarget(shortId)).toEqual({ kind: "unknown" });
+
+			// Materialization commits the note: it is delivered, becomes
+			// mute-resolvable, and surfaces as the last note.
+			await harness.session.prompt("deliver deferred note");
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
+			expect(runtime?.getStatus()).toMatchObject({
+				notesDelivered: 1,
 				notesSuppressed: 0,
 				lastNoteSeverity: "concern",
 				lastNoteFindingKey: KEY_A,
@@ -161,9 +177,11 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 				hash: hashA,
 				label: KEY_A,
 			});
+			const delivered = JSON.stringify(primary.requests[1]?.context);
+			expect(delivered).toContain(NOTE_A);
 
-			// Mute before any later review so the suppression path is exercised
-			// deterministically, then let the deferred note materialize.
+			// Mute the delivered finding; every later review of it is suppressed
+			// at admission and never enters model context.
 			const muted = await runtime?.muteFinding(hashA, KEY_A);
 			expect(muted).toEqual({ ok: true, message: `Muted ${shortId} (${KEY_A}).` });
 			expect(runtime?.muteList()).toEqual([{ id: shortId, label: KEY_A }]);
@@ -172,20 +190,15 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(mutesFile).toContain(shortId);
 			expect(mutesFile).toContain(KEY_A);
 
-			// The muted finding beats the queued delivery, Q5 similarity delivery,
-			// and escalation re-raise. Each prompt waits for its review to settle so
-			// the scripted provider is never raced by supersession or retry churn.
-			await harness.session.prompt("deliver deferred note");
-			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
 			await harness.session.prompt("review two");
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 3);
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
 			await harness.session.prompt("review three");
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 4);
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 3);
 			expect(runtime?.getStatus()).toMatchObject({
-				notesDelivered: 0,
+				notesDelivered: 1,
 				notesSuppressed: 0,
-				mutedSuppressions: 3,
+				mutedSuppressions: 1,
+				lastNoteSeverity: "concern",
 			});
 			const context = JSON.stringify(primary.requests[3]?.context);
 			expect(context).not.toContain(NOTE_A_PARAPHRASE);
@@ -207,6 +220,7 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			{ content: [{ type: "text", text: "one" }] },
 			{ content: [{ type: "text", text: "two" }] },
 			{ content: [{ type: "text", text: "three" }] },
+			{ content: [{ type: "text", text: "four" }] },
 		]);
 		const advisor = createAdvisorProvider([
 			reviewAdvice(NOTE_A, COLLISION_KEY_A),
@@ -226,6 +240,11 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
 			await harness.session.prompt("review two");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+			// Both notes are still deferred, so the index is empty: nothing is
+			// resolvable until the notes are committed by materialization.
+			expect(runtime?.resolveMuteTarget("a".repeat(8))).toEqual({ kind: "unknown" });
+			await harness.session.prompt("deliver deferred note");
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
 
 			const hashA = findingHash(COLLISION_KEY_A);
 			const hashB = findingHash(COLLISION_KEY_B);
@@ -672,6 +691,11 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 				notesDelivered: 0,
 				mutedSuppressions: 1,
 			});
+			// The dropped note never reached the user, so it is not recorded:
+			// it stays unresolvable and never becomes the last note.
+			expect(runtime?.resolveMuteTarget(hashA.slice(0, 8))).toEqual({ kind: "unknown" });
+			expect(runtime?.getStatus().lastNoteSeverity).toBeUndefined();
+			expect(runtime?.getStatus().lastNoteCreatedAt).toBeUndefined();
 			const context = JSON.stringify(primary.requests[1]?.context);
 			expect(context).not.toContain(NOTE_A);
 

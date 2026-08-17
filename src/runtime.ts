@@ -3245,6 +3245,11 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		try {
 			this.pi.appendEntry(ADVISOR_LATE_ENTRY_TYPE, data);
 			pending.displayedInEntry = true;
+			// The note's card is now visible to the user, so it is committed like
+			// the active path: record the finding so its mute ID resolves and the
+			// last-note line reflects it. Without a successful publish, recording
+			// is deferred to materialization.
+			this.recordDeliveredFinding(pending.advice);
 		} catch (error) {
 			this.recordDeliveryFailure(error);
 		}
@@ -3315,7 +3320,6 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				return undefined;
 			}
 			this.adviceDedupe.add(advice, turnNumber);
-			this.recordDeliveredFinding(advice);
 			this.recordMemorySuggestionAdmission(advice, turnNumber);
 			this.refreshDeferredAdviceStatus();
 			this.persistState();
