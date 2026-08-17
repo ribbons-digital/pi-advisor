@@ -188,18 +188,19 @@ function persistedUpdateFromQueued(update: QueuedAdvisorUpdate): PersistedAdviso
 
 function queuedUpdateFromPersisted(update: PersistedAdvisorReviewUpdate): QueuedAdvisorUpdate {
 	const active = update as Partial<PersistedAdvisorActiveReview>;
-	return {
+	const queued: QueuedAdvisorUpdate = {
 		text: update.text,
 		entryCount: update.entryCount,
 		truncated: update.truncated,
 		window: { ...update.window },
 		turnNumber: update.turnNumber,
 		successfulMemoryTexts: new Set([...update.successfulMemoryTexts].reverse()),
-		...(typeof active.reviewId === "string" ? { reviewId: active.reviewId } : {}),
-		...(typeof active.restoredReplayCount === "number"
-			? { restoredReplayCount: active.restoredReplayCount }
-			: {}),
 	};
+	if (typeof active.reviewId === "string") queued.reviewId = active.reviewId;
+	if (typeof active.restoredReplayCount === "number") {
+		queued.restoredReplayCount = active.restoredReplayCount;
+	}
+	return queued;
 }
 
 function compactPersistedUpdate<T extends PersistedAdvisorReviewUpdate>(
@@ -504,18 +505,19 @@ interface OutstandingAdvice extends PendingAdvice {
  * label joins persisted accepted advice with runtime state version 5 (Q6-A1).
  */
 function persistedActiveDelivery(pending: OutstandingAdvice): PersistedAdvisorActiveDelivery {
-	return {
+	const delivery: PersistedAdvisorActiveDelivery = {
 		advice: structuredClone(pending.advice),
 		stale: pending.stale,
 		branchWindow: { ...pending.branchWindow },
 		displayedInEntry: pending.displayedInEntry,
-		...(pending.restoredAfterResume ? { restoredAfterResume: true as const } : {}),
 		reviewId: pending.reviewId,
 		identity: pending.identity,
 		deliveryId: pending.deliveryId,
 		turnNumber: pending.turnNumber,
-		...(pending.tag === undefined ? {} : { tag: pending.tag }),
 	};
+	if (pending.restoredAfterResume) delivery.restoredAfterResume = true;
+	if (pending.tag !== undefined) delivery.tag = pending.tag;
+	return delivery;
 }
 
 function emptyUsage(): AdvisorUsageTotals {
