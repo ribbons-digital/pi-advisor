@@ -188,7 +188,86 @@ export interface PersistedAdvisorRuntimeState {
 	notesDelivered: number;
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+interface UnvalidatedPersistedRecord {
+	version?: number;
+	sessionId?: string;
+	savedAt?: number;
+	kind?: string;
+	reviewId?: string;
+	expectedIndex?: number;
+	lastEntryId?: string;
+	intent?: string;
+	note?: string;
+	severity?: string;
+	findingKeyHash?: string;
+	findingKey?: string;
+	truncated?: boolean;
+	originalCharacters?: number;
+	originalEstimatedTokens?: number;
+	createdAt?: number;
+	memory?: unknown;
+	text?: string;
+	category?: string;
+	basis?: string;
+	hash?: string;
+	metadata?: unknown;
+	signature?: string;
+	lastDeliveryTurn?: number;
+	label?: string;
+	advice?: UnvalidatedPersistedRecord;
+	stale?: boolean;
+	branchWindow?: UnvalidatedPersistedRecord;
+	displayedInEntry?: boolean;
+	restoredAfterResume?: unknown;
+	tag?: string;
+	entryCount?: number;
+	window?: UnvalidatedPersistedRecord;
+	turnNumber?: number;
+	successfulMemoryTexts?: string[];
+	restoredReplayCount?: number;
+	identity?: string;
+	deliveryId?: string;
+	meaningfulTurnCount?: number;
+	admittedCount?: number;
+	deliveredCount?: number;
+	lastAdmittedTurn?: number;
+	lastAdmittedAt?: number;
+	sessionCapReached?: boolean;
+	cursor?: UnvalidatedPersistedRecord;
+	activeReview?: UnvalidatedPersistedRecord;
+	queuedReview?: UnvalidatedPersistedRecord;
+	lastReviewSubmittedTurn?: number;
+	lastReviewSubmittedAt?: number;
+	activeDeliveries?: UnvalidatedPersistedRecord[];
+	deferredAdvice?: UnvalidatedPersistedRecord[];
+	dedupeHashes?: (string | UnvalidatedPersistedRecord)[];
+	recentFindings?: UnvalidatedPersistedRecord[];
+	memorySuggestions?: UnvalidatedPersistedRecord;
+	reviewFollowUpsTriggered?: number;
+	notesDelivered?: number;
+	toolName?: string;
+	arguments?: string;
+	isError?: boolean;
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	total?: number;
+	costUsd?: number;
+	stopReason?: string;
+	delivery?: string;
+	reason?: string;
+	outcome?: string;
+	ordinal?: number;
+	internal?: boolean;
+	path?: string;
+	pattern?: string;
+	completed?: boolean;
+	outputBytes?: number;
+	outputLines?: number;
+}
+
+function hasOnlyKeys(value: UnvalidatedPersistedRecord, keys: readonly string[]): boolean {
 	const allowed = new Set(keys);
 	return Object.keys(value).every((key) => allowed.has(key));
 }
@@ -219,7 +298,7 @@ function isBoundedName<T>(value: T): value is T & string {
 
 function isCursor<T>(value: T): value is T & AdvisorCursor {
 	if (typeof value !== "object" || value === null) return false;
-	const cursor = value as Record<string, unknown>;
+	const cursor = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(cursor, ["expectedIndex", "lastEntryId"]) &&
 		isFiniteInteger(cursor.expectedIndex) &&
@@ -248,7 +327,7 @@ function isAcceptedAdvice<T>(
 	findingKeyMetadata: FindingKeyMetadataMode,
 ): value is T & AcceptedAdvice {
 	if (typeof value !== "object" || value === null) return false;
-	const advice = value as Record<string, unknown>;
+	const advice = value as UnvalidatedPersistedRecord;
 	if (
 		!isBoundedSafeText(advice.note, HARD_LIMITS.maxAdviceCharacters) ||
 		typeof advice.truncated !== "boolean" ||
@@ -291,7 +370,7 @@ function isAcceptedAdvice<T>(
 	) {
 		return false;
 	}
-	const memory = advice.memory as Record<string, unknown>;
+	const memory = advice.memory as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(advice, [
 			"intent",
@@ -324,12 +403,12 @@ function serializedBytes(value: unknown): number | undefined {
 
 function isPersistedDedupeEntry<T>(value: T): value is T & PersistedDedupeEntry {
 	if (typeof value !== "object" || value === null) return false;
-	const entry = value as Record<string, unknown>;
+	const entry = value as UnvalidatedPersistedRecord;
 	if (!hasOnlyKeys(entry, ["hash", "metadata"])) return false;
 	if (typeof entry.hash !== "string" || !/^[a-f0-9]{64}$/u.test(entry.hash)) return false;
 	if (entry.metadata === undefined) return true;
 	if (typeof entry.metadata !== "object" || entry.metadata === null) return false;
-	const metadata = entry.metadata as Record<string, unknown>;
+	const metadata = entry.metadata as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(metadata, ["severity", "signature", "lastDeliveryTurn"]) &&
 		isAdviceSeverity(metadata.severity) &&
@@ -350,7 +429,7 @@ function isLegacyDedupeHashes<T>(value: T): value is T & string[] {
 
 function isPersistedRecentFinding<T>(value: T): value is T & PersistedRecentFinding {
 	if (typeof value !== "object" || value === null) return false;
-	const entry = value as Record<string, unknown>;
+	const entry = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(entry, ["hash", "label"]) &&
 		typeof entry.hash === "string" &&
@@ -371,7 +450,7 @@ function isPersistedDeferredAdvice<T>(
 	allowReviewId = false,
 ): value is T & PersistedDeferredAdvice {
 	if (typeof value !== "object" || value === null) return false;
-	const pending = value as Record<string, unknown>;
+	const pending = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(pending, [
 			"advice",
@@ -400,7 +479,7 @@ function isPersistedReviewUpdate<T>(
 	active: boolean,
 ): value is T & PersistedAdvisorReviewUpdate {
 	if (typeof value !== "object" || value === null) return false;
-	const update = value as Record<string, unknown>;
+	const update = value as UnvalidatedPersistedRecord;
 	const allowed = [
 		"text",
 		"entryCount",
@@ -440,7 +519,7 @@ function isPersistedReviewUpdate<T>(
 
 function persistedReviewTurn(value: unknown): number | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
-	const turnNumber = (value as Record<string, unknown>).turnNumber;
+	const turnNumber = (value as UnvalidatedPersistedRecord).turnNumber;
 	return typeof turnNumber === "number" ? turnNumber : undefined;
 }
 
@@ -450,7 +529,7 @@ function isPersistedActiveDelivery<T>(
 	findingKeyMetadata: FindingKeyMetadataMode,
 ): value is T & PersistedAdvisorActiveDelivery {
 	if (typeof value !== "object" || value === null) return false;
-	const delivery = value as Record<string, unknown>;
+	const delivery = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(delivery, [
 			"advice",
@@ -484,7 +563,7 @@ function isPersistedActiveDelivery<T>(
 
 function isMemoryState<T>(value: T): value is T & PersistedMemorySuggestionState {
 	if (typeof value !== "object" || value === null) return false;
-	const state = value as Record<string, unknown>;
+	const state = value as UnvalidatedPersistedRecord;
 	if (
 		!hasOnlyKeys(state, [
 			"meaningfulTurnCount",
@@ -531,7 +610,7 @@ export function parsePersistedAdvisorRuntimeState(
 	) {
 		return undefined;
 	}
-	const state = value as Record<string, unknown>;
+	const state = value as UnvalidatedPersistedRecord;
 	const version = state.version;
 	if (
 		version !== 1 &&
@@ -657,7 +736,7 @@ export function parsePersistedAdvisorRuntimeState(
 		) {
 			return undefined;
 		}
-		const current = structuredClone(value) as Record<string, unknown>;
+		const current = structuredClone(value) as UnvalidatedPersistedRecord;
 		return {
 			...(current as Omit<
 				PersistedAdvisorRuntimeState,
@@ -674,7 +753,7 @@ export function parsePersistedAdvisorRuntimeState(
 					: [],
 		};
 	}
-	const migrated = structuredClone(value) as Record<string, unknown>;
+	const migrated = structuredClone(value) as UnvalidatedPersistedRecord;
 	return {
 		...(migrated as Omit<
 			PersistedAdvisorRuntimeState,
@@ -689,7 +768,7 @@ export function parsePersistedAdvisorRuntimeState(
 }
 
 function hasValidTranscriptBase(
-	record: Record<string, unknown>,
+	record: UnvalidatedPersistedRecord,
 	expectedSessionId: string,
 ): boolean {
 	return (
@@ -709,7 +788,7 @@ function isActivityTarget<T>(value: T): value is T & string {
 	);
 }
 
-function hasValidToolTargets(record: Record<string, unknown>): boolean {
+function hasValidToolTargets(record: UnvalidatedPersistedRecord): boolean {
 	const path = record.path;
 	const pattern = record.pattern;
 	if (record.internal === true) {
@@ -730,7 +809,7 @@ function hasValidToolTargets(record: Record<string, unknown>): boolean {
 
 function parseLegacyTranscriptRecord(
 	value: unknown,
-	record: Record<string, unknown>,
+	record: UnvalidatedPersistedRecord,
 ): PersistedAdvisorTranscriptRecordV1 | undefined {
 	let valid = false;
 	switch (record.kind) {
@@ -827,7 +906,7 @@ function parseLegacyTranscriptRecord(
 
 function parseActivityTranscriptRecord(
 	value: unknown,
-	record: Record<string, unknown>,
+	record: UnvalidatedPersistedRecord,
 ): PersistedAdvisorTranscriptRecordV2 | undefined {
 	if (!isBoundedName(record.reviewId) || record.reviewId.length > 128) return undefined;
 	let valid = false;
@@ -943,7 +1022,7 @@ export function parsePersistedAdvisorTranscriptRecord(
 	) {
 		return undefined;
 	}
-	const record = value as Record<string, unknown>;
+	const record = value as UnvalidatedPersistedRecord;
 	if (!hasValidTranscriptBase(record, expectedSessionId)) return undefined;
 	if (record.version === ADVISOR_TRANSCRIPT_LEGACY_RECORD_VERSION) {
 		return parseLegacyTranscriptRecord(value, record);
