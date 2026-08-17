@@ -92,10 +92,13 @@ export function registerScriptedProvider(
 }
 
 function copyContext(context: Context): Context {
-	const copied: Context = {
-		messages: structuredClone(context.messages),
-	};
-	if (context.systemPrompt !== undefined) copied.systemPrompt = context.systemPrompt;
+	const copied: Context =
+		context.systemPrompt === undefined
+			? { messages: structuredClone(context.messages) }
+			: {
+					systemPrompt: context.systemPrompt,
+					messages: structuredClone(context.messages),
+				};
 	if (context.tools !== undefined) {
 		copied.tools = context.tools.map((tool) => ({
 			name: tool.name,
