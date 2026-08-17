@@ -31,3 +31,9 @@ See <https://github.com/sinclairzx81/typebox> for upstream source and notices.
 This package uses the `yaml` package to parse and serialize WATCHDOG configuration.
 The `yaml` package is distributed under the ISC License.
 See <https://github.com/eemeli/yaml> for upstream source and notices.
+
+## anti-slop
+
+This repository vendors Dillon Mulroy's anti-slop Oxlint plugin at `tools/oxlint/anti-slop/`.
+anti-slop is distributed under the MIT License.
+See `tools/oxlint/anti-slop/LICENSE` and <https://github.com/dmmulroy/anti-slop> for the upstream source and notice.
