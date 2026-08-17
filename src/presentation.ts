@@ -259,33 +259,33 @@ export function reviewNoteMuteId(advice: {
 		: undefined;
 }
 
-function isAdviceSeverity(value: unknown): value is AdviceSeverity {
+function isAdviceSeverity<T>(value: T): value is T & AdviceSeverity {
 	return value === "nit" || value === "concern" || value === "blocker";
 }
 
-function isMuteId(value: unknown): value is string {
+function isMuteId<T>(value: T): value is T & string {
 	return typeof value === "string" && /^[a-f0-9]{8}$/u.test(value);
 }
 
-function isFindingLabel(value: unknown): value is string {
+function isFindingLabel<T>(value: T): value is T & string {
 	return (
 		typeof value === "string" && Array.from(value).length > 0 && Array.from(value).length <= 128
 	);
 }
 
-function isAdviceDelivery(value: unknown): value is AdviceDelivery {
+function isAdviceDelivery<T>(value: T): value is T & AdviceDelivery {
 	return value === "active" || value === "deferred";
 }
 
-function isFiniteNonNegative(value: unknown): value is number {
+function isFiniteNonNegative<T>(value: T): value is T & number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-function isRenderableTimestamp(value: unknown): value is number {
+function isRenderableTimestamp<T>(value: T): value is T & number {
 	return isFiniteNonNegative(value) && value <= 8_640_000_000_000_000;
 }
 
-function textFitsBound(value: unknown, maximumCharacters: number): value is string {
+function textFitsBound<T>(value: T, maximumCharacters: number): value is T & string {
 	if (typeof value !== "string" || value.length > maximumCharacters * 2) return false;
 	return Array.from(value).length <= maximumCharacters;
 }
