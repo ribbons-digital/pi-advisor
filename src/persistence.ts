@@ -543,7 +543,7 @@ export function parsePersistedAdvisorRuntimeState(
 		return undefined;
 	}
 	const legacy = version === 1 || version === 2;
-	const currentShape = version === 3 || version === 4 || version === ADVISOR_RUNTIME_STATE_VERSION;
+	const allowReviewId = version === 3 || version === 4 || version === ADVISOR_RUNTIME_STATE_VERSION;
 	const findingKeyMetadata: FindingKeyMetadataMode =
 		version === 1 ? "none" : version === ADVISOR_RUNTIME_STATE_VERSION ? "hash-label" : "hash";
 	const allowedKeys = legacy
@@ -586,7 +586,7 @@ export function parsePersistedAdvisorRuntimeState(
 		!Array.isArray(state.deferredAdvice) ||
 		state.deferredAdvice.length > MAX_PENDING_ADVICE_ITEMS ||
 		!state.deferredAdvice.every((pending) =>
-			isPersistedDeferredAdvice(pending, findingKeyMetadata, currentShape),
+			isPersistedDeferredAdvice(pending, findingKeyMetadata, allowReviewId),
 		) ||
 		!Array.isArray(state.dedupeHashes) ||
 		state.dedupeHashes.length > MAX_PERSISTED_DEDUPE_HASHES ||
