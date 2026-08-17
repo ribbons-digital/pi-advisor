@@ -10,11 +10,12 @@ import {
 import { HARD_LIMITS } from "./config.js";
 import { MAX_PENDING_ADVICE_ITEMS } from "./delivery.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
-import { redactSecrets } from "./redaction.js";
+import { MAX_MUTE_ENTRIES } from "./mutes.js";
+import { containsTerminalControlCharacters, redactSecrets } from "./redaction.js";
 import { cursorMatches, type AdvisorCursor } from "./transcript.js";
 
 export const ADVISOR_RUNTIME_STATE_ENTRY_TYPE = "pi-advisor-runtime-state";
-export const ADVISOR_RUNTIME_STATE_VERSION = 4 as const;
+export const ADVISOR_RUNTIME_STATE_VERSION = 5 as const;
 export const ADVISOR_TRANSCRIPT_ENTRY_TYPE = "pi-advisor-transcript-record";
 export const ADVISOR_TRANSCRIPT_LEGACY_RECORD_VERSION = 1 as const;
 export const ADVISOR_TRANSCRIPT_RECORD_VERSION = 2 as const;
@@ -163,6 +164,11 @@ export interface PersistedMemorySuggestionState {
 	sessionCapReached: boolean;
 }
 
+export interface PersistedRecentFinding {
+	hash: string;
+	label: string;
+}
+
 export interface PersistedAdvisorRuntimeState {
 	version: typeof ADVISOR_RUNTIME_STATE_VERSION;
 	sessionId: string;
@@ -175,6 +181,8 @@ export interface PersistedAdvisorRuntimeState {
 	activeDeliveries: PersistedAdvisorActiveDelivery[];
 	deferredAdvice: PersistedDeferredAdvice[];
 	dedupeHashes: PersistedDedupeEntry[];
+	/** Oldest first; at most 128 delivered findings that carried a findingKey (Q6-A1). */
+	recentFindings: PersistedRecentFinding[];
 	memorySuggestions: PersistedMemorySuggestionState;
 	reviewFollowUpsTriggered?: number;
 	notesDelivered: number;
@@ -233,7 +241,12 @@ function isAdviceSeverity(value: unknown): value is AdviceSeverity {
 	return value === "nit" || value === "concern" || value === "blocker";
 }
 
-function isAcceptedAdvice(value: unknown, allowFindingKeyHash: boolean): value is AcceptedAdvice {
+type FindingKeyMetadataMode = "none" | "hash" | "hash-label";
+
+function isAcceptedAdvice(
+	value: unknown,
+	findingKeyMetadata: FindingKeyMetadataMode,
+): value is AcceptedAdvice {
 	if (typeof value !== "object" || value === null) return false;
 	const advice = value as Record<string, unknown>;
 	if (
@@ -251,17 +264,24 @@ function isAcceptedAdvice(value: unknown, allowFindingKeyHash: boolean): value i
 				"intent",
 				"note",
 				"severity",
-				...(allowFindingKeyHash ? ["findingKeyHash"] : []),
+				...(findingKeyMetadata !== "none" ? ["findingKeyHash"] : []),
+				...(findingKeyMetadata === "hash-label" ? ["findingKey"] : []),
 				"truncated",
 				"originalCharacters",
 				"originalEstimatedTokens",
 				"createdAt",
 			]) &&
 			isAdviceSeverity(advice.severity) &&
-			(!allowFindingKeyHash ||
+			(findingKeyMetadata === "none" ||
 				advice.findingKeyHash === undefined ||
 				(typeof advice.findingKeyHash === "string" &&
-					/^[a-f0-9]{64}$/u.test(advice.findingKeyHash)))
+					/^[a-f0-9]{64}$/u.test(advice.findingKeyHash))) &&
+			(findingKeyMetadata !== "hash-label" ||
+				advice.findingKey === undefined ||
+				(typeof advice.findingKey === "string" &&
+					Array.from(advice.findingKey).length > 0 &&
+					Array.from(advice.findingKey).length <= 128 &&
+					redactSecrets(advice.findingKey).text === advice.findingKey))
 		);
 	}
 	if (
@@ -328,9 +348,26 @@ function isLegacyDedupeHashes(value: unknown): value is string[] {
 	);
 }
 
+function isPersistedRecentFinding(value: unknown): value is PersistedRecentFinding {
+	if (typeof value !== "object" || value === null) return false;
+	const entry = value as Record<string, unknown>;
+	return (
+		hasOnlyKeys(entry, ["hash", "label"]) &&
+		typeof entry.hash === "string" &&
+		/^[a-f0-9]{64}$/u.test(entry.hash) &&
+		typeof entry.label === "string" &&
+		Array.from(entry.label).length > 0 &&
+		isBoundedSafeText(entry.label, MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS) &&
+		!containsTerminalControlCharacters(entry.label)
+	);
+}
+
+export const MAX_PERSISTED_RECENT_FINDINGS = MAX_MUTE_ENTRIES;
+export const MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS = 128;
+
 function isPersistedDeferredAdvice(
 	value: unknown,
-	allowFindingKeyHash: boolean,
+	findingKeyMetadata: FindingKeyMetadataMode,
 	allowReviewId = false,
 ): value is PersistedDeferredAdvice {
 	if (typeof value !== "object" || value === null) return false;
@@ -345,7 +382,7 @@ function isPersistedDeferredAdvice(
 			"tag",
 			...(allowReviewId ? ["reviewId"] : []),
 		]) &&
-		isAcceptedAdvice(pending.advice, allowFindingKeyHash) &&
+		isAcceptedAdvice(pending.advice, findingKeyMetadata) &&
 		typeof pending.stale === "boolean" &&
 		isCursor(pending.branchWindow) &&
 		typeof pending.displayedInEntry === "boolean" &&
@@ -410,6 +447,7 @@ function persistedReviewTurn(value: unknown): number | undefined {
 function isPersistedActiveDelivery(
 	value: unknown,
 	branch: SessionEntry[],
+	findingKeyMetadata: FindingKeyMetadataMode,
 ): value is PersistedAdvisorActiveDelivery {
 	if (typeof value !== "object" || value === null) return false;
 	const delivery = value as Record<string, unknown>;
@@ -426,7 +464,7 @@ function isPersistedActiveDelivery(
 			"turnNumber",
 			"tag",
 		]) &&
-		isAcceptedAdvice(delivery.advice, true) &&
+		isAcceptedAdvice(delivery.advice, findingKeyMetadata) &&
 		typeof delivery.stale === "boolean" &&
 		isCursor(delivery.branchWindow) &&
 		cursorMatches(branch, delivery.branchWindow) &&
@@ -499,12 +537,15 @@ export function parsePersistedAdvisorRuntimeState(
 		version !== 1 &&
 		version !== 2 &&
 		version !== 3 &&
+		version !== 4 &&
 		version !== ADVISOR_RUNTIME_STATE_VERSION
 	) {
 		return undefined;
 	}
 	const legacy = version === 1 || version === 2;
-	const currentShape = version === 3 || version === ADVISOR_RUNTIME_STATE_VERSION;
+	const currentShape = version === 3 || version === 4 || version === ADVISOR_RUNTIME_STATE_VERSION;
+	const findingKeyMetadata: FindingKeyMetadataMode =
+		version === 1 ? "none" : version === ADVISOR_RUNTIME_STATE_VERSION ? "hash-label" : "hash";
 	const allowedKeys = legacy
 		? [
 				"version",
@@ -528,6 +569,7 @@ export function parsePersistedAdvisorRuntimeState(
 				"activeDeliveries",
 				"deferredAdvice",
 				"dedupeHashes",
+				...(version === ADVISOR_RUNTIME_STATE_VERSION ? ["recentFindings"] : []),
 				"memorySuggestions",
 				"reviewFollowUpsTriggered",
 				"notesDelivered",
@@ -544,15 +586,21 @@ export function parsePersistedAdvisorRuntimeState(
 		!Array.isArray(state.deferredAdvice) ||
 		state.deferredAdvice.length > MAX_PENDING_ADVICE_ITEMS ||
 		!state.deferredAdvice.every((pending) =>
-			isPersistedDeferredAdvice(pending, version !== 1, currentShape),
+			isPersistedDeferredAdvice(pending, findingKeyMetadata, currentShape),
 		) ||
 		!Array.isArray(state.dedupeHashes) ||
 		state.dedupeHashes.length > MAX_PERSISTED_DEDUPE_HASHES ||
-		(version === ADVISOR_RUNTIME_STATE_VERSION
+		(version === 4 || version === ADVISOR_RUNTIME_STATE_VERSION
 			? !state.dedupeHashes.every(isPersistedDedupeEntry) ||
 				new Set(state.dedupeHashes.map((entry) => (entry as { hash: string }).hash)).size !==
 					state.dedupeHashes.length
 			: !isLegacyDedupeHashes(state.dedupeHashes)) ||
+		(version === ADVISOR_RUNTIME_STATE_VERSION &&
+			(!Array.isArray(state.recentFindings) ||
+				state.recentFindings.length > MAX_MUTE_ENTRIES ||
+				!state.recentFindings.every(isPersistedRecentFinding) ||
+				new Set(state.recentFindings.map((entry) => (entry as { hash: string }).hash)).size !==
+					state.recentFindings.length)) ||
 		!isMemoryState(state.memorySuggestions) ||
 		(state.reviewFollowUpsTriggered !== undefined &&
 			!isFiniteInteger(state.reviewFollowUpsTriggered)) ||
@@ -577,7 +625,9 @@ export function parsePersistedAdvisorRuntimeState(
 			state.activeDeliveries.length > MAX_PENDING_ADVICE_ITEMS ||
 			deliveriesBytes === undefined ||
 			deliveriesBytes > MAX_PERSISTED_ACTIVE_DELIVERIES_BYTES ||
-			!state.activeDeliveries.every((delivery) => isPersistedActiveDelivery(delivery, branch))
+			!state.activeDeliveries.every((delivery) =>
+				isPersistedActiveDelivery(delivery, branch, findingKeyMetadata),
+			)
 		) {
 			return undefined;
 		}
@@ -598,7 +648,7 @@ export function parsePersistedAdvisorRuntimeState(
 				queuedReviewTurn !== undefined &&
 				queuedReviewTurn < activeReviewTurn) ||
 			deliveries.some((delivery) => delivery.turnNumber > meaningfulTurnCount) ||
-			(version === ADVISOR_RUNTIME_STATE_VERSION &&
+			((version === 4 || version === ADVISOR_RUNTIME_STATE_VERSION) &&
 				(state.dedupeHashes as PersistedDedupeEntry[]).some(
 					(entry) =>
 						entry.metadata !== undefined && entry.metadata.lastDeliveryTurn > meaningfulTurnCount,
@@ -609,25 +659,30 @@ export function parsePersistedAdvisorRuntimeState(
 		return {
 			...(structuredClone(value) as unknown as Omit<
 				PersistedAdvisorRuntimeState,
-				"version" | "dedupeHashes"
+				"version" | "dedupeHashes" | "recentFindings"
 			>),
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			dedupeHashes:
 				version === 3
 					? (state.dedupeHashes as string[]).map((hash) => ({ hash }))
 					: (structuredClone(state.dedupeHashes) as PersistedDedupeEntry[]),
+			recentFindings:
+				version === ADVISOR_RUNTIME_STATE_VERSION
+					? (structuredClone(state.recentFindings) as PersistedRecentFinding[])
+					: [],
 		};
 	}
 	const migrated = structuredClone(value) as Record<string, unknown>;
 	return {
 		...(migrated as unknown as Omit<
 			PersistedAdvisorRuntimeState,
-			"version" | "activeDeliveries" | "dedupeHashes"
+			"version" | "activeDeliveries" | "dedupeHashes" | "recentFindings"
 		>),
 		version: ADVISOR_RUNTIME_STATE_VERSION,
 		activeDeliveries: [],
 		dedupeHashes:
 			version === 1 ? [] : (migrated.dedupeHashes as string[]).map((hash) => ({ hash })),
+		recentFindings: [],
 	};
 }
 
@@ -747,7 +802,7 @@ function parseLegacyTranscriptRecord(
 					"delivery",
 					"stale",
 				]) &&
-				isAcceptedAdvice(record.advice, false) &&
+				isAcceptedAdvice(record.advice, "none") &&
 				(record.delivery === "active" || record.delivery === "deferred") &&
 				typeof record.stale === "boolean";
 			break;

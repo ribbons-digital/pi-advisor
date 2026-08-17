@@ -300,6 +300,7 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 				sessionCapReached: false,
 			},
 			reviewFollowUpsTriggered: 5,
+			recentFindings: [],
 			notesDelivered: 5,
 		};
 		manager.appendCustomEntry(ADVISOR_RUNTIME_STATE_ENTRY_TYPE, state);

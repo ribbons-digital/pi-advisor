@@ -12,6 +12,7 @@ import {
 	type MemorySuggestionBasis,
 	type MemorySuggestionCategory,
 } from "./memory-suggestions.js";
+import { boundedFindingLabel } from "./mutes.js";
 import { escapeXmlAttribute, escapeXmlText } from "./presentation.js";
 import { estimateTokens, redactSecrets } from "./redaction.js";
 
@@ -36,6 +37,8 @@ export interface AcceptedReviewAdvice extends AcceptedAdviceBase {
 	intent: "review";
 	severity: AdviceSeverity;
 	findingKeyHash?: string;
+	/** Bounded redacted display label of the raw findingKey; never command input. */
+	findingKey?: string;
 }
 
 export interface AcceptedMemorySuggestion extends AcceptedAdviceBase {
@@ -831,10 +834,13 @@ async function executeAdviseWireInput(
 		}
 		const semanticHash =
 			input.findingKey === undefined ? undefined : findingKeyHash(input.findingKey);
+		const displayLabel =
+			input.findingKey === undefined ? undefined : boundedFindingLabel(input.findingKey);
 		collector.accepted = {
 			...boundAdvice(input.note, config),
 			severity: input.severity ?? "concern",
 			...(semanticHash === undefined ? {} : { findingKeyHash: semanticHash }),
+			...(displayLabel === undefined ? {} : { findingKey: displayLabel }),
 		};
 	}
 	return {

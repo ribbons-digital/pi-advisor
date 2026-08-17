@@ -7,6 +7,7 @@ import {
 	BoundedAdviceDedupe,
 	cursorAtTail,
 	MAX_PERSISTED_DEDUPE_HASHES,
+	MAX_PERSISTED_RECENT_FINDINGS,
 	parsePersistedAdvisorRuntimeState,
 	validateCursor,
 	type AcceptedAdvice,
@@ -25,8 +26,11 @@ function advice(note: string): AcceptedAdvice {
 	};
 }
 
-function stateFor(manager: SessionManager): PersistedAdvisorRuntimeState {
-	return {
+function stateFor(
+	manager: SessionManager,
+	version: typeof ADVISOR_RUNTIME_STATE_VERSION | 1 | 2 | 3 | 4 = ADVISOR_RUNTIME_STATE_VERSION,
+): PersistedAdvisorRuntimeState {
+	const state: Partial<PersistedAdvisorRuntimeState> = {
 		version: ADVISOR_RUNTIME_STATE_VERSION,
 		sessionId: manager.getSessionId(),
 		savedAt: Date.now(),
@@ -40,8 +44,12 @@ function stateFor(manager: SessionManager): PersistedAdvisorRuntimeState {
 			deliveredCount: 0,
 			sessionCapReached: false,
 		},
+		recentFindings: [],
 		notesDelivered: 0,
 	};
+	if (version === 1 || version === 2) delete state.activeDeliveries;
+	if (version !== ADVISOR_RUNTIME_STATE_VERSION) delete state.recentFindings;
+	return state as PersistedAdvisorRuntimeState;
 }
 
 describe("Slice 3A lifecycle state primitives", () => {
@@ -95,7 +103,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 		const valid = stateFor(manager);
 		expect(parsePersistedAdvisorRuntimeState(valid, manager.getSessionId(), branch)).toEqual(valid);
 		expect(
-			parsePersistedAdvisorRuntimeState({ ...valid, version: 5 }, manager.getSessionId(), branch),
+			parsePersistedAdvisorRuntimeState({ ...valid, version: 6 }, manager.getSessionId(), branch),
 		).toBeUndefined();
 		expect(parsePersistedAdvisorRuntimeState(valid, "another-session", branch)).toBeUndefined();
 		expect(
@@ -160,8 +168,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
 		const branch = manager.getBranch();
 		const legacyAdvice = advice("Verify the legacy cancellation defect.");
-		const legacyBase = structuredClone(stateFor(manager));
-		Reflect.deleteProperty(legacyBase, "activeDeliveries");
+		const legacyBase = structuredClone(stateFor(manager, 1));
 		const legacy = {
 			...legacyBase,
 			version: 1,
@@ -189,13 +196,14 @@ describe("Slice 3A lifecycle state primitives", () => {
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			activeDeliveries: [],
 			dedupeHashes: [],
+			recentFindings: [],
 		});
 
 		const semanticAdvice = advice("Verify the concrete cancellation defect.");
 		if (semanticAdvice.intent !== "review") throw new Error("Expected review advice fixture");
 		semanticAdvice.findingKeyHash = "a".repeat(64);
 		const current = {
-			...stateFor(manager),
+			...stateFor(manager, 3),
 			version: 3,
 			deferredAdvice: [
 				{
@@ -211,6 +219,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 			...current,
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			dedupeHashes: [{ hash: adviceDedupeKey(semanticAdvice) }],
+			recentFindings: [],
 		});
 
 		const invalidHash = structuredClone(current);
@@ -231,8 +240,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 	it("migrates strict version 2 state without inventing a review backlog", () => {
 		const manager = SessionManager.inMemory();
 		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
-		const legacyBase = structuredClone(stateFor(manager));
-		Reflect.deleteProperty(legacyBase, "activeDeliveries");
+		const legacyBase = structuredClone(stateFor(manager, 2));
 		const version2 = { ...legacyBase, version: 2 };
 		expect(
 			parsePersistedAdvisorRuntimeState(version2, manager.getSessionId(), manager.getBranch()),
@@ -240,6 +248,7 @@ describe("Slice 3A lifecycle state primitives", () => {
 			...version2,
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			activeDeliveries: [],
+			recentFindings: [],
 		});
 	});
 
@@ -477,8 +486,7 @@ describe("Quality Slice Q5 dedupe metadata persistence", () => {
 		const manager = SessionManager.inMemory();
 		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
 		const branch = manager.getBranch();
-		const base = stateFor(manager);
-		Reflect.deleteProperty(base, "activeDeliveries");
+		const base = stateFor(manager, 2);
 		const version2 = {
 			...base,
 			version: 2,
@@ -489,6 +497,7 @@ describe("Quality Slice Q5 dedupe metadata persistence", () => {
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			activeDeliveries: [],
 			dedupeHashes: [{ hash: "a".repeat(64) }, { hash: "b".repeat(64) }],
+			recentFindings: [],
 		});
 	});
 });
@@ -583,5 +592,113 @@ describe("Quality Slice Q5 dedupe tag persistence", () => {
 				branch,
 			),
 		).toBeUndefined();
+	});
+});
+
+describe("Quality Slice Q6 runtime state version 5 (Q6-A1)", () => {
+	it("round-trips the bounded findingKey label on persisted accepted advice", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const labeledAdvice = advice("Verify the concrete cancellation defect.");
+		if (labeledAdvice.intent !== "review") throw new Error("Expected review advice fixture");
+		labeledAdvice.findingKeyHash = "a".repeat(64);
+		labeledAdvice.findingKey = "defect-cancellation-rollback";
+		const base = stateFor(manager);
+		const labeled = {
+			...base,
+			deferredAdvice: [
+				{
+					advice: labeledAdvice,
+					stale: true,
+					branchWindow: cursorAtTail(branch),
+					displayedInEntry: false,
+				},
+			],
+		};
+		expect(parsePersistedAdvisorRuntimeState(labeled, manager.getSessionId(), branch)).toEqual(
+			labeled,
+		);
+	});
+
+	it("rejects findingKey labels that are absent from the strict version 4 shape", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const labeledAdvice = advice("Verify the concrete cancellation defect.");
+		if (labeledAdvice.intent !== "review") throw new Error("Expected review advice fixture");
+		labeledAdvice.findingKeyHash = "a".repeat(64);
+		labeledAdvice.findingKey = "defect-cancellation-rollback";
+		const version4 = {
+			...stateFor(manager, 4),
+			version: 4,
+			deferredAdvice: [
+				{
+					advice: labeledAdvice,
+					stale: true,
+					branchWindow: cursorAtTail(branch),
+					displayedInEntry: false,
+				},
+			],
+		};
+		expect(
+			parsePersistedAdvisorRuntimeState(version4, manager.getSessionId(), branch),
+		).toBeUndefined();
+		// Strict v4 migration restores an empty index from an otherwise valid v4 document.
+		const hashOnly = structuredClone(version4) as {
+			deferredAdvice: { advice: { findingKey?: string } }[];
+		};
+		delete hashOnly.deferredAdvice[0]?.advice.findingKey;
+		expect(parsePersistedAdvisorRuntimeState(hashOnly, manager.getSessionId(), branch)).toEqual({
+			...(hashOnly as object),
+			version: ADVISOR_RUNTIME_STATE_VERSION,
+			recentFindings: [],
+		});
+	});
+
+	it("round-trips the bounded recent-findings index and rejects malformed entries", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const branch = manager.getBranch();
+		const base = stateFor(manager);
+		const indexed = {
+			...base,
+			recentFindings: [
+				{ hash: "a".repeat(64), label: "defect-rollback" },
+				{ hash: "b".repeat(64), label: "defect-email" },
+			],
+		};
+		expect(parsePersistedAdvisorRuntimeState(indexed, manager.getSessionId(), branch)).toEqual(
+			indexed,
+		);
+
+		const malformed = [
+			[{ hash: "short", label: "x" }],
+			[{ hash: "a".repeat(64), label: "" }],
+			[{ hash: "a".repeat(64), label: "API_KEY=sk-live-12345" }],
+			[{ hash: "a".repeat(64), label: "line1\nline2" }],
+			[{ hash: "a".repeat(64), label: "red\x1b[31mtext" }],
+			[{ hash: "a".repeat(64), label: "z".repeat(129) }],
+			[{ hash: "a".repeat(64), label: "x", extra: "y" }],
+			[
+				{ hash: "a".repeat(64), label: "x" },
+				{ hash: "a".repeat(64), label: "y" },
+			],
+			Array.from({ length: MAX_PERSISTED_RECENT_FINDINGS + 1 }, (_, index) => ({
+				hash: index.toString(16).padStart(64, "0"),
+				label: `label-${String(index)}`,
+			})),
+			"not-an-array",
+		];
+		for (const [index, entries] of malformed.entries()) {
+			expect(
+				parsePersistedAdvisorRuntimeState(
+					{ ...base, recentFindings: entries },
+					manager.getSessionId(),
+					branch,
+				),
+				`case ${String(index)}`,
+			).toBeUndefined();
+		}
 	});
 });

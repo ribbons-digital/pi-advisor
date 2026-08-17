@@ -105,14 +105,18 @@ See the [complete configuration reference](docs/configuration.md) for every fiel
 
 ## Commands
 
-| Command                            | Effect                                                                                             |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `/advisor` or `/advisor configure` | Opens interactive User configuration in a dialog-capable TUI or RPC client.                        |
-| `/advisor on`                      | Enables Advisor for the current session without changing the persisted default.                    |
-| `/advisor off`                     | Disables Advisor for the current session and invalidates in-flight review work.                    |
-| `/advisor status`                  | Shows activation, model, backlog, context, usage, cost, delivery, persistence, and failure status. |
-| `/advisor dump`                    | Produces an explicit redacted diagnostic snapshot bounded to 16 KiB.                               |
-| `--advisor`                        | Requests activation for the launched Pi session, including JSON and print modes.                   |
+| Command                            | Effect                                                                                                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `/advisor` or `/advisor configure` | Opens a section menu (model and reasoning, tools, instructions, apply, cancel) in a dialog-capable TUI or RPC client.                     |
+| `/advisor on`                      | Enables Advisor for the current session without changing the persisted default.                                                           |
+| `/advisor off`                     | Disables Advisor for the current session and invalidates in-flight review work.                                                           |
+| `/advisor status`                  | Shows a short summary: state, model and effort, queued reviews, note counts and last note, session spend and caps, and Memory capability. |
+| `/advisor status full`             | Shows the complete activation, model, backlog, context, usage, cost, delivery, persistence, and failure status.                           |
+| `/advisor mute <id>`               | Silences a delivered finding by its 8-to-64-character hex ID (shown on the Advice card).                                                  |
+| `/advisor unmute <id>`             | Removes a mute by the same prefix rule; `/advisor mute list` shows the muted findings.                                                    |
+| `/advisor mute list`               | Lists each muted finding with its short ID and display label.                                                                             |
+| `/advisor dump`                    | Produces an explicit redacted diagnostic snapshot bounded to 16 KiB.                                                                      |
+| `--advisor`                        | Requests activation for the launched Pi session, including JSON and print modes.                                                          |
 
 Persisted `defaultEnabled: true` applies only to new TUI and RPC sessions.
 JSON and print runs always require explicit activation.
@@ -162,10 +166,18 @@ A reused key still delivers a materially dissimilar note as a possible duplicate
 Only an accepted Advisory note enters the Executor context.
 Private Advisor reasoning, rejected notes, duplicate notes, content-free responses, and ordinary silent reviews remain outside the Executor context.
 
+## Muting a finding
+
+Every delivered review note that carries a `findingKey` shows a short mute ID on its Advice card: the first 8 hex characters of the findingKeyHash.
+`/advisor mute <id>` silences that finding, `/advisor unmute <id>` restores it, and `/advisor mute list` shows every muted finding with its short ID and display label.
+Mute IDs resolve fail-closed against the last 128 delivered findings: a unique prefix mutes or unmutes exactly one finding, zero matches change nothing, and a prefix collision lists the colliding labels so you can repeat with a longer prefix.
+A muted finding suppresses delivery ahead of similarity redelivery and escalation re-raise and is counted separately from ordinary suppression.
+Mutes are durable user data in a dedicated file next to the User WATCHDOG configuration (`~/.pi/agent/mutes.yml`), survive resets, resumes, and new sessions, and are never touched by `/advisor configure` saves or package downgrades.
+
 Advice created during an active run reaches Pi's next steering boundary and does not abort a running tool.
 Ordinary late or interruption-time advice waits for the next user-driven turn without triggering another completion.
 An eligible Memory suggestion that arrives while the Executor is idle starts one automatic Executor follow-up when no newer user or instruction-bearing input has superseded its evidence window.
-Newer Executor assistant text does not prevent that follow-up, and a continuation with materially newer Executor activity (a non-read-only tool call or its result, a context-included user bash execution, or a compaction or branch-summary entry) still does not prevent it even though the suggestion is then marked potentially stale.
+Newer Executor assistant text does not prevent that follow-up, and a continuation with materially newer Executor activity (a non-read-only tool call or its result, or a compaction or branch-summary entry) still does not prevent it even though the suggestion is then marked potentially stale.
 Any newer user message, instruction-bearing extension message, or bash execution blocks automatic follow-up, including a context-excluded `!!` command.
 The Executor must verify, revise, or decline the suggestion against its latest context and can submit only through a compatible `memory_suggest` tool with explicit `status: "pending"`.
 The automatic follow-up can add one primary-model completion per accepted Memory suggestion, bounded by the configured cadence and session cap.
@@ -182,7 +194,8 @@ Restored advice still requires fresh verification.
 Every Advisor card has a severity-colored left border so it remains visually distinct from native tool-call cards; Memory suggestion cards use the Advisor accent color.
 Cards render compact Markdown so a short lead stays above the supporting detail, and numbered or bullet actions stay on separate lines.
 While a review is in flight, the TUI footer shows a spinner next to `Advisor reviewing`.
-Queued work stays static.
+Queued work stays static and shows the queued review count, for example `1 review queued`.
+Byte-level backlog detail remains in `/advisor status full`.
 
 ## Security, privacy, and cost
 

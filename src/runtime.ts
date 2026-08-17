@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 import {
 	calculateContextTokens,
@@ -31,6 +32,7 @@ import {
 	type AdviceDedupeTag,
 	type AdviceCollector,
 	type AdviceDelivery,
+	type AdviceSeverity,
 	type MemorySuggestionQueueState,
 } from "./advice.js";
 import {
@@ -46,6 +48,16 @@ import {
 	type AdviseSchemaMode,
 } from "./compatibility/constrained-sampling.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
+import { buildTieredAdvisorSystemPrompt, isTieredPromptExperimentEnabled } from "./experiment.js";
+import {
+	findingMuteId,
+	MUTES_FILE_NAME,
+	MutesFileChangedError,
+	MuteStore,
+	RecentFindingsIndex,
+	shortestUniquePrefixes,
+	type RecentFinding,
+} from "./mutes.js";
 import { HARD_LIMITS, normalizeAdvisorConfig, type AdvisorConfig } from "./config.js";
 import {
 	BoundedKeyedByteFifo,
@@ -58,6 +70,7 @@ import {
 } from "./delivery.js";
 import {
 	ADVISOR_LATE_ENTRY_TYPE,
+	reviewNoteMuteId,
 	type AdviceMessageDetails,
 	type AdvicePresentationNote,
 	type LateAdviceEntryData,
@@ -348,6 +361,7 @@ export interface AdvisorRuntimeStatus {
 	backlog: boolean;
 	reviewing: boolean;
 	pendingTranscriptBytes: number;
+	queuedReviews: number;
 	maxPendingTranscriptBytesObserved: number;
 	retryPending: boolean;
 	retryDelayMs: number;
@@ -379,6 +393,13 @@ export interface AdvisorRuntimeStatus {
 	restoredDeferredNotesPending: number;
 	oldestDeferredAdviceAgeMs: number;
 	notesSuppressed: number;
+	mutedSuppressions: number;
+	mutedFindings: number;
+	/** Set when the mutes file could not be loaded; the store is empty and inactive. */
+	mutesUnavailable?: string;
+	lastNoteCreatedAt?: number;
+	lastNoteSeverity?: AdviceSeverity;
+	lastNoteFindingKey?: string;
 	memorySuggestionCapability: MemorySuggestCapability;
 	memorySuggestionsEnabled: boolean;
 	memorySuggestionsDelivered: number;
@@ -477,6 +498,10 @@ interface OutstandingAdvice extends PendingAdvice {
  * Single projection of an outstanding delivery into its persisted shape, shared by
  * the snapshot writer and the pre-admission byte estimate so the two can never
  * diverge over a field like the dedupe tag.
+ */
+/**
+ * Runtime state version 4 (batch A) does not yet persist the display label; the
+ * label joins persisted accepted advice with runtime state version 5 (Q6-A1).
  */
 function persistedActiveDelivery(pending: OutstandingAdvice): PersistedAdvisorActiveDelivery {
 	return {
@@ -864,7 +889,14 @@ function escapePromptTagContent(value: string): string {
 	return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function buildAdvisorSystemPrompt(config: AdvisorConfig, projectInstructions = ""): string {
+export function buildAdvisorSystemPrompt(
+	config: AdvisorConfig,
+	projectInstructions = "",
+	tieredContext?: { updateText: string },
+): string {
+	if (tieredContext !== undefined && isTieredPromptExperimentEnabled()) {
+		return buildTieredAdvisorSystemPrompt(config, tieredContext.updateText, projectInstructions);
+	}
 	return `You are Advisor, an isolated secondary reviewer for a Pi Executor session.
 Review each bounded update for one material correctness, safety, scope, or verification issue.
 Silence is the normal successful outcome when the Executor is on track.
@@ -949,6 +981,11 @@ export class AdvisorRuntime {
 	private automaticMemoryFollowUpDeliveryId?: string;
 	private automaticReviewFollowUpDeliveryId?: string;
 	private readonly adviceDedupe = new BoundedAdviceDedupe();
+	private readonly recentFindings = new RecentFindingsIndex();
+	private mutes: MuteStore | undefined;
+	private mutesLoadError: string | undefined;
+	private mutesFingerprint = "";
+	private experimentUpdateText?: string;
 	private readonly transcriptRecords: PersistedAdvisorTranscriptRecord[] = [];
 	private readonly collector: AdviceCollector = {
 		validCalls: 0,
@@ -974,6 +1011,7 @@ export class AdvisorRuntime {
 			backlog: false,
 			reviewing: false,
 			pendingTranscriptBytes: 0,
+			queuedReviews: 0,
 			maxPendingTranscriptBytesObserved: 0,
 			retryPending: false,
 			retryDelayMs: 0,
@@ -1005,6 +1043,8 @@ export class AdvisorRuntime {
 			restoredDeferredNotesPending: 0,
 			oldestDeferredAdviceAgeMs: 0,
 			notesSuppressed: 0,
+			mutedSuppressions: 0,
+			mutedFindings: 0,
 			memorySuggestionCapability: {
 				state: "absent",
 				reason: "memory_suggest capability has not been inspected",
@@ -1043,7 +1083,167 @@ export class AdvisorRuntime {
 		this.refreshDeferredAdviceStatus();
 		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
 		this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
+		this.status.mutedFindings = this.mutes?.list().length ?? 0;
+		if (this.mutesLoadError === undefined) {
+			delete this.status.mutesUnavailable;
+		} else {
+			this.status.mutesUnavailable = this.mutesLoadError;
+		}
 		return structuredClone(this.status);
+	}
+
+	private async loadMutes(forceReload = false): Promise<void> {
+		if (this.mutes !== undefined && !forceReload) return;
+		const path = join(getAgentDir(), MUTES_FILE_NAME);
+		const loaded = await MuteStore.load(path);
+		if (loaded.error !== undefined) {
+			if (this.mutesLoadError !== loaded.error) {
+				this.mutesLoadError = loaded.error;
+				this.warn(loaded.error);
+			}
+			// Fail closed per the documented contract: a reload failure drops any
+			// previously loaded store so no stale mutes stay in force while the
+			// file cannot be read; the file itself is never overwritten.
+			this.mutes = loaded.store;
+		} else {
+			this.mutesLoadError = undefined;
+			this.mutes = loaded.store;
+			this.mutesFingerprint = loaded.fingerprint ?? "";
+		}
+	}
+
+	/**
+	 * Fail-closed Q6-A1 resolution: 8-to-64-character hex prefix against the
+	 * bounded recent-findings index. Zero matches fail closed, two or more
+	 * matches fail closed with the colliding labels.
+	 */
+	resolveMuteTarget(
+		prefix: string,
+	):
+		| { kind: "unknown" }
+		| { kind: "collision"; matches: readonly RecentFinding[] }
+		| { kind: "match"; hash: string; label: string } {
+		const matches = this.recentFindings.resolve(prefix);
+		if (matches.length === 0) return { kind: "unknown" };
+		if (matches.length === 1) {
+			const match = matches[0];
+			if (match === undefined) return { kind: "unknown" };
+			return { kind: "match", hash: match.hash, label: match.label };
+		}
+		return { kind: "collision", matches };
+	}
+
+	/**
+	 * Write gate for the mutes file. Always reloads the file so concurrent Pi
+	 * sessions merge instead of clobbering: the single add or remove is applied
+	 * on top of the freshly loaded entries. Returns undefined when the reload
+	 * failed, which fails the write closed so a malformed or unreadable mutes
+	 * file is never overwritten.
+	 */
+	private async mutesWriteGate(): Promise<MuteStore | undefined> {
+		await this.loadMutes(true);
+		return this.mutesLoadError === undefined ? this.mutes : undefined;
+	}
+
+	async muteFinding(hash: string, label: string): Promise<{ ok: boolean; message?: string }> {
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const mutes = await this.mutesWriteGate();
+			if (mutes === undefined) {
+				return {
+					ok: false,
+					message: `${this.mutesLoadError ?? "The mutes file could not be loaded."} No mute was applied and the existing file was not modified.`,
+				};
+			}
+			const fingerprint = this.mutesFingerprint;
+			if (mutes.isMuted(hash)) return { ok: true, message: "Finding is already muted." };
+			const before = mutes.list();
+			mutes.mute(hash, label);
+			try {
+				await mutes.save(fingerprint);
+				return { ok: true, message: `Muted ${findingMuteId(hash)} (${label}).` };
+			} catch (error) {
+				mutes.replace(before);
+				if (error instanceof MutesFileChangedError) continue;
+				this.warn("The Advisor mutes file could not be saved; the mute was not applied.");
+				return {
+					ok: false,
+					message: "The Advisor mutes file could not be saved; the mute was not applied.",
+				};
+			}
+		}
+		return {
+			ok: false,
+			message: "The mutes file changed concurrently; the mute was not applied. Try again.",
+		};
+	}
+
+	async unmuteFinding(prefix: string): Promise<{ ok: boolean; message?: string }> {
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const mutes = await this.mutesWriteGate();
+			if (mutes === undefined) {
+				return {
+					ok: false,
+					message: `${this.mutesLoadError ?? "The mutes file could not be loaded."} No unmute was applied and the existing file was not modified.`,
+				};
+			}
+			const fingerprint = this.mutesFingerprint;
+			const matches = mutes.resolve(prefix);
+			if (matches.length === 0) {
+				return {
+					ok: false,
+					message: `No muted finding matches ${prefix}. Run /advisor mute list to see muted findings.`,
+				};
+			}
+			if (matches.length > 1) {
+				const uniquePrefixes = shortestUniquePrefixes(matches.map((entry) => entry.hash));
+				const labels = matches
+					.map(
+						(entry) => `${uniquePrefixes.get(entry.hash) ?? entry.hash.slice(0, 8)} ${entry.label}`,
+					)
+					.join("\n");
+				return {
+					ok: false,
+					message: `Multiple muted findings match ${prefix}. Use one of these longer prefixes:\n${labels}`,
+				};
+			}
+			const match = matches[0];
+			if (match === undefined) {
+				return { ok: false, message: `No muted finding matches ${prefix}.` };
+			}
+			const before = mutes.list();
+			mutes.unmute(match.hash);
+			try {
+				await mutes.save(fingerprint);
+				return { ok: true, message: `Unmuted ${findingMuteId(match.hash)} (${match.label}).` };
+			} catch (error) {
+				mutes.replace(before);
+				if (error instanceof MutesFileChangedError) continue;
+				this.warn("The Advisor mutes file could not be saved; the unmute was not applied.");
+				return {
+					ok: false,
+					message: "The Advisor mutes file could not be saved; the unmute was not applied.",
+				};
+			}
+		}
+		return {
+			ok: false,
+			message: "The mutes file changed concurrently; the unmute was not applied. Try again.",
+		};
+	}
+
+	/**
+	 * The reason the mutes file could not be loaded, or undefined when the
+	 * store is active. While set, muteList() is empty and no mute is enforced.
+	 */
+	mutesUnavailableReason(): string | undefined {
+		return this.mutesLoadError;
+	}
+
+	muteList(): { id: string; label: string }[] {
+		return (this.mutes?.list() ?? []).map((entry) => ({
+			id: findingMuteId(entry.hash),
+			label: entry.label,
+		}));
 	}
 
 	private refreshMemorySuggestionCapability(): MemorySuggestCapability {
@@ -1120,6 +1320,7 @@ export class AdvisorRuntime {
 		this.sessionInitialized = true;
 		this.sessionId = sessionId;
 		this.hostContext = ctx;
+		await this.loadMutes();
 		this.restorePersistedState(ctx);
 		this.refreshDeferredAdviceStatus();
 		this.publishStatus();
@@ -1189,6 +1390,7 @@ export class AdvisorRuntime {
 			await this.enable(ctx, activationSource);
 			this.seedLifecycleReprime(ctx.sessionManager.getBranch(), "configuration-apply");
 		}
+		await this.loadMutes(true);
 		this.persistState();
 		this.publishStatus();
 	}
@@ -1269,6 +1471,7 @@ export class AdvisorRuntime {
 		this.status.memorySuggestionsDelivered = state.memorySuggestions.deliveredCount;
 		this.status.reviewFollowUpsTriggered = state.reviewFollowUpsTriggered ?? 0;
 		this.status.notesDelivered = state.notesDelivered;
+		this.recentFindings.restore(state.recentFindings);
 		if (state.lastReviewSubmittedTurn === undefined) delete this.lastReviewSubmittedTurn;
 		else this.lastReviewSubmittedTurn = state.lastReviewSubmittedTurn;
 		if (state.lastReviewSubmittedAt === undefined) delete this.lastReviewSubmittedAt;
@@ -1494,6 +1697,7 @@ export class AdvisorRuntime {
 				MAX_PERSISTED_DEDUPE_HASHES,
 				transientIdentities,
 			),
+			recentFindings: [...this.recentFindings.entries()],
 			memorySuggestions: {
 				meaningfulTurnCount: this.meaningfulTurnCount,
 				admittedCount: this.memorySuggestionAdmissions,
@@ -1521,6 +1725,12 @@ export class AdvisorRuntime {
 			serializedJsonBytes(state) > MAX_PERSISTED_RUNTIME_STATE_BYTES
 		) {
 			state.dedupeHashes.shift();
+		}
+		while (
+			state.recentFindings.length > 0 &&
+			serializedJsonBytes(state) > MAX_PERSISTED_RUNTIME_STATE_BYTES
+		) {
+			state.recentFindings.shift();
 		}
 		if (
 			state.queuedReview !== undefined &&
@@ -1589,7 +1799,23 @@ export class AdvisorRuntime {
 			value.intent === "review" &&
 			(value.severity === "nit" || value.severity === "concern" || value.severity === "blocker")
 		) {
-			return { ...common, intent: "review", severity: value.severity };
+			const findingKey =
+				typeof value.findingKey === "string" &&
+				Array.from(value.findingKey).length > 0 &&
+				Array.from(value.findingKey).length <= 128
+					? value.findingKey
+					: undefined;
+			const findingKeyHash =
+				typeof value.findingKeyHash === "string" && /^[a-f0-9]{64}$/u.test(value.findingKeyHash)
+					? value.findingKeyHash
+					: undefined;
+			return {
+				...common,
+				intent: "review",
+				severity: value.severity,
+				...(findingKeyHash === undefined ? {} : { findingKeyHash }),
+				...(findingKey === undefined ? {} : { findingKey }),
+			};
 		}
 		if (
 			value.intent !== "memory-suggestion" ||
@@ -1650,6 +1876,7 @@ export class AdvisorRuntime {
 				this.status.notesDelivered++;
 				if (advice !== undefined) {
 					this.adviceDedupe.add(advice, active.turnNumber);
+					this.recordDeliveredFinding(advice);
 					if (advice.intent === "memory-suggestion") {
 						this.recordMemorySuggestionAdmission(advice, active.turnNumber);
 						this.status.memorySuggestionsDelivered++;
@@ -1841,7 +2068,14 @@ export class AdvisorRuntime {
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
-			systemPromptOverride: () => buildAdvisorSystemPrompt(this.config, this.projectInstructions),
+			systemPromptOverride: () =>
+				buildAdvisorSystemPrompt(
+					this.config,
+					this.projectInstructions,
+					this.experimentUpdateText === undefined
+						? undefined
+						: { updateText: this.experimentUpdateText },
+				),
 			appendSystemPromptOverride: () => [],
 		});
 		await resourceLoader.reload();
@@ -2712,6 +2946,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			let thrownFailure: string | undefined;
 			try {
 				this.status.reviewRequests++;
+				this.experimentUpdateText = update.text;
 				await session.prompt(promptForAttempt, {
 					expandPromptTemplates: false,
 					source: "extension",
@@ -2719,6 +2954,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			} catch (error) {
 				thrownFailure = boundedReason(error);
 			} finally {
+				delete this.experimentUpdateText;
 				delete this.currentRun;
 				delete this.collector.memoryPolicy;
 			}
@@ -2944,6 +3180,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			...(displayedInEntry ? { displayedInEntry: true as const } : {}),
 			...(restoredAfterResume ? { restoredAfterResume: true as const } : {}),
 		};
+		const muteId = advice.intent === "review" ? reviewNoteMuteId(advice) : undefined;
 		return advice.intent === "memory-suggestion"
 			? {
 					...common,
@@ -2956,6 +3193,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					intent: advice.intent,
 					severity: advice.severity,
 					...(tag === undefined ? {} : { tag }),
+					...(muteId === undefined ? {} : { muteId }),
+					...(advice.findingKey === undefined ? {} : { findingKey: advice.findingKey }),
+					...(advice.findingKeyHash === undefined ? {} : { findingKeyHash: advice.findingKeyHash }),
 				};
 	}
 
@@ -2974,6 +3214,21 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.refreshMemorySuggestionCapability();
 	}
 
+	/**
+	 * Records a delivered review finding in the bounded recent-findings index
+	 * and the status last-note line (Q6-D1, Q6-A1).
+	 */
+	private recordDeliveredFinding(advice: AcceptedAdvice): void {
+		if (advice.intent !== "review") return;
+		if (advice.findingKeyHash !== undefined && advice.findingKey !== undefined) {
+			this.recentFindings.add(advice.findingKeyHash, advice.findingKey);
+		}
+		this.status.lastNoteCreatedAt = advice.createdAt;
+		this.status.lastNoteSeverity = advice.severity;
+		if (advice.findingKey === undefined) delete this.status.lastNoteFindingKey;
+		else this.status.lastNoteFindingKey = advice.findingKey;
+	}
+
 	private publishLateAdviceEntry(pending: PendingAdvice): void {
 		const details = this.adviceDetails(
 			pending.advice,
@@ -2990,6 +3245,11 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		try {
 			this.pi.appendEntry(ADVISOR_LATE_ENTRY_TYPE, data);
 			pending.displayedInEntry = true;
+			// The note's card is now visible to the user, so it is committed like
+			// the active path: record the finding so its mute ID resolves and the
+			// last-note line reflects it. Without a successful publish, recording
+			// is deferred to materialization.
+			this.recordDeliveredFinding(pending.advice);
 		} catch (error) {
 			this.recordDeliveryFailure(error);
 		}
@@ -3007,6 +3267,14 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		const identity = adviceDedupeKey(advice);
 		if (this.pendingAdvice.has(identity) || this.activeAdvice.has(identity)) {
 			this.status.notesSuppressed++;
+			return undefined;
+		}
+		if (
+			advice.intent === "review" &&
+			advice.findingKeyHash !== undefined &&
+			this.mutes?.isMuted(advice.findingKeyHash) === true
+		) {
+			this.status.mutedSuppressions++;
 			return undefined;
 		}
 		const dedupeDecision = this.adviceDedupe.decide(advice, turnNumber, this.config.dedupe);
@@ -3148,6 +3416,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 						? { deliverAs: "followUp", triggerTurn: true }
 						: { deliverAs: "steer" },
 				);
+				// Record the delivered finding only after the send committed, so a
+				// failed sendMessage cannot make an undelivered finding mute-resolvable
+				// or surface a last note the user never saw.
+				this.recordDeliveredFinding(advice);
 			} catch (error) {
 				if (this.automaticMemoryFollowUpDeliveryId === deliveryId) {
 					delete this.automaticMemoryFollowUpDeliveryId;
@@ -3218,14 +3490,43 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				pending.tag,
 			),
 		);
-		const pending = batch.map(({ value, rendered }) => ({
-			...value,
-			stale: isStale(value),
-			formatted: rendered,
-		}));
-		for (const { advice } of pending) this.adviceDedupe.add(advice, this.meaningfulTurnCount);
+		const pending = batch
+			.map(({ value, rendered }) => ({
+				...value,
+				stale: isStale(value),
+				formatted: rendered,
+			}))
+			.filter((entry) => {
+				// A muted finding suppresses delivery here too: the finding may have
+				// been muted after the note was queued (including restored-after-resume
+				// notes). The entry is already dequeued by the rendered prefix, so it
+				// is dropped without entering model context, without dedupe history,
+				// and without the delivered count, exactly like the deliver() gate.
+				const advice = entry.advice;
+				if (
+					advice.intent === "review" &&
+					advice.findingKeyHash !== undefined &&
+					this.mutes?.isMuted(advice.findingKeyHash) === true
+				) {
+					// The note was registered in the dedupe index when it was queued;
+					// drop that history too so a later unmute can deliver it again.
+					this.adviceDedupe.delete(advice);
+					this.status.mutedSuppressions++;
+					return false;
+				}
+				return true;
+			});
+		for (const { advice } of pending) {
+			this.adviceDedupe.add(advice, this.meaningfulTurnCount);
+			this.recordDeliveredFinding(advice);
+		}
 
 		this.refreshDeferredAdviceStatus();
+		if (pending.length === 0) {
+			this.persistState();
+			this.publishStatus();
+			return undefined;
+		}
 		this.status.notesDelivered += pending.length;
 		this.status.memorySuggestionsDelivered += pending.filter(
 			({ advice }) => advice.intent === "memory-suggestion",
@@ -3283,6 +3584,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		);
 		this.status.notesDelivered++;
 		this.adviceDedupe.add(removed.value.advice, removed.value.turnNumber);
+		this.recordDeliveredFinding(removed.value.advice);
 		if (this.activeReview?.reviewId === removed.value.reviewId) {
 			delete this.activeReview;
 			this.status.restoredActiveReviewPending = false;
@@ -3600,6 +3902,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			utf8TextSetBytes(pending?.successfulMemoryTexts ?? new Set());
 		this.status.pendingTranscriptBytes = bytes;
 		this.status.reviewing = this.activeReview !== undefined && !this.status.paused;
+		this.status.queuedReviews = pending === undefined ? 0 : 1;
 		this.status.backlog = bytes > 0 || this.activeReview !== undefined || this.status.retryPending;
 		this.status.maxPendingTranscriptBytesObserved = Math.max(
 			this.status.maxPendingTranscriptBytesObserved,
@@ -3642,8 +3945,73 @@ export function formatAdvisorFooterStatus(status: AdvisorRuntimeStatus): string 
 		return `Advisor reviewing${modelLabel}`;
 	}
 	const state = status.paused ? "paused" : status.active ? "active" : "inactive";
-	const queuedUnit = status.pendingTranscriptBytes === 1 ? "byte" : "bytes";
-	return `Advisor ${state}${modelLabel}${status.backlog ? ` · ${String(status.pendingTranscriptBytes)} ${queuedUnit} queued` : ""}`;
+	const queued = status.queuedReviews;
+	return `Advisor ${state}${modelLabel}${queued > 0 ? ` · ${String(queued)} review${queued === 1 ? "" : "s"} queued` : ""}`;
+}
+
+export function formatAdvisorStatusShort(status: AdvisorRuntimeStatus, now = Date.now()): string {
+	const state = !status.enabled
+		? "off"
+		: status.paused
+			? "paused"
+			: status.active
+				? "active"
+				: "inactive";
+	const lines = [`Advisor: ${state}`];
+	lines.push(`Model: ${status.model ?? "not configured"} (${status.effort})`);
+	lines.push(
+		`Queued reviews: ${String(status.queuedReviews)}${status.retryPending ? ", retry pending" : ""}`,
+	);
+	const lastNote =
+		status.lastNoteCreatedAt === undefined || status.lastNoteSeverity === undefined
+			? "none"
+			: `${formatAge(status.lastNoteCreatedAt, now)}, ${status.lastNoteSeverity}` +
+				(status.lastNoteFindingKey === undefined ? "" : ` (${status.lastNoteFindingKey})`);
+	lines.push(
+		`Notes: ${String(status.activeNotesPending)} active, ${String(status.deferredNotesPending)} deferred; last note ${lastNote}`,
+	);
+	lines.push(
+		`Session: ${String(status.usage.total)} tokens, $${status.usage.costUsd.toFixed(4)}; caps ${formatCaps(status)}`,
+	);
+	const capability =
+		status.memorySuggestionCapability.state === "available"
+			? `available (${String(status.memorySuggestionsRemaining)} remaining)`
+			: `unavailable (${status.memorySuggestionCapability.reason ?? status.memorySuggestionCapability.state})`;
+	lines.push(
+		`Memory suggestions: ${status.memorySuggestionsEnabled ? "enabled" : "disabled"}; capability ${capability}`,
+	);
+	if (status.inactiveReason) lines.push(`Inactive reason: ${status.inactiveReason}`);
+	if (status.pauseReason) lines.push(`Pause reason: ${status.pauseReason}`);
+	return lines.join("\n");
+}
+
+function formatAge(createdAt: number, now: number): string {
+	const seconds = Math.max(0, Math.floor((now - createdAt) / 1_000));
+	if (seconds < 60) return `${String(seconds)}s ago`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${String(minutes)}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${String(hours)}h ago`;
+	return `${String(Math.floor(hours / 24))}d ago`;
+}
+
+function formatCaps(status: AdvisorRuntimeStatus): string {
+	const tokenCap =
+		status.sessionTokenSoftCap === "off"
+			? "off"
+			: String(status.sessionTokenSoftCap) +
+				(status.paused && status.pauseReason === "Advisor session token soft cap reached"
+					? " reached"
+					: "");
+	const costCap =
+		status.sessionCostSoftCapUsd === "off"
+			? "off"
+			: `$${String(status.sessionCostSoftCapUsd)}` +
+				(status.paused && status.pauseReason === "Advisor session cost soft cap reached"
+					? " reached"
+					: "");
+	if (tokenCap === "off" && costCap === "off") return "off";
+	return `token ${tokenCap}, cost ${costCap}`;
 }
 
 export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
@@ -3672,7 +4040,7 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.retryAttempts)} retry attempts`,
 		`Delivery failures: ${String(status.deliveryFailures)}`,
 		`Lifecycle: ${String(status.branchResets)} resets, ${String(status.staleQueuedMessagesDiscarded)} stale queued messages discarded`,
-		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
+		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.mutedSuppressions)} muted-suppressed, ${status.mutesUnavailable === undefined ? `${String(status.mutedFindings)} muted findings` : "muted findings unavailable"}, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
 		`Memory suggestions: ${status.memorySuggestionsEnabled ? "enabled" : "disabled"}, capability ${status.memorySuggestionCapability.state}, ${String(status.memorySuggestionsDelivered)} delivered, ${String(status.memorySuggestionsRemaining)} remaining, ${String(status.memorySuggestionsPolicySuppressed)} policy-suppressed, ${String(status.memorySuggestionsLimitSuppressed)} limit-suppressed`,
 		`Memory suggestion next eligibility: turn ${String(status.memorySuggestionNextEligibleTurn)}, ${new Date(status.memorySuggestionNextEligibleAt).toISOString()}`,
 		`Restart recovery: active review ${status.restoredActiveReviewPending ? "pending" : "none"}, queued review ${status.restoredQueuedReviewPending ? "pending" : "none"}, ${String(status.restoredActiveDeliveriesPending)} active deliveries pending, replay count ${String(status.restoredReplayCount)}, ${String(status.poisonReviewDrops)} poison drops`,
@@ -3687,6 +4055,9 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 	if (status.lastFailure) lines.push(`Last failure: ${status.lastFailure}`);
 	if (status.lastDeliveryFailure) {
 		lines.push(`Last delivery failure: ${status.lastDeliveryFailure}`);
+	}
+	if (status.mutesUnavailable !== undefined) {
+		lines.push(`Mutes: unavailable - ${status.mutesUnavailable}`);
 	}
 	return lines.join("\n");
 }

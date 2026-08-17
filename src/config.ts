@@ -261,106 +261,122 @@ function positiveSessionCap(
 
 export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 	const defaults = CANONICAL_DEFAULT_ADVISOR_CONFIG;
-	const tools = input.tools.filter(
+	// Programmatic configs built against older shapes may omit groups that were
+	// added after the original release (delivery in Q3, review in Q4, dedupe in
+	// Q5, and later groups). Merge the input over the canonical defaults once so
+	// every group access below falls back to the release default instead of
+	// crashing at extension load; the group objects below stay complete.
+	const merged = { ...defaults, ...input };
+	const tools = merged.tools.filter(
 		(tool, index, values) => READ_ONLY_TOOL_NAMES.includes(tool) && values.indexOf(tool) === index,
 	);
 	return {
-		...input,
+		...merged,
 		version: ADVISOR_CONFIG_VERSION,
 		tools,
 		context: {
 			maxFraction: Math.min(
 				1,
-				finiteAtLeast(input.context.maxFraction, 0.01, defaults.context.maxFraction),
+				finiteAtLeast(merged.context.maxFraction, 0.01, defaults.context.maxFraction),
 			),
-			reserveTokens: finiteAtLeast(input.context.reserveTokens, 0, defaults.context.reserveTokens),
+			reserveTokens: finiteAtLeast(merged.context.reserveTokens, 0, defaults.context.reserveTokens),
 			maxUpdateTokens: finiteAtLeast(
-				input.context.maxUpdateTokens,
+				merged.context.maxUpdateTokens,
 				1,
 				defaults.context.maxUpdateTokens,
 			),
 		},
 		limits: {
-			...input.limits,
+			...merged.limits,
 			maxAdviceCharacters: finiteClamped(
-				input.limits.maxAdviceCharacters,
+				merged.limits.maxAdviceCharacters,
 				1,
 				HARD_LIMITS.maxAdviceCharacters,
 				defaults.limits.maxAdviceCharacters,
 			),
 			maxAdviceTokens: finiteClamped(
-				input.limits.maxAdviceTokens,
+				merged.limits.maxAdviceTokens,
 				1,
 				HARD_LIMITS.maxAdviceTokens,
 				defaults.limits.maxAdviceTokens,
 			),
 			maxAdvisorTurnsPerUpdate: finiteClamped(
-				input.limits.maxAdvisorTurnsPerUpdate,
+				merged.limits.maxAdvisorTurnsPerUpdate,
 				1,
 				HARD_LIMITS.maxAdvisorTurnsPerUpdate,
 				defaults.limits.maxAdvisorTurnsPerUpdate,
 			),
 			maxToolCallsPerUpdate: finiteClamped(
-				input.limits.maxToolCallsPerUpdate,
+				merged.limits.maxToolCallsPerUpdate,
 				0,
 				HARD_LIMITS.maxToolCallsPerUpdate,
 				defaults.limits.maxToolCallsPerUpdate,
 			),
 			maxPendingTranscriptBytes: finiteClamped(
-				input.limits.maxPendingTranscriptBytes,
+				merged.limits.maxPendingTranscriptBytes,
 				1,
 				HARD_LIMITS.maxPendingTranscriptBytes,
 				defaults.limits.maxPendingTranscriptBytes,
 			),
 			maxReprimeTokens: finiteClamped(
-				input.limits.maxReprimeTokens,
+				merged.limits.maxReprimeTokens,
 				1,
 				HARD_LIMITS.maxReprimeTokens,
 				defaults.limits.maxReprimeTokens,
 			),
 			minTurnsBetweenReviews: finiteAtLeast(
-				input.limits.minTurnsBetweenReviews,
+				merged.limits.minTurnsBetweenReviews,
 				1,
 				defaults.limits.minTurnsBetweenReviews,
 			),
-			minIntervalMs: finiteAtLeast(input.limits.minIntervalMs, 0, defaults.limits.minIntervalMs),
+			minIntervalMs: finiteAtLeast(merged.limits.minIntervalMs, 0, defaults.limits.minIntervalMs),
 			deferredAdviceRetentionHours: finiteAtLeast(
-				input.limits.deferredAdviceRetentionHours,
+				merged.limits.deferredAdviceRetentionHours,
 				0,
 				defaults.limits.deferredAdviceRetentionHours,
 			),
 			sessionTokenSoftCap: positiveSessionCap(
-				input.limits.sessionTokenSoftCap,
+				merged.limits.sessionTokenSoftCap,
 				defaults.limits.sessionTokenSoftCap,
 			),
 			sessionCostSoftCapUsd: positiveSessionCap(
-				input.limits.sessionCostSoftCapUsd,
+				merged.limits.sessionCostSoftCapUsd,
 				defaults.limits.sessionCostSoftCapUsd,
 			),
 		},
 		security: {
-			additionalProtectedPaths: [...input.security.additionalProtectedPaths],
-			protectedPathExceptions: [...input.security.protectedPathExceptions],
+			additionalProtectedPaths: [
+				...((merged.security as Partial<AdvisorConfig["security"]>).additionalProtectedPaths ?? []),
+			],
+			protectedPathExceptions: [
+				...((merged.security as Partial<AdvisorConfig["security"]>).protectedPathExceptions ?? []),
+			],
 		},
 		delivery: {
-			activeIdleSeverities: input.delivery.activeIdleSeverities.filter(
+			// The merged defaults above cover a wholly missing group; a
+			// present-but-partial group (for example `delivery: {}` from a
+			// programmatic config) still needs the sub-field fallback.
+			activeIdleSeverities: (
+				(merged.delivery as Partial<AdvisorConfig["delivery"]>).activeIdleSeverities ??
+				defaults.delivery.activeIdleSeverities
+			).filter(
 				(severity, index, values) =>
 					isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
 			),
 		},
-		review: normalizeReviewConfig(input.review, input.limits.minTurnsBetweenReviews),
+		review: normalizeReviewConfig(merged.review, merged.limits.minTurnsBetweenReviews),
 		dedupe: {
 			similarityRedeliveryThreshold: Math.min(
 				1,
 				finiteAtLeast(
-					input.dedupe.similarityRedeliveryThreshold,
+					merged.dedupe.similarityRedeliveryThreshold,
 					0,
 					defaults.dedupe.similarityRedeliveryThreshold,
 				),
 			),
 			reRaiseMinTurns: Math.floor(
 				finiteClamped(
-					input.dedupe.reRaiseMinTurns,
+					merged.dedupe.reRaiseMinTurns,
 					0,
 					HARD_LIMITS.reRaiseMinTurns,
 					defaults.dedupe.reRaiseMinTurns,
@@ -368,38 +384,44 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 			),
 		},
 		memorySuggestions: {
-			enabled: input.memorySuggestions.enabled,
+			enabled:
+				(merged.memorySuggestions as Partial<MemorySuggestionConfig>).enabled ??
+				defaults.memorySuggestions.enabled,
 			minTurnsBetweenSuggestions: finiteAtLeast(
-				input.memorySuggestions.minTurnsBetweenSuggestions,
+				merged.memorySuggestions.minTurnsBetweenSuggestions,
 				0,
 				defaults.memorySuggestions.minTurnsBetweenSuggestions,
 			),
 			minIntervalMs: finiteAtLeast(
-				input.memorySuggestions.minIntervalMs,
+				merged.memorySuggestions.minIntervalMs,
 				0,
 				defaults.memorySuggestions.minIntervalMs,
 			),
 			sessionSuggestionCap: Math.floor(
 				finiteAtLeast(
-					input.memorySuggestions.sessionSuggestionCap,
+					merged.memorySuggestions.sessionSuggestionCap,
 					0,
 					defaults.memorySuggestions.sessionSuggestionCap,
 				),
 			),
 			maxProposedMemoryCharacters: finiteClamped(
-				input.memorySuggestions.maxProposedMemoryCharacters,
+				merged.memorySuggestions.maxProposedMemoryCharacters,
 				1,
 				HARD_LIMITS.maxProposedMemoryCharacters,
 				defaults.memorySuggestions.maxProposedMemoryCharacters,
 			),
 			maxProposedMemoryTokens: finiteClamped(
-				input.memorySuggestions.maxProposedMemoryTokens,
+				merged.memorySuggestions.maxProposedMemoryTokens,
 				1,
 				HARD_LIMITS.maxProposedMemoryTokens,
 				defaults.memorySuggestions.maxProposedMemoryTokens,
 			),
 		},
-		persistence: { ...input.persistence },
+		persistence: {
+			transcript:
+				(merged.persistence as Partial<AdvisorConfig["persistence"]>).transcript ??
+				defaults.persistence.transcript,
+		},
 	};
 }
 

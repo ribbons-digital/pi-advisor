@@ -16,9 +16,11 @@ import {
 	MAX_WATCHDOG_YAML_BYTES,
 	mergeProjectConfiguration,
 	normalizeAdvisorConfig,
+	type AdvisorConfig,
 	pickAdvisorInteractiveConfiguration,
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
+	publishConfigurationWarnings,
 	saveUserConfigurationAtomic,
 	serializeUserConfiguration,
 } from "../../src/index.js";
@@ -210,10 +212,14 @@ describe("WATCHDOG configuration", () => {
 	it("opens the RPC instructions editor only after Add is selected", async () => {
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Add custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Add custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const editor = vi.fn().mockResolvedValue("Focus on migration safety.");
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
@@ -231,9 +237,13 @@ describe("WATCHDOG configuration", () => {
 			tools: ["read", "grep", "find", "ls"],
 			instructions: "Focus on migration safety.",
 		});
-		expect(select).toHaveBeenLastCalledWith(
+		expect(select.mock.calls).toContainEqual([
 			"Choose optional User Advisor instructions for this configuration",
 			["Continue without custom instructions", "Add custom instructions"],
+		]);
+		expect(select).toHaveBeenLastCalledWith(
+			"Configure Advisor (edit one section, then Apply)",
+			expect.arrayContaining(["Apply and save configuration", "Cancel"]),
 		);
 		expect(editor).toHaveBeenCalledWith(expect.stringContaining("Configuration step: add"), "");
 	});
@@ -241,10 +251,14 @@ describe("WATCHDOG configuration", () => {
 	it("normalizes whitespace-only editor input to no instructions", async () => {
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Add custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Add custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
 				mode: "rpc",
@@ -266,9 +280,13 @@ describe("WATCHDOG configuration", () => {
 		const custom = vi.fn().mockResolvedValue("fixture/advisor");
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Continue without custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Continue without custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const editor = vi.fn();
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
@@ -282,10 +300,10 @@ describe("WATCHDOG configuration", () => {
 		);
 		expect(configured?.instructions).toBe("");
 		expect(editor).not.toHaveBeenCalled();
-		expect(select).toHaveBeenLastCalledWith(
+		expect(select.mock.calls).toContainEqual([
 			"Choose optional User Advisor instructions for this configuration",
 			["Continue without custom instructions", "Add custom instructions"],
-		);
+		]);
 	});
 
 	it("offers deliberate keep, edit, and clear choices for existing instructions", async () => {
@@ -297,10 +315,14 @@ describe("WATCHDOG configuration", () => {
 		for (const testCase of cases) {
 			const select = vi
 				.fn<ExtensionCommandContext["ui"]["select"]>()
+				.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 				.mockResolvedValueOnce("fixture/advisor")
 				.mockResolvedValueOnce("high")
+				.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 				.mockResolvedValueOnce("Done - use 4 read-only tools")
-				.mockResolvedValueOnce(testCase.choice);
+				.mockResolvedValueOnce("Instructions: set")
+				.mockResolvedValueOnce(testCase.choice)
+				.mockResolvedValueOnce("Apply and save configuration");
 			const editor = vi.fn().mockResolvedValue("Updated focus.");
 			const current = structuredClone(DEFAULT_ADVISOR_CONFIG);
 			current.instructions = "Current focus.";
@@ -315,10 +337,10 @@ describe("WATCHDOG configuration", () => {
 				current,
 			);
 			expect(configured?.instructions).toBe(testCase.expected);
-			expect(select).toHaveBeenLastCalledWith(
+			expect(select.mock.calls).toContainEqual([
 				"Choose optional User Advisor instructions for this configuration",
 				["Keep current instructions", "Edit instructions", "Clear instructions"],
-			);
+			]);
 			if (testCase.opensEditor) {
 				expect(editor).toHaveBeenCalledWith(
 					expect.stringContaining("Configuration step: edit"),
@@ -336,11 +358,15 @@ describe("WATCHDOG configuration", () => {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("low")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("[x] ls - list directories")
 			.mockResolvedValueOnce("Done - use 3 read-only tools")
-			.mockResolvedValueOnce("Add custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Add custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const notify = vi.fn();
 		const confirm = vi.fn().mockResolvedValue(true);
 		const applyConfiguration = vi.fn().mockResolvedValue(undefined);
@@ -396,10 +422,14 @@ describe("WATCHDOG configuration", () => {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const select = vi
 			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
 			.mockResolvedValueOnce("fixture/advisor")
 			.mockResolvedValueOnce("medium")
+			.mockResolvedValueOnce("Read-only tools: read, grep, find, ls")
 			.mockResolvedValueOnce("Done - use 4 read-only tools")
-			.mockResolvedValueOnce("Continue without custom instructions");
+			.mockResolvedValueOnce("Instructions: none")
+			.mockResolvedValueOnce("Continue without custom instructions")
+			.mockResolvedValueOnce("Apply and save configuration");
 		const editor = vi.fn();
 		const confirm = vi.fn().mockResolvedValue(true);
 		const applyConfiguration = vi.fn().mockResolvedValue(undefined);
@@ -434,7 +464,16 @@ describe("WATCHDOG configuration", () => {
 		const scenarios = [
 			{
 				name: "instructions choice",
-				selections: ["fixture/advisor", "medium", "Done - use 4 read-only tools", undefined],
+				selections: [
+					"Model and reasoning: not configured (high)",
+					"fixture/advisor",
+					"medium",
+					"Read-only tools: read, grep, find, ls",
+					"Done - use 4 read-only tools",
+					"Instructions: none",
+					undefined,
+					"Cancel",
+				],
 				editorResult: "unused",
 				confirmResult: true,
 				expectedConfirmCalls: 0,
@@ -442,10 +481,14 @@ describe("WATCHDOG configuration", () => {
 			{
 				name: "instructions editor",
 				selections: [
+					"Model and reasoning: not configured (high)",
 					"fixture/advisor",
 					"medium",
+					"Read-only tools: read, grep, find, ls",
 					"Done - use 4 read-only tools",
+					"Instructions: none",
 					"Add custom instructions",
+					"Cancel",
 				],
 				editorResult: undefined,
 				confirmResult: true,
@@ -454,10 +497,14 @@ describe("WATCHDOG configuration", () => {
 			{
 				name: "final confirmation",
 				selections: [
+					"Model and reasoning: not configured (high)",
 					"fixture/advisor",
 					"medium",
+					"Read-only tools: read, grep, find, ls",
 					"Done - use 4 read-only tools",
+					"Instructions: none",
 					"Continue without custom instructions",
+					"Apply and save configuration",
 				],
 				editorResult: "unused",
 				confirmResult: false,
@@ -1217,5 +1264,137 @@ describe("Quality Slice Q5 dedupe configuration", () => {
 			similarityRedeliveryThreshold: 0.5,
 			reRaiseMinTurns: 0,
 		});
+	});
+});
+
+describe("Quality Slice Q6 batched configuration warnings (F14)", () => {
+	it("publishes one combined notify with one line per warning", () => {
+		const notify = vi.fn();
+		const ctx = {
+			hasUI: true,
+			ui: { notify },
+		} as unknown as ExtensionCommandContext;
+		publishConfigurationWarnings(ctx, [
+			{ source: "user", path: "~/.pi/agent/WATCHDOG.yml", message: "first warning" },
+			{ source: "project", path: ".pi/WATCHDOG.yml", message: "second warning" },
+			{ source: "user", path: "~/.pi/agent/WATCHDOG.yml", message: "third warning" },
+		]);
+		expect(notify).toHaveBeenCalledTimes(1);
+		expect(notify).toHaveBeenCalledWith("first warning\nsecond warning\nthird warning", "warning");
+	});
+
+	it("stays silent without a UI and without warnings", () => {
+		const notify = vi.fn();
+		const ctx = {
+			hasUI: false,
+			ui: { notify },
+		} as unknown as ExtensionCommandContext;
+		publishConfigurationWarnings(ctx, [{ source: "user", path: "x", message: "ignored" }]);
+		expect(notify).not.toHaveBeenCalled();
+		const withUi = { hasUI: true, ui: { notify } } as unknown as ExtensionCommandContext;
+		publishConfigurationWarnings(withUi, []);
+		expect(notify).not.toHaveBeenCalled();
+	});
+});
+
+describe("Quality Slice Q6 configure menu model gate (F12)", () => {
+	it("refuses Apply without a model, notifies, and loops back to the menu", async () => {
+		const select = vi
+			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Apply and save configuration")
+			.mockResolvedValueOnce("Cancel");
+		const notify = vi.fn();
+		const configured = await pickAdvisorInteractiveConfiguration(
+			{
+				mode: "rpc",
+				modelRegistry: {
+					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
+				} as ExtensionCommandContext["modelRegistry"],
+				ui: { select, editor: vi.fn(), notify } as unknown as ExtensionCommandContext["ui"],
+			},
+			structuredClone(DEFAULT_ADVISOR_CONFIG),
+		);
+		expect(configured).toBeUndefined();
+		expect(notify).toHaveBeenCalledWith(
+			expect.stringContaining("Select an Advisor model first"),
+			"warning",
+		);
+		expect(select).toHaveBeenCalledTimes(2);
+	});
+
+	it("applies normally once a model is selected in the menu", async () => {
+		const select = vi
+			.fn<ExtensionCommandContext["ui"]["select"]>()
+			.mockResolvedValueOnce("Model and reasoning: not configured (high)")
+			.mockResolvedValueOnce("fixture/advisor")
+			.mockResolvedValueOnce("high")
+			.mockResolvedValueOnce("Apply and save configuration");
+		const configured = await pickAdvisorInteractiveConfiguration(
+			{
+				mode: "rpc",
+				modelRegistry: {
+					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
+				} as ExtensionCommandContext["modelRegistry"],
+				ui: {
+					select,
+					editor: vi.fn(),
+					notify: vi.fn(),
+				} as unknown as ExtensionCommandContext["ui"],
+			},
+			structuredClone(DEFAULT_ADVISOR_CONFIG),
+		);
+		expect(configured).toMatchObject({ model: "fixture/advisor", effort: "high" });
+		expect(select).toHaveBeenCalledTimes(4);
+	});
+});
+
+describe("Quality Slice Q6 legacy programmatic configuration (verified defect fix)", () => {
+	it("normalizes a legacy programmatic config missing every post-original group", () => {
+		const legacy = structuredClone(DEFAULT_ADVISOR_CONFIG) as Partial<AdvisorConfig>;
+		// A config built against the original shape lacks every group added
+		// later: delivery (Q3), review (Q4), dedupe (Q5), and the later
+		// memorySuggestions and persistence groups; deleting the original groups
+		// too proves the merge-over-defaults fallback is complete.
+		delete legacy.tools;
+		delete legacy.context;
+		delete legacy.limits;
+		delete legacy.security;
+		delete legacy.delivery;
+		delete legacy.review;
+		delete legacy.dedupe;
+		delete legacy.memorySuggestions;
+		delete legacy.persistence;
+		const normalized = normalizeAdvisorConfig(legacy as AdvisorConfig);
+		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
+		expect(normalized.dedupe.similarityRedeliveryThreshold).toBe(0.5);
+		expect(normalized.dedupe.reRaiseMinTurns).toBe(4);
+		expect(normalized.review.skipNonMaterialTurns).toBe(false);
+		expect(normalized.memorySuggestions.enabled).toBe(true);
+		expect(normalized.persistence.transcript).toBe(true);
+		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
+		expect(normalized.tools).toEqual(["read", "grep", "find", "ls"]);
+	});
+
+	it("normalizes present-but-partial groups against the release defaults", () => {
+		const partial = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		partial.delivery = {} as AdvisorConfig["delivery"];
+		partial.security = {} as AdvisorConfig["security"];
+		partial.dedupe = {} as AdvisorConfig["dedupe"];
+		partial.review = {} as AdvisorConfig["review"];
+		partial.context = {} as AdvisorConfig["context"];
+		partial.limits = {} as AdvisorConfig["limits"];
+		partial.memorySuggestions = {} as AdvisorConfig["memorySuggestions"];
+		partial.persistence = {} as AdvisorConfig["persistence"];
+		const normalized = normalizeAdvisorConfig(partial);
+		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
+		expect(normalized.security.additionalProtectedPaths).toEqual([]);
+		expect(normalized.security.protectedPathExceptions).toEqual([]);
+		expect(normalized.dedupe.similarityRedeliveryThreshold).toBe(0.5);
+		expect(normalized.dedupe.reRaiseMinTurns).toBe(4);
+		expect(normalized.review.skipNonMaterialTurns).toBe(false);
+		expect(normalized.context.maxFraction).toBe(0.65);
+		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
+		expect(normalized.memorySuggestions.enabled).toBe(true);
+		expect(normalized.persistence.transcript).toBe(true);
 	});
 });

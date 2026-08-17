@@ -3,7 +3,7 @@ export interface RedactionResult {
 	redactions: number;
 }
 
-const REDACTION = "[REDACTED]";
+export const REDACTION = "[REDACTED]";
 
 const PATTERNS: RegExp[] = [
 	/-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9]+)? PRIVATE KEY-----/g,
@@ -30,6 +30,32 @@ export function redactSecrets(input: string): RedactionResult {
 		});
 	}
 	return { text, redactions };
+}
+
+/**
+ * Replaces terminal control characters (C0 including ESC and DEL, and C1)
+ * with U+FFFD so untrusted model-authored text cannot inject escape
+ * sequences into the terminal; tab and newline are kept for multi-line
+ * advice text. Use {@link containsTerminalControlCharacters} when single-line
+ * text must reject tab and newline too.
+ */
+export function sanitizeTerminalText(input: string): string {
+	let output = "";
+	for (const character of input) {
+		const codePoint = character.codePointAt(0) ?? 0;
+		const allowedWhitespace = codePoint === 0x9 || codePoint === 0xa;
+		const control = codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f);
+		output += allowedWhitespace || !control ? character : "\uFFFD";
+	}
+	return output;
+}
+
+/** True when the text contains any terminal control character, including tab, newline, and carriage return. */
+export function containsTerminalControlCharacters(input: string): boolean {
+	return Array.from(input).some((character) => {
+		const codePoint = character.codePointAt(0) ?? 0;
+		return codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f);
+	});
 }
 
 export function estimateTokens(text: string): number {

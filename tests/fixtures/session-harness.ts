@@ -25,7 +25,7 @@ export interface SessionHarnessOptions {
 	sessionManager?: SessionManager;
 	tools?: string[];
 	mode?: "tui" | "rpc" | "json" | "print";
-	setup?(cwd: string, agentDir: string): Promise<void>;
+	setup?(cwd: string, agentDir: string): Promise<void> | void;
 	beforeBind?(modelRuntime: ModelRuntime): Promise<void> | void;
 }
 

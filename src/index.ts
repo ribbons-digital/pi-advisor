@@ -30,9 +30,11 @@ import {
 	formatAdvisorEnableStatus,
 	formatAdvisorFooterStatus,
 	formatAdvisorStatus,
+	formatAdvisorStatusShort,
 	shouldAnimateAdvisorFooter,
 	type AdvisorRuntimeHooks,
 } from "./runtime.js";
+import { isHexPrefix, shortestUniquePrefixes } from "./mutes.js";
 
 export interface PiAdvisorExtensionOptions {
 	config?: AdvisorConfig;
@@ -41,12 +43,13 @@ export interface PiAdvisorExtensionOptions {
 	};
 }
 
-function publishConfigurationWarnings(
+export function publishConfigurationWarnings(
 	ctx: ExtensionCommandContext | Parameters<AdvisorRuntime["startSession"]>[0],
 	warnings: ConfigurationWarning[],
 ): void {
-	if (!ctx.hasUI) return;
-	for (const warning of warnings) ctx.ui.notify(warning.message, "warning");
+	if (!ctx.hasUI || warnings.length === 0) return;
+	// F14: one combined notify with one line per warning instead of per-warning notifies.
+	ctx.ui.notify(warnings.map((warning) => warning.message).join("\n"), "warning");
 }
 
 export const CONFIGURATION_REFERENCE =
@@ -168,18 +171,43 @@ export async function pickAdvisorInteractiveConfiguration(
 	ctx: AdvisorPickerContext,
 	current: AdvisorConfig,
 ): Promise<AdvisorConfig | undefined> {
-	const modelAndEffort = await pickAdvisorModelAndEffort(ctx, current);
-	if (modelAndEffort === undefined) return undefined;
-	const tools = await pickAdvisorTools(ctx, current.tools);
-	if (tools === undefined) return undefined;
-	const instructions = await pickAdvisorInstructions(ctx, current.instructions);
-	if (instructions === undefined) return undefined;
-	return normalizeAdvisorConfig({
-		...structuredClone(current),
-		...modelAndEffort,
-		tools,
-		instructions,
-	});
+	// F12: section menu; each section edits only its own values, Apply performs
+	// the single confirmation plus atomic save, Cancel discards all pending edits.
+	let draft = normalizeAdvisorConfig(structuredClone(current));
+	for (;;) {
+		const choices = [
+			`Model and reasoning: ${draft.model ?? "not configured"} (${draft.effort})`,
+			`Read-only tools: ${draft.tools.join(", ") || "none"}`,
+			`Instructions: ${draft.instructions.trim().length === 0 ? "none" : "set"}`,
+			"Apply and save configuration",
+			"Cancel",
+		];
+		const choice = await ctx.ui.select("Configure Advisor (edit one section, then Apply)", choices);
+		if (choice === undefined || choice === "Cancel") return undefined;
+		if (choice === "Apply and save configuration") {
+			if (draft.model === undefined) {
+				ctx.ui.notify(
+					"Select an Advisor model first. Advisor never selects a model automatically, so configuration cannot be applied without one.",
+					"warning",
+				);
+				continue;
+			}
+			return draft;
+		}
+		if (choice.startsWith("Model and reasoning")) {
+			const modelAndEffort = await pickAdvisorModelAndEffort(ctx, draft);
+			if (modelAndEffort === undefined) continue;
+			draft = normalizeAdvisorConfig({ ...structuredClone(draft), ...modelAndEffort });
+		} else if (choice.startsWith("Read-only tools")) {
+			const tools = await pickAdvisorTools(ctx, draft.tools);
+			if (tools === undefined) continue;
+			draft = normalizeAdvisorConfig({ ...structuredClone(draft), tools });
+		} else if (choice.startsWith("Instructions")) {
+			const instructions = await pickAdvisorInstructions(ctx, draft.instructions);
+			if (instructions === undefined) continue;
+			draft = normalizeAdvisorConfig({ ...structuredClone(draft), instructions });
+		}
+	}
 }
 
 export async function configureAdvisor(
@@ -356,6 +384,10 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 				return;
 			}
 			if (command === "status") {
+				ctx.ui.notify(formatAdvisorStatusShort(runtime.getStatus()), "info");
+				return;
+			}
+			if (command === "status full") {
 				ctx.ui.notify(formatAdvisorStatus(runtime.getStatus()), "info");
 				return;
 			}
@@ -363,8 +395,71 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 				ctx.ui.notify(runtime.formatDiagnosticsDump(), "info");
 				return;
 			}
+			if (command === "mute list") {
+				const unavailable = runtime.mutesUnavailableReason();
+				if (unavailable !== undefined) {
+					ctx.ui.notify(
+						`Mutes are unavailable: ${unavailable} No mute is active and the mutes file was not modified.`,
+						"info",
+					);
+					return;
+				}
+				const mutes = runtime.muteList();
+				ctx.ui.notify(
+					mutes.length === 0
+						? "No findings are muted."
+						: mutes.map((mute) => `${mute.id} ${mute.label}`).join("\n"),
+					"info",
+				);
+				return;
+			}
+			if (command.startsWith("mute ")) {
+				const prefix = command.slice("mute ".length);
+				if (!isHexPrefix(prefix)) {
+					ctx.ui.notify(
+						"Usage: /advisor mute <id> where <id> is an 8-to-64-character hex prefix of the findingKeyHash shown on an Advice card (for example /advisor mute a1b2c3d4).",
+						"info",
+					);
+					return;
+				}
+				const resolved = runtime.resolveMuteTarget(prefix);
+				if (resolved.kind === "unknown") {
+					ctx.ui.notify(
+						`No recent delivered finding matches ${prefix}. The recent-findings index keeps only the last 128 delivered findings, so older findings cannot be muted by ID.`,
+						"info",
+					);
+				} else if (resolved.kind === "collision") {
+					const uniquePrefixes = shortestUniquePrefixes(
+						resolved.matches.map((match) => match.hash),
+					);
+					ctx.ui.notify(
+						`Multiple recent findings match ${prefix}. Use one of these longer prefixes:\n${resolved.matches.map((match) => `${uniquePrefixes.get(match.hash) ?? match.hash.slice(0, 8)} ${match.label}`).join("\n")}`,
+						"info",
+					);
+				} else {
+					const result = await runtime.muteFinding(resolved.hash, resolved.label);
+					ctx.ui.notify(
+						result.message ?? `Muted ${resolved.hash.slice(0, 8)}.`,
+						result.ok ? "info" : "warning",
+					);
+				}
+				return;
+			}
+			if (command.startsWith("unmute ")) {
+				const prefix = command.slice("unmute ".length);
+				if (!isHexPrefix(prefix)) {
+					ctx.ui.notify(
+						"Usage: /advisor unmute <id> where <id> is an 8-to-64-character hex prefix of a muted findingKeyHash shown by /advisor mute list.",
+						"info",
+					);
+					return;
+				}
+				const result = await runtime.unmuteFinding(prefix);
+				ctx.ui.notify(result.message ?? "Unmuted.", result.ok ? "info" : "warning");
+				return;
+			}
 			ctx.ui.notify(
-				"Usage: /advisor configure | /advisor on | /advisor off | /advisor status | /advisor dump",
+				"Usage: /advisor configure | /advisor on | /advisor off | /advisor status [full] | /advisor dump | /advisor mute <id> | /advisor unmute <id> | /advisor mute list",
 				"info",
 			);
 		},
@@ -453,6 +548,7 @@ export * from "./config.js";
 export * from "./configuration.js";
 export * from "./delivery.js";
 export * from "./model-picker.js";
+export * from "./mutes.js";
 export * from "./persistence.js";
 export * from "./presentation.js";
 export * from "./redaction.js";

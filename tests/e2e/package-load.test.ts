@@ -399,7 +399,7 @@ export default function(pi) {
 				],
 				root,
 				env,
-				`${JSON.stringify({ id: "review", type: "prompt", message: "Run one review." })}\n${JSON.stringify({ id: "schema-status", type: "prompt", message: "/advisor status" })}\n`,
+				`${JSON.stringify({ id: "review", type: "prompt", message: "Run one review." })}\n${JSON.stringify({ id: "schema-status", type: "prompt", message: "/advisor status full" })}\n`,
 			);
 			expect(activeReview.status, activeReview.stderr).toBe(0);
 			expect(activeReview.stdout).toContain('"statusText":"Advisor active (Packed advisor)"');
@@ -464,7 +464,7 @@ export default function(pi) {
 					],
 					root,
 					env,
-					`${JSON.stringify({ id: "portable-status", type: "prompt", message: "/advisor status" })}\n`,
+					`${JSON.stringify({ id: "portable-status", type: "prompt", message: "/advisor status full" })}\n`,
 				);
 				expect(portableModel.status, portableModel.stderr).toBe(0);
 				expect(portableModel.stdout).toContain("Advise schema: portable");
@@ -486,7 +486,7 @@ export default function(pi) {
 				],
 				root,
 				env,
-				`${JSON.stringify({ id: "persisted-status", type: "prompt", message: "/advisor status" })}\n`,
+				`${JSON.stringify({ id: "persisted-status", type: "prompt", message: "/advisor status full" })}\n`,
 			);
 			expect(persistedRpc.status, persistedRpc.stderr).toBe(0);
 			expect(persistedRpc.stdout).toContain("Effort: low");
@@ -532,7 +532,7 @@ export default function(pi) {
 				],
 				root,
 				env,
-				`${JSON.stringify({ id: "opted-out-status", type: "prompt", message: "/advisor status" })}\n`,
+				`${JSON.stringify({ id: "opted-out-status", type: "prompt", message: "/advisor status full" })}\n`,
 			);
 			expect(optedOut.status, optedOut.stderr).toBe(0);
 			expect(optedOut.stdout).toContain("Local redacted activity record: disabled");
@@ -551,7 +551,7 @@ export default function(pi) {
 				],
 				root,
 				env,
-				`${JSON.stringify({ id: "malformed-status", type: "prompt", message: "/advisor status" })}\n`,
+				`${JSON.stringify({ id: "malformed-status", type: "prompt", message: "/advisor status full" })}\n`,
 			);
 			expect(malformed.status, malformed.stderr).toBe(0);
 			expect(malformed.stdout).toContain("contains malformed YAML and was ignored");
