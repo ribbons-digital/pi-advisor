@@ -556,12 +556,12 @@ function createGrepTool(cwd: string, policy: ProtectedPathPolicy) {
 
 export function createProtectedAdvisorTools(cwd: string, config: AdvisorConfig): ToolDefinition[] {
 	const policy = new ProtectedPathPolicy(cwd, config.security);
-	const factories: Record<ReadOnlyToolName, () => ToolDefinition> = {
+	const factories = {
 		read: () => createReadTool(cwd, policy),
 		grep: () => createGrepTool(cwd, policy),
 		find: () => createFindTool(cwd, policy),
 		ls: () => createLsTool(cwd, policy),
-	};
+	} satisfies Record<ReadOnlyToolName, () => ToolDefinition>;
 	return config.tools.map((name) => factories[name]());
 }
 

@@ -361,7 +361,7 @@ export function adviceDedupeKey(advice: AdviceDedupeIdentity): string {
 	return createHash("sha256").update(identity).digest("hex");
 }
 
-const SEVERITY_RANK: Record<AdviceSeverity, number> = { nit: 0, concern: 1, blocker: 2 };
+const SEVERITY_RANK = { nit: 0, concern: 1, blocker: 2 } satisfies Record<AdviceSeverity, number>;
 
 export function isAdviceSeverity(value: unknown): value is AdviceSeverity {
 	return value === "nit" || value === "concern" || value === "blocker";
@@ -923,7 +923,7 @@ function prepareStrictAdviseArguments(raw: unknown): unknown {
 				basis: selectedOwnValue(rawMemory, "basis", null),
 			}
 		: rawMemory;
-	const prepared: Readonly<Record<string, unknown>> = {
+	const prepared = {
 		note: selectedOwnValue(raw, "note", undefined),
 		intent: selectedOwnValue(raw, "intent", null),
 		severity: selectedOwnValue(raw, "severity", null),
