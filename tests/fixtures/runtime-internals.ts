@@ -104,8 +104,9 @@ export interface AdvisorRuntimeTestInternals {
 	updateBacklogStatus(): void;
 }
 
-export function runtimeInternals(runtime: AdvisorRuntime): AdvisorRuntimeTestInternals {
-	// SAFETY: tests read the AdvisorRuntime private layout through this named contract.
-	// A direct assertion is rejected because config is private on AdvisorRuntime.
-	return runtime as never;
+export function runtimeInternals(runtime: AdvisorRuntime): AdvisorRuntimeTestInternals;
+export function runtimeInternals(
+	runtime: AdvisorRuntime | AdvisorRuntimeTestInternals,
+): AdvisorRuntime | AdvisorRuntimeTestInternals {
+	return runtime;
 }
