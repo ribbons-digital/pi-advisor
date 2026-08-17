@@ -112,7 +112,7 @@ export type AdviseWireInput = Static<typeof ADVISE_WIRE_SCHEMA>;
 const STRICT_MEMORY_ARGUMENT_GUIDANCE =
 	"When intent is memory-suggestion, provide memory.text, memory.category, and memory.basis. Otherwise use null for memory.";
 
-const STRICT_ADVISE_WIRE_SCHEMA_SHAPE = Type.Object(
+const STRICT_ADVISE_WIRE_OBJECT = Type.Object(
 	{
 		note: Type.Unsafe<unknown>({
 			type: "string",
@@ -154,7 +154,7 @@ const STRICT_ADVISE_WIRE_SCHEMA_SHAPE = Type.Object(
 );
 
 /** Provider-compatible, closed schema used only when constrained sampling is available. */
-export const STRICT_ADVISE_WIRE_SCHEMA = Type.Unsafe<unknown>(STRICT_ADVISE_WIRE_SCHEMA_SHAPE);
+export const STRICT_ADVISE_WIRE_SCHEMA = Type.Unsafe<unknown>(STRICT_ADVISE_WIRE_OBJECT);
 
 const ADVISE_WIRE_VALIDATION_TOOL = {
 	name: "advise",
