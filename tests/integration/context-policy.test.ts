@@ -14,6 +14,7 @@ import {
 	type AdvisorConfig,
 	type AdvisorRuntime,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	ADVISOR_SCRIPTED_API,
@@ -346,8 +347,8 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 				throw new Error("Expected Advisor runtime and captured extension context");
 			}
 
-			const internalStatus = Reflect.get(runtime, "status") as { active: boolean };
-			internalStatus.active = false;
+			const internals = runtimeInternals(runtime);
+			internals.status.active = false;
 			await runtime.enable(hostContext, "session-command", true);
 
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
@@ -355,7 +356,7 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 			expect(resetReview).toContain("INACTIVE-INTERVAL-TWO");
 			expect(runtime.getStatus().active).toBe(true);
 			expect(runtime.getStatus().pendingTranscriptBytes).toBe(0);
-			expect(Reflect.get(runtime, "cadenceTimer")).toBeUndefined();
+			expect(internals.cadenceTimer).toBeUndefined();
 			expect(advisor.requests).toHaveLength(2);
 		} finally {
 			await harness.dispose();
@@ -645,7 +646,8 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 						entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
 						typeof entry.data === "object" &&
 						entry.data !== null &&
-						Reflect.get(entry.data, "kind") === "failure",
+						"kind" in entry.data &&
+						entry.data.kind === "failure",
 				);
 			expect(failureRecords).toHaveLength(0);
 			expect(runtime?.getStatus().usage).toMatchObject({

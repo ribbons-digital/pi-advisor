@@ -17,6 +17,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -160,9 +161,8 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			await harness.session.prompt("newer review window");
 			await waitFor(
 				() =>
-					(
-						Reflect.get(runtime as object, "pendingUpdate") as { text: string } | undefined
-					)?.text.includes("NEWER-WINDOW") === true,
+					runtime !== undefined &&
+					runtimeInternals(runtime).pendingUpdate?.text.includes("NEWER-WINDOW") === true,
 			);
 			firstReview.release();
 			await firstTurn;
@@ -221,9 +221,8 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			await harness.session.prompt("later review window");
 			await waitFor(
 				() =>
-					(
-						Reflect.get(runtime as object, "pendingUpdate") as { text: string } | undefined
-					)?.text.includes("LATER-WINDOW") === true,
+					runtime !== undefined &&
+					runtimeInternals(runtime).pendingUpdate?.text.includes("LATER-WINDOW") === true,
 			);
 			afterAdvise.release();
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
@@ -273,9 +272,8 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			await harness.session.prompt("newer window during in-flight review");
 			await waitFor(
 				() =>
-					(
-						Reflect.get(runtime as object, "pendingUpdate") as { text: string } | undefined
-					)?.text.includes("CAP-NEWER-WINDOW") === true,
+					runtime !== undefined &&
+					runtimeInternals(runtime).pendingUpdate?.text.includes("CAP-NEWER-WINDOW") === true,
 			);
 			firstReview.release();
 			await firstTurn;
@@ -285,10 +283,10 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 				reviewsSuperseded: 1,
 				reviewsCompleted: 0,
 			});
-			expect(Reflect.get(runtime as object, "pendingUpdate")).toBeUndefined();
-			expect(
-				(Reflect.get(runtime as object, "throttledUpdate") as { text: string } | undefined)?.text,
-			).toContain("CAP-NEWER-WINDOW");
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const internals = runtimeInternals(runtime);
+			expect(internals.pendingUpdate).toBeUndefined();
+			expect(internals.throttledUpdate?.text).toContain("CAP-NEWER-WINDOW");
 			expect(latestRuntimeState(harness.sessionManager)?.queuedReview?.text).toContain(
 				"CAP-NEWER-WINDOW",
 			);
@@ -327,10 +325,10 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			await harness.session.prompt("second conversational turn");
 			expect(advisor.requests).toHaveLength(0);
 			expect(runtime?.getStatus().backlog).toBe(true);
-			expect(
-				(Reflect.get(runtime as object, "throttledUpdate") as { heldForMaterialTurn?: boolean })
-					.heldForMaterialTurn,
-			).toBe(true);
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const heldUpdate = runtimeInternals(runtime).throttledUpdate;
+			if (heldUpdate === undefined) throw new Error("Expected a held Advisor update");
+			expect(heldUpdate.heldForMaterialTurn).toBe(true);
 			expect(latestRuntimeState(harness.sessionManager)?.queuedReview).toBeUndefined();
 
 			harness.sessionManager.appendMessage({
@@ -350,7 +348,7 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			expect(submitted).toContain("CHAT-ONE");
 			expect(submitted).toContain("CHAT-TWO");
 			expect(submitted).toContain("edit");
-			expect(runtime?.getStatus().pendingTranscriptBytes).toBe(0);
+			expect(runtime.getStatus().pendingTranscriptBytes).toBe(0);
 		} finally {
 			await harness.dispose();
 		}
@@ -383,10 +381,8 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			await harness.session.prompt("held conversational turn");
 			await new Promise((resolve) => setTimeout(resolve, 80));
 			expect(advisor.requests).toHaveLength(0);
-			expect(
-				(Reflect.get(runtime as object, "throttledUpdate") as { heldForMaterialTurn?: boolean })
-					.heldForMaterialTurn,
-			).toBe(true);
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			expect(runtimeInternals(runtime).throttledUpdate?.heldForMaterialTurn).toBe(true);
 			await harness.session.prompt("still conversational");
 			await new Promise((resolve) => setTimeout(resolve, 80));
 			expect(advisor.requests).toHaveLength(0);
@@ -626,11 +622,8 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			await harness.session.prompt("chat-only window while the review is in flight");
 			await waitFor(
 				() =>
-					(
-						Reflect.get(runtime as object, "throttledUpdate") as
-							| { heldForMaterialTurn?: boolean; text: string }
-							| undefined
-					)?.heldForMaterialTurn === true,
+					runtime !== undefined &&
+					runtimeInternals(runtime).throttledUpdate?.heldForMaterialTurn === true,
 			);
 			expect(advisor.requests).toHaveLength(1);
 			expect(runtime?.getStatus().reviewsSuperseded).toBe(0);

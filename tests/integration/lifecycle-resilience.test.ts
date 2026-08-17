@@ -17,11 +17,11 @@ import {
 	formatAdvisorStatus,
 	MAX_PERSISTED_DEDUPE_HASHES,
 	type AcceptedAdvice,
-	type BoundedAdviceDedupe,
 	type AdvisorConfig,
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -1140,19 +1140,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			});
 			if (firstRuntime === undefined) throw new Error("Expected trim fixture runtime");
 			const activeRuntime = firstRuntime;
-			const pendingAdvice = Reflect.get(activeRuntime, "pendingAdvice") as {
-				enqueue(
-					key: string,
-					value: {
-						advice: AcceptedAdvice;
-						stale: boolean;
-						branchWindow: ReturnType<typeof cursorAtTail>;
-						displayedInEntry: boolean;
-					},
-					bytes: number,
-				): "accepted" | "duplicate" | "capacity";
-				length: number;
-			};
+			const pendingAdvice = runtimeInternals(activeRuntime).pendingAdvice;
 			const branchWindow = cursorAtTail(manager.getBranch());
 			const pendingCount = 489;
 			const admittedCount = pendingCount + 1;
@@ -1189,14 +1177,10 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			Reflect.set(activeRuntime, "memorySuggestionAdmissions", admittedCount);
 			Reflect.set(activeRuntime, "lastMemorySuggestionTurn", admittedCount);
 			Reflect.set(activeRuntime, "lastMemorySuggestionAt", Date.now());
-			const status = Reflect.get(activeRuntime, "status") as {
-				memorySuggestionsDelivered: number;
-				notesDelivered: number;
-			};
+			const status = runtimeInternals(activeRuntime).status;
 			status.memorySuggestionsDelivered = 1;
 			status.notesDelivered = 1;
-			const persistState = Reflect.get(activeRuntime, "persistState") as () => void;
-			persistState.call(activeRuntime);
+			runtimeInternals(activeRuntime).persistState();
 
 			const latest = [...manager.getBranch()]
 				.reverse()
@@ -1285,8 +1269,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 				turnNumber: 1,
 				successfulMemoryTexts: new Set<string>(),
 			});
-			const persistState = Reflect.get(activeRuntime, "persistState") as () => void;
-			persistState.call(activeRuntime);
+			runtimeInternals(activeRuntime).persistState();
 			const latest = [...manager.getBranch()]
 				.reverse()
 				.find(
@@ -1350,9 +1333,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			});
 			const activeDeliveryAdvice = reviewAdvice("Retain accepted active delivery first.");
 			const activeIdentity = adviceDedupeKey(activeDeliveryAdvice);
-			const activeAdvice = Reflect.get(activeRuntime, "activeAdvice") as {
-				enqueue(key: string, value: unknown, bytes: number): string;
-			};
+			const activeAdvice = runtimeInternals(activeRuntime).activeAdvice;
 			expect(
 				activeAdvice.enqueue(
 					activeIdentity,
@@ -1370,9 +1351,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 					Buffer.byteLength(activeDeliveryAdvice.note, "utf8"),
 				),
 			).toBe("accepted");
-			const pendingAdvice = Reflect.get(activeRuntime, "pendingAdvice") as {
-				enqueue(key: string, value: unknown, bytes: number): string;
-			};
+			const pendingAdvice = runtimeInternals(activeRuntime).pendingAdvice;
 			for (let index = 0; index < 500; index++) {
 				const note = `DEFERRED-${String(index).padStart(3, "0")}-${"\u0000".repeat(1_880)}`;
 				const deferred = reviewAdvice(note);
@@ -1390,21 +1369,18 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 					),
 				).toBe("accepted");
 			}
-			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			const dedupe = runtimeInternals(activeRuntime).adviceDedupe;
 			for (let index = 0; index < MAX_PERSISTED_DEDUPE_HASHES; index++) {
 				dedupe.add(reviewAdvice(`Persist priority dedupe ${String(index)}.`));
 			}
-			const recentFindings = Reflect.get(activeRuntime, "recentFindings") as {
-				add(hash: string, label: string): void;
-			};
+			const recentFindings = runtimeInternals(activeRuntime).recentFindings;
 			for (let index = 0; index < 128; index++) {
 				recentFindings.add(
 					index.toString(16).padStart(64, "0"),
 					`Persist priority finding ${String(index)}.`,
 				);
 			}
-			const persistState = Reflect.get(activeRuntime, "persistState") as () => void;
-			persistState.call(activeRuntime);
+			runtimeInternals(activeRuntime).persistState();
 			const latest = [...manager.getBranch()]
 				.reverse()
 				.find(
@@ -1435,8 +1411,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			if (runtime !== undefined) {
 				Reflect.deleteProperty(runtime, "activeReview");
 				Reflect.deleteProperty(runtime, "pendingUpdate");
-				const activeQueue = Reflect.get(runtime, "activeAdvice") as { clear(): void } | undefined;
-				activeQueue?.clear();
+				runtimeInternals(runtime).activeAdvice.clear();
 			}
 			await harness.dispose();
 		}
@@ -1457,6 +1432,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 		});
 		try {
 			if (runtime === undefined) throw new Error("Expected invariant runtime");
+			const activeRuntime = runtime;
 			const update = {
 				text: "durable invariant evidence",
 				entryCount: 1,
@@ -1465,14 +1441,13 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 				turnNumber: 1,
 				successfulMemoryTexts: new Set<string>(),
 			};
-			Reflect.set(runtime, "pendingUpdate", update);
-			Reflect.set(runtime, "throttledUpdate", structuredClone(update));
-			const persistState = Reflect.get(runtime, "persistState") as () => void;
-			expect(() => persistState.call(runtime)).toThrow(
+			Reflect.set(activeRuntime, "pendingUpdate", update);
+			Reflect.set(activeRuntime, "throttledUpdate", structuredClone(update));
+			expect(() => runtimeInternals(activeRuntime).persistState()).toThrow(
 				"Advisor invariant violated: pending and throttled updates coexist",
 			);
-			Reflect.deleteProperty(runtime, "pendingUpdate");
-			Reflect.deleteProperty(runtime, "throttledUpdate");
+			Reflect.deleteProperty(activeRuntime, "pendingUpdate");
+			Reflect.deleteProperty(activeRuntime, "throttledUpdate");
 		} finally {
 			await harness.dispose();
 		}
@@ -1614,25 +1589,14 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 		try {
 			if (runtime === undefined) throw new Error("Expected persisted dedupe fixture runtime");
 			const activeRuntime = runtime;
-			const dedupe = Reflect.get(activeRuntime, "adviceDedupe") as BoundedAdviceDedupe;
+			const dedupe = runtimeInternals(activeRuntime).adviceDedupe;
 			const notes = Array.from({ length: MAX_PERSISTED_DEDUPE_HASHES + 4 }, (_, index) =>
 				reviewAdvice(`Persisted dedupe fixture ${String(index)}.`),
 			);
 			for (const note of notes) dedupe.add(note);
 			const allKeys = notes.map((note) => adviceDedupeKey(note));
 			const transientKeys = allKeys.slice(-4);
-			const pendingAdvice = Reflect.get(activeRuntime, "pendingAdvice") as {
-				enqueue(
-					key: string,
-					value: {
-						advice: AcceptedAdvice;
-						stale: boolean;
-						branchWindow: ReturnType<typeof cursorAtTail>;
-						displayedInEntry: boolean;
-					},
-					bytes: number,
-				): "accepted" | "duplicate" | "capacity";
-			};
+			const pendingAdvice = runtimeInternals(activeRuntime).pendingAdvice;
 			const branchWindow = cursorAtTail(manager.getBranch());
 			for (const note of notes.slice(-4)) {
 				expect(
@@ -1643,8 +1607,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 					),
 				).toBe("accepted");
 			}
-			const persistState = Reflect.get(activeRuntime, "persistState") as () => void;
-			persistState.call(activeRuntime);
+			runtimeInternals(activeRuntime).persistState();
 			const latest = [...manager.getBranch()]
 				.reverse()
 				.find(
