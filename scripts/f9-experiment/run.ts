@@ -63,6 +63,21 @@ interface RunResult {
 	responseModel?: string;
 }
 
+interface AssistantUsage {
+	tokens: number;
+	costUsd: number;
+	responseModel?: string;
+}
+
+interface EvaluationNoteInput {
+	modelReference: string;
+	responseModels: Set<string>;
+	results: readonly RunResult[];
+	summaries: ReturnType<typeof summarize>[];
+	stoppedEarly: boolean;
+	reason?: string;
+}
+
 function verdictFor(
 	note: string | undefined,
 	expectation: F9DatasetExpectation,
@@ -84,14 +99,13 @@ function lastAssistantUsage(session: AgentSession) {
 		const assistant = message;
 		if (assistant.stopReason === "aborted" || assistant.stopReason === "error") continue;
 		const tokens = calculateContextTokens(assistant.usage);
-		return {
+		const usage: AssistantUsage = {
 			tokens,
 			costUsd: assistant.usage.cost.total,
-			...(assistant.responseModel === undefined ? {} : { responseModel: assistant.responseModel }),
-			...(assistant.responseModel === undefined && assistant.model.length > 0
-				? { responseModel: assistant.model }
-				: {}),
 		};
+		if (assistant.responseModel !== undefined) usage.responseModel = assistant.responseModel;
+		else if (assistant.model.length > 0) usage.responseModel = assistant.model;
+		return usage;
 	}
 	return { tokens: 0, costUsd: 0 };
 }
@@ -170,18 +184,21 @@ async function runArm(options: {
 				costUsd: 0,
 			};
 		}
-		return {
+		const result: RunResult = {
 			itemId: options.itemId,
 			arm: options.arm,
-			...(accepted === undefined ? {} : { note: accepted.note }),
-			...(accepted?.intent === "review" ? { severity: accepted.severity } : {}),
-			...(accepted === undefined ? {} : { truncated: accepted.truncated }),
 			stopReason: lastAssistant?.stopReason ?? "unknown",
 			verdict: verdictFor(accepted?.note, options.expectation),
 			tokens: usage.tokens,
 			costUsd: usage.costUsd,
-			...(usage.responseModel === undefined ? {} : { responseModel: usage.responseModel }),
 		};
+		if (accepted !== undefined) {
+			result.note = accepted.note;
+			result.truncated = accepted.truncated;
+		}
+		if (accepted?.intent === "review") result.severity = accepted.severity;
+		if (usage.responseModel !== undefined) result.responseModel = usage.responseModel;
+		return result;
 	} finally {
 		session.dispose();
 	}
@@ -222,14 +239,7 @@ function summarize(results: readonly RunResult[], arm: "baseline" | "tiered") {
 	};
 }
 
-async function writeEvaluationNote(options: {
-	modelReference: string;
-	responseModels: Set<string>;
-	results: readonly RunResult[];
-	summaries: ReturnType<typeof summarize>[];
-	stoppedEarly: boolean;
-	reason?: string;
-}): Promise<string> {
+async function writeEvaluationNote(options: EvaluationNoteInput): Promise<string> {
 	const { results, summaries } = options;
 	const rows = results
 		.map((result) => {
@@ -496,14 +506,15 @@ async function main(): Promise<void> {
 		if (stoppedEarly) break;
 	}
 	const summaries = [summarize(results, "baseline"), summarize(results, "tiered")];
-	const path = await writeEvaluationNote({
+	const evaluation: EvaluationNoteInput = {
 		modelReference,
 		responseModels,
 		results,
 		summaries,
 		stoppedEarly,
-		...(stopReason === undefined ? {} : { reason: stopReason }),
-	});
+	};
+	if (stopReason !== undefined) evaluation.reason = stopReason;
+	const path = await writeEvaluationNote(evaluation);
 	console.log("");
 	for (const summary of summaries) {
 		console.log(
