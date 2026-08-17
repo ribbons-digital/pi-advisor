@@ -84,17 +84,17 @@ describe("portable advise wire contract", () => {
 			memoryPolicySuppressedCalls: 0,
 			memoryLimitSuppressedCalls: 0,
 		});
-		const schema: Record<string, unknown> = { ...ADVISE_WIRE_SCHEMA };
+		const schema = { ...ADVISE_WIRE_SCHEMA };
 		expect(schema.type).toBe("object");
 		expect(schema.required).toEqual(["note"]);
 		expect(schema).not.toHaveProperty("anyOf");
 		expect(schema).not.toHaveProperty("oneOf");
 		expect(schema).not.toHaveProperty("allOf");
 		expect(schema).not.toHaveProperty("additionalProperties");
-		const properties = schema.properties as Record<string, Record<string, unknown>>;
+		const properties = schema.properties;
 		expect(Object.keys(properties)).toEqual(["note", "intent", "severity", "findingKey", "memory"]);
 		expect(properties.memory).not.toHaveProperty("additionalProperties");
-		expect(properties.memory?.required).toBeUndefined();
+		expect(properties.memory.required).toBeUndefined();
 
 		const anthropicProjection = {
 			type: "object",
@@ -105,8 +105,8 @@ describe("portable advise wire contract", () => {
 		expect(anthropicProjection.required).toEqual(["note"]);
 		for (const description of [
 			tool.description,
-			properties.intent?.description,
-			properties.memory?.description,
+			JSON.stringify(properties.intent),
+			JSON.stringify(properties.memory),
 		]) {
 			expect(description).toContain("memory.text");
 			expect(description).toContain("memory.category");

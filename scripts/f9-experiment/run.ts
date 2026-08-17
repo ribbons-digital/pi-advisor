@@ -77,11 +77,7 @@ function verdictFor(
 		: "miss";
 }
 
-function lastAssistantUsage(session: AgentSession): {
-	tokens: number;
-	costUsd: number;
-	responseModel?: string;
-} {
+function lastAssistantUsage(session: AgentSession) {
 	for (let index = session.messages.length - 1; index >= 0; index--) {
 		const message = session.messages[index];
 		if (message?.role !== "assistant") continue;

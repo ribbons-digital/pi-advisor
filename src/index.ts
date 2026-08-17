@@ -108,12 +108,12 @@ export async function pickAdvisorModelAndEffort(
 	return { model: modelReference, effort: effort as AdvisorConfig["effort"] };
 }
 
-const TOOL_DESCRIPTIONS: Record<ReadOnlyToolName, string> = {
+const TOOL_DESCRIPTIONS = {
 	read: "read files",
 	grep: "search file contents",
 	find: "find files by pattern",
 	ls: "list directories",
-};
+} satisfies Record<ReadOnlyToolName, string>;
 
 export async function pickAdvisorTools(
 	ctx: Pick<ExtensionCommandContext, "ui">,

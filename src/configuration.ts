@@ -352,7 +352,7 @@ function collectUnknownWarnings(
 	}
 }
 
-function pickKnown(value: unknown, source: "user" | "project"): Record<string, unknown> {
+function pickKnown(value: unknown, source: "user" | "project") {
 	if (!isRecord(value)) return {};
 	const topKeys = source === "user" ? USER_KEYS : PROJECT_KEYS;
 	const output: Record<string, unknown> = {};

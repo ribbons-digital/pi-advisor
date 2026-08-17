@@ -205,7 +205,7 @@ function queuedUpdateFromPersisted(update: PersistedAdvisorReviewUpdate): Queued
 function compactPersistedUpdate<T extends PersistedAdvisorReviewUpdate>(
 	input: T,
 	maximumBytes = MAX_PERSISTED_REVIEW_SLOT_BYTES,
-): { update: T; changed: boolean } {
+) {
 	const update = structuredClone(input);
 	if (serializedJsonBytes(update) <= maximumBytes) return { update, changed: false };
 	const originalText = update.text;
@@ -598,10 +598,7 @@ function textLineCount(text: string): number {
 	return lines;
 }
 
-export function measureAdvisorToolOutput(content: unknown): {
-	outputBytes: number;
-	outputLines: number;
-} {
+export function measureAdvisorToolOutput(content: unknown) {
 	if (!Array.isArray(content)) return { outputBytes: 0, outputLines: 0 };
 	let outputBytes = 0;
 	let outputLines = 0;
@@ -861,10 +858,7 @@ function parseModelReference(reference: string): { provider: string; modelId: st
 	return { provider: reference.slice(0, separator), modelId: reference.slice(separator + 1) };
 }
 
-function formatProjectContext(
-	files: { path: string; content: string }[],
-	maximumBytes: number,
-): { text: string; redactions: number } {
+function formatProjectContext(files: { path: string; content: string }[], maximumBytes: number) {
 	const serialized = files
 		.map(
 			(file) =>
@@ -2787,10 +2781,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		return this.status.enabled && this.status.active && !this.status.paused && !this.disposed;
 	}
 
-	private lifecycleReprimeWithUpdate(
-		session: AgentSession,
-		updatePrompt: string,
-	): { prompt: string; usedSnapshot: boolean } {
+	private lifecycleReprimeWithUpdate(session: AgentSession, updatePrompt: string) {
 		const pending = this.configurationReprimeSnapshot;
 		if (pending === undefined) return { prompt: updatePrompt, usedSnapshot: false };
 		let snapshot = pending.text;

@@ -52,7 +52,7 @@ function advisorExtension(
 	};
 }
 
-function createBarrier(): { promise: Promise<void>; release: () => void } {
+function createBarrier() {
 	let release: () => void = () => undefined;
 	const promise = new Promise<void>((resolve) => {
 		release = resolve;

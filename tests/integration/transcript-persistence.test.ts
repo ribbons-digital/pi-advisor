@@ -43,7 +43,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 	await expect.poll(predicate, { timeout: 5_000, interval: 10 }).toBe(true);
 }
 
-function createBarrier(): { promise: Promise<void>; release: () => void } {
+function createBarrier() {
 	let release: () => void = () => undefined;
 	const promise = new Promise<void>((resolve) => {
 		release = resolve;
