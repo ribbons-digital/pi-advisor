@@ -346,12 +346,15 @@ async function registerUserProviderExtensions(
 		console.warn(
 			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
 		);
-		function providerRegistrationApi(api: {
+		interface ProviderRegistrationApi {
 			registerProvider(registeredProviderId: string, config: unknown): void;
 			registerCommand(): void;
 			on(): void;
-		}): ExtensionAPI;
-		function providerRegistrationApi(api: ExtensionAPI | object): ExtensionAPI | object {
+		}
+		function providerRegistrationApi(api: ProviderRegistrationApi): ExtensionAPI;
+		function providerRegistrationApi(
+			api: ExtensionAPI | ProviderRegistrationApi,
+		): ExtensionAPI | ProviderRegistrationApi {
 			return api;
 		}
 		const adapter = providerRegistrationApi({

@@ -1,4 +1,4 @@
-import type { InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -38,10 +38,22 @@ function advisorExtension(
 	};
 }
 
-function nestedAdviseTool(runtime: AdvisorRuntime): ToolDefinition {
+interface InspectedAdviseTool {
+	parameters: unknown;
+	constrainedSampling?: unknown;
+}
+
+function inspectAdviseTool(tool: InspectedAdviseTool): InspectedAdviseTool;
+function inspectAdviseTool(
+	tool: InspectedAdviseTool | { name?: string },
+): InspectedAdviseTool | { name?: string } {
+	return tool;
+}
+
+function nestedAdviseTool(runtime: AdvisorRuntime): InspectedAdviseTool {
 	const tool = runtimeInternals(runtime).session?.getToolDefinition("advise");
 	if (tool === undefined) throw new Error("Expected nested advise tool");
-	return tool;
+	return inspectAdviseTool(tool);
 }
 
 const runtimeSupportsConstrainedSampling = await probeConstrainedSamplingSupport();

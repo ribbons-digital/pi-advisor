@@ -42,11 +42,27 @@ afterEach(async () => {
 	await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-function commandUi(ui: object): ExtensionCommandContext["ui"] {
+type CommandUiStub = Partial<{
+	select: ExtensionCommandContext["ui"]["select"];
+	custom: ExtensionCommandContext["ui"]["custom"];
+	editor: ExtensionCommandContext["ui"]["editor"];
+	confirm: ExtensionCommandContext["ui"]["confirm"];
+	notify: ExtensionCommandContext["ui"]["notify"];
+}>;
+
+interface CommandContextStub {
+	hasUI: boolean;
+	cwd?: string;
+	isProjectTrusted?: () => boolean;
+	modelRegistry?: { getAvailable: () => readonly unknown[] };
+	ui: CommandUiStub;
+}
+
+function commandUi(ui: CommandUiStub): ExtensionCommandContext["ui"] {
 	return ui as ExtensionCommandContext["ui"];
 }
 
-function commandContext(ctx: object): ExtensionCommandContext {
+function commandContext(ctx: CommandContextStub): ExtensionCommandContext {
 	return ctx as ExtensionCommandContext;
 }
 

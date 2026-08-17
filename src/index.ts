@@ -55,10 +55,7 @@ export function publishConfigurationWarnings(
 export const CONFIGURATION_REFERENCE =
 	"docs/configuration.md (https://github.com/ribbons-digital/pi-advisor/blob/main/docs/configuration.md)";
 
-export type AdvisorPickerContext = Pick<
-	ExtensionCommandContext,
-	"mode" | "modelRegistry" | "ui"
-> & {
+type AdvisorPickerContext = Pick<ExtensionCommandContext, "mode" | "modelRegistry" | "ui"> & {
 	thinkingLevel?: AdvisorConfig["effort"];
 };
 
