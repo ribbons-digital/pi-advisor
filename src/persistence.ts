@@ -193,19 +193,19 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): b
 	return Object.keys(value).every((key) => allowed.has(key));
 }
 
-function isFiniteInteger(value: unknown, minimum = 0): value is number {
+function isFiniteInteger<T>(value: T, minimum = 0): value is T & number {
 	return Number.isSafeInteger(value) && (value as number) >= minimum;
 }
 
-function isTimestamp(value: unknown): value is number {
+function isTimestamp<T>(value: T): value is T & number {
 	return isFiniteInteger(value) && value <= 8_640_000_000_000_000;
 }
 
-function isFiniteNonNegative(value: unknown): value is number {
+function isFiniteNonNegative<T>(value: T): value is T & number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-function isSafePersistedText(value: unknown): value is string {
+function isSafePersistedText<T>(value: T): value is T & string {
 	return (
 		typeof value === "string" &&
 		value.length <= MAX_PERSISTED_TRANSCRIPT_RECORD_BYTES * 2 &&
@@ -213,11 +213,11 @@ function isSafePersistedText(value: unknown): value is string {
 	);
 }
 
-function isBoundedName(value: unknown): value is string {
+function isBoundedName<T>(value: T): value is T & string {
 	return typeof value === "string" && value.length > 0 && value.length <= 256;
 }
 
-function isCursor(value: unknown): value is AdvisorCursor {
+function isCursor<T>(value: T): value is T & AdvisorCursor {
 	if (typeof value !== "object" || value === null) return false;
 	const cursor = value as Record<string, unknown>;
 	return (
@@ -231,22 +231,22 @@ function isCursor(value: unknown): value is AdvisorCursor {
 	);
 }
 
-function isBoundedSafeText(value: unknown, maximumCharacters: number): value is string {
+function isBoundedSafeText<T>(value: T, maximumCharacters: number): value is T & string {
 	if (typeof value !== "string" || value.length > maximumCharacters * 2) return false;
 	if (Array.from(value).length > maximumCharacters) return false;
 	return redactSecrets(value).text === value;
 }
 
-function isAdviceSeverity(value: unknown): value is AdviceSeverity {
+function isAdviceSeverity<T>(value: T): value is T & AdviceSeverity {
 	return value === "nit" || value === "concern" || value === "blocker";
 }
 
 type FindingKeyMetadataMode = "none" | "hash" | "hash-label";
 
-function isAcceptedAdvice(
-	value: unknown,
+function isAcceptedAdvice<T>(
+	value: T,
 	findingKeyMetadata: FindingKeyMetadataMode,
-): value is AcceptedAdvice {
+): value is T & AcceptedAdvice {
 	if (typeof value !== "object" || value === null) return false;
 	const advice = value as Record<string, unknown>;
 	if (
@@ -309,7 +309,7 @@ function isAcceptedAdvice(
 	);
 }
 
-function isBoundedId(value: unknown): value is string {
+function isBoundedId<T>(value: T): value is T & string {
 	return typeof value === "string" && value.length > 0 && value.length <= 128;
 }
 
@@ -322,7 +322,7 @@ function serializedBytes(value: unknown): number | undefined {
 	}
 }
 
-function isPersistedDedupeEntry(value: unknown): value is PersistedDedupeEntry {
+function isPersistedDedupeEntry<T>(value: T): value is T & PersistedDedupeEntry {
 	if (typeof value !== "object" || value === null) return false;
 	const entry = value as Record<string, unknown>;
 	if (!hasOnlyKeys(entry, ["hash", "metadata"])) return false;
@@ -339,7 +339,7 @@ function isPersistedDedupeEntry(value: unknown): value is PersistedDedupeEntry {
 	);
 }
 
-function isLegacyDedupeHashes(value: unknown): value is string[] {
+function isLegacyDedupeHashes<T>(value: T): value is T & string[] {
 	return (
 		Array.isArray(value) &&
 		value.length <= MAX_PERSISTED_DEDUPE_HASHES &&
@@ -348,7 +348,7 @@ function isLegacyDedupeHashes(value: unknown): value is string[] {
 	);
 }
 
-function isPersistedRecentFinding(value: unknown): value is PersistedRecentFinding {
+function isPersistedRecentFinding<T>(value: T): value is T & PersistedRecentFinding {
 	if (typeof value !== "object" || value === null) return false;
 	const entry = value as Record<string, unknown>;
 	return (
@@ -365,11 +365,11 @@ function isPersistedRecentFinding(value: unknown): value is PersistedRecentFindi
 export const MAX_PERSISTED_RECENT_FINDINGS = MAX_MUTE_ENTRIES;
 export const MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS = 128;
 
-function isPersistedDeferredAdvice(
-	value: unknown,
+function isPersistedDeferredAdvice<T>(
+	value: T,
 	findingKeyMetadata: FindingKeyMetadataMode,
 	allowReviewId = false,
-): value is PersistedDeferredAdvice {
+): value is T & PersistedDeferredAdvice {
 	if (typeof value !== "object" || value === null) return false;
 	const pending = value as Record<string, unknown>;
 	return (
@@ -394,11 +394,11 @@ function isPersistedDeferredAdvice(
 	);
 }
 
-function isPersistedReviewUpdate(
-	value: unknown,
+function isPersistedReviewUpdate<T>(
+	value: T,
 	branch: SessionEntry[],
 	active: boolean,
-): value is PersistedAdvisorReviewUpdate {
+): value is T & PersistedAdvisorReviewUpdate {
 	if (typeof value !== "object" || value === null) return false;
 	const update = value as Record<string, unknown>;
 	const allowed = [
@@ -444,11 +444,11 @@ function persistedReviewTurn(value: unknown): number | undefined {
 	return typeof turnNumber === "number" ? turnNumber : undefined;
 }
 
-function isPersistedActiveDelivery(
-	value: unknown,
+function isPersistedActiveDelivery<T>(
+	value: T,
 	branch: SessionEntry[],
 	findingKeyMetadata: FindingKeyMetadataMode,
-): value is PersistedAdvisorActiveDelivery {
+): value is T & PersistedAdvisorActiveDelivery {
 	if (typeof value !== "object" || value === null) return false;
 	const delivery = value as Record<string, unknown>;
 	return (
@@ -482,7 +482,7 @@ function isPersistedActiveDelivery(
 	);
 }
 
-function isMemoryState(value: unknown): value is PersistedMemorySuggestionState {
+function isMemoryState<T>(value: T): value is T & PersistedMemorySuggestionState {
 	if (typeof value !== "object" || value === null) return false;
 	const state = value as Record<string, unknown>;
 	if (
@@ -591,14 +591,14 @@ export function parsePersistedAdvisorRuntimeState(
 		!Array.isArray(state.dedupeHashes) ||
 		state.dedupeHashes.length > MAX_PERSISTED_DEDUPE_HASHES ||
 		(version === 4 || version === ADVISOR_RUNTIME_STATE_VERSION
-			? !state.dedupeHashes.every(isPersistedDedupeEntry) ||
+			? !state.dedupeHashes.every((entry) => isPersistedDedupeEntry(entry)) ||
 				new Set(state.dedupeHashes.map((entry) => (entry as { hash: string }).hash)).size !==
 					state.dedupeHashes.length
 			: !isLegacyDedupeHashes(state.dedupeHashes)) ||
 		(version === ADVISOR_RUNTIME_STATE_VERSION &&
 			(!Array.isArray(state.recentFindings) ||
 				state.recentFindings.length > MAX_MUTE_ENTRIES ||
-				!state.recentFindings.every(isPersistedRecentFinding) ||
+				!state.recentFindings.every((entry) => isPersistedRecentFinding(entry)) ||
 				new Set(state.recentFindings.map((entry) => (entry as { hash: string }).hash)).size !==
 					state.recentFindings.length)) ||
 		!isMemoryState(state.memorySuggestions) ||
@@ -631,7 +631,8 @@ export function parsePersistedAdvisorRuntimeState(
 		) {
 			return undefined;
 		}
-		const deliveries = state.activeDeliveries;
+		// SAFETY: every() above accepted only PersistedAdvisorActiveDelivery values.
+		const deliveries = state.activeDeliveries as PersistedAdvisorActiveDelivery[];
 		const activeReviewTurn = persistedReviewTurn(state.activeReview);
 		const queuedReviewTurn = persistedReviewTurn(state.queuedReview);
 		const meaningfulTurnCount = state.memorySuggestions.meaningfulTurnCount;
@@ -700,7 +701,7 @@ function hasValidTranscriptBase(
 	);
 }
 
-function isActivityTarget(value: unknown): value is string {
+function isActivityTarget<T>(value: T): value is T & string {
 	return (
 		typeof value === "string" &&
 		Buffer.byteLength(value, "utf8") <= MAX_PERSISTED_ACTIVITY_TARGET_BYTES &&
