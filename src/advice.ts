@@ -251,12 +251,13 @@ export function parseAdviseWireInput(input: AdviseWireInput): ParsedAdviceInput 
 			},
 		};
 	}
-	return {
+	const review: ParsedReviewAdviceInput = {
 		note: input.note,
 		intent: "review",
-		...(input.severity === undefined ? {} : { severity: input.severity }),
-		...(input.findingKey === undefined ? {} : { findingKey: input.findingKey }),
 	};
+	if (input.severity !== undefined) review.severity = input.severity;
+	if (input.findingKey !== undefined) review.findingKey = input.findingKey;
+	return review;
 }
 
 const CONTENT_FREE = new Set([
@@ -616,17 +617,15 @@ export class BoundedAdviceDedupe {
 			) {
 				continue;
 			}
-			this.entries.set(entry.hash, {
-				...(metadata === undefined
-					? {}
-					: {
-							metadata: {
-								severity: metadata.severity,
-								signature: BigInt(`0x${metadata.signature}`),
-								lastDeliveryTurn: metadata.lastDeliveryTurn,
-							},
-						}),
-			});
+			const restored: AdviceDedupeEntryState = {};
+			if (metadata !== undefined) {
+				restored.metadata = {
+					severity: metadata.severity,
+					signature: BigInt(`0x${metadata.signature}`),
+					lastDeliveryTurn: metadata.lastDeliveryTurn,
+				};
+			}
+			this.entries.set(entry.hash, restored);
 			if (this.entries.size > this.capacity) {
 				const oldest = this.entries.keys().next().value;
 				if (oldest !== undefined) this.entries.delete(oldest);
@@ -839,12 +838,13 @@ async function executeAdviseWireInput(
 			input.findingKey === undefined ? undefined : findingKeyHash(input.findingKey);
 		const displayLabel =
 			input.findingKey === undefined ? undefined : boundedFindingLabel(input.findingKey);
-		collector.accepted = {
+		const accepted: AcceptedReviewAdvice = {
 			...boundAdvice(input.note, config),
 			severity: input.severity ?? "concern",
-			...(semanticHash === undefined ? {} : { findingKeyHash: semanticHash }),
-			...(displayLabel === undefined ? {} : { findingKey: displayLabel }),
 		};
+		if (semanticHash !== undefined) accepted.findingKeyHash = semanticHash;
+		if (displayLabel !== undefined) accepted.findingKey = displayLabel;
+		collector.accepted = accepted;
 	}
 	return {
 		content: [{ type: "text" as const, text: "Recorded." }],
@@ -974,21 +974,22 @@ function normalizeStrictAdviseWireInput(input: unknown): AdviseWireInput {
 			throw new Error("Advise arguments did not match the internal schema");
 		}
 		if (text !== null || category !== null || basis !== null) {
-			normalizedMemory = {
-				...(text === null ? {} : { text }),
-				...(category === null ? {} : { category }),
-				...(basis === null ? {} : { basis }),
-			};
+			const memoryFields: NonNullable<AdviseWireInput["memory"]> = {};
+			if (text !== null) memoryFields.text = text;
+			if (category !== null) memoryFields.category = category;
+			if (basis !== null) memoryFields.basis = basis;
+			normalizedMemory = memoryFields;
 		}
 	}
 
-	return {
+	const wire: AdviseWireInput = {
 		note,
 		intent: intent ?? "review",
-		...(severity === null ? {} : { severity }),
-		...(findingKey === null ? {} : { findingKey }),
-		...(normalizedMemory === undefined ? {} : { memory: normalizedMemory }),
 	};
+	if (severity !== null) wire.severity = severity;
+	if (findingKey !== null) wire.findingKey = findingKey;
+	if (normalizedMemory !== undefined) wire.memory = normalizedMemory;
+	return wire;
 }
 
 type StrictAdviseToolDefinition = ToolDefinition<typeof STRICT_ADVISE_WIRE_SCHEMA> & {
