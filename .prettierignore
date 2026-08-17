@@ -4,3 +4,4 @@ node_modules/
 pnpm-lock.yaml
 .pi-subagents/
 .memory-lane/
+tools/oxlint/anti-slop/
