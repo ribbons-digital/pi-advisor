@@ -32,7 +32,6 @@ import {
 	SessionManager,
 	SettingsManager,
 	type AgentSession,
-	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { calculateContextTokens } from "@earendil-works/pi-agent-core";
@@ -339,25 +338,19 @@ async function registerUserProviderExtensions(
 	const entryPath = join(extensionsDir, providerId, "index.ts");
 	if (!entryPath.startsWith(`${extensionsDir}${sep}`)) return [];
 	try {
-		const module = (await import(pathToFileURL(entryPath).href)) as {
-			default?: (pi: ExtensionAPI) => Promise<void> | void;
-		};
-		if (typeof module.default !== "function") return [];
-		console.warn(
-			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
-		);
 		interface ProviderRegistrationApi {
 			registerProvider(registeredProviderId: string, config: unknown): void;
 			registerCommand(): void;
 			on(): void;
 		}
-		function providerRegistrationApi(api: ProviderRegistrationApi): ExtensionAPI;
-		function providerRegistrationApi(
-			api: ExtensionAPI | ProviderRegistrationApi,
-		): ExtensionAPI | ProviderRegistrationApi {
-			return api;
-		}
-		const adapter = providerRegistrationApi({
+		const module = (await import(pathToFileURL(entryPath).href)) as {
+			default?: (pi: ProviderRegistrationApi) => Promise<void> | void;
+		};
+		if (typeof module.default !== "function") return [];
+		console.warn(
+			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
+		);
+		const adapter: ProviderRegistrationApi = {
 			registerProvider: (registeredProviderId: string, config: unknown) => {
 				modelRuntime.registerProvider(
 					registeredProviderId,
@@ -370,7 +363,7 @@ async function registerUserProviderExtensions(
 			on: () => {
 				// Event hooks are irrelevant to provider registration.
 			},
-		});
+		};
 		await Promise.resolve(module.default(adapter));
 		return [providerId];
 	} catch (error) {
