@@ -208,13 +208,12 @@ describe("portable advise wire contract", () => {
 		label: string;
 		memory?: NonNullable<AdviseWireInput["memory"]>;
 	}[])("suppresses $label at the typed boundary", ({ memory }) => {
-		expect(
-			parseAdviseWireInput({
-				note: "Potential durable context.",
-				intent: "memory-suggestion",
-				...(memory === undefined ? {} : { memory }),
-			}),
-		).toBeUndefined();
+		const input: AdviseWireInput = {
+			note: "Potential durable context.",
+			intent: "memory-suggestion",
+		};
+		if (memory !== undefined) input.memory = memory;
+		expect(parseAdviseWireInput(input)).toBeUndefined();
 	});
 });
 

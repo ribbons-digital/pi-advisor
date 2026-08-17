@@ -15,6 +15,7 @@ import {
 	formatAdvisorStatus,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type AdvisorRuntimeHooks,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
 import { runtimeInternals } from "../fixtures/runtime-internals.js";
@@ -41,15 +42,11 @@ function extensionFor(
 	onRuntime: (runtime: AdvisorRuntime) => void,
 	onAdviseExecutionStart?: () => void | Promise<void>,
 ): InlineExtension {
+	const hooks: AdvisorRuntimeHooks & { onRuntime(runtime: AdvisorRuntime): void } = { onRuntime };
+	if (onAdviseExecutionStart !== undefined) hooks.onAdviseExecutionStart = onAdviseExecutionStart;
 	return {
 		name: "pi-advisor-review-freshness-test",
-		factory: createPiAdvisorExtension({
-			config,
-			hooks: {
-				onRuntime,
-				...(onAdviseExecutionStart === undefined ? {} : { onAdviseExecutionStart }),
-			},
-		}),
+		factory: createPiAdvisorExtension({ config, hooks }),
 	};
 }
 

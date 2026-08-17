@@ -13,6 +13,7 @@ import {
 	DEFAULT_ADVISOR_CONFIG,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type AdvisorRuntimeHooks,
 } from "../../src/index.js";
 import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
@@ -39,12 +40,11 @@ function extensionFor(
 	onRuntime: (runtime: AdvisorRuntime) => void,
 	onWarning?: (message: string) => void,
 ): InlineExtension {
+	const hooks: AdvisorRuntimeHooks & { onRuntime(runtime: AdvisorRuntime): void } = { onRuntime };
+	if (onWarning !== undefined) hooks.onWarning = onWarning;
 	return {
 		name: "pi-advisor-context-policy-test",
-		factory: createPiAdvisorExtension({
-			config,
-			hooks: { onRuntime, ...(onWarning === undefined ? {} : { onWarning }) },
-		}),
+		factory: createPiAdvisorExtension({ config, hooks }),
 	};
 }
 
