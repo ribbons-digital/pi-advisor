@@ -32,10 +32,7 @@ function collector(memoryPolicy = false): AdviceCollector {
 	};
 }
 
-function prepareAndValidate(
-	tool: ReturnType<typeof createStrictAdviseTool>,
-	raw: unknown,
-): unknown {
+function prepareAndValidate(tool: ReturnType<typeof createStrictAdviseTool>, raw: unknown) {
 	const prepared = tool.prepareArguments?.(raw);
 	validateToolArguments(tool, {
 		type: "toolCall",
