@@ -13,21 +13,20 @@ interface StrictCompatFlags {
 }
 
 function model(api: Api, compat?: StrictCompatFlags): Model<Api> {
-	const value = {
+	const value: Model<Api> = {
 		provider: "test",
 		id: `test-${api}`,
 		name: `Test ${api}`,
 		api,
 		baseUrl: "https://example.test",
 		reasoning: false,
-		input: ["text" as const],
+		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 100_000,
 		maxTokens: 10_000,
-		...(compat === undefined ? {} : { compat }),
 	};
-	// Pi 0.81 omits the strict flags that its 0.82 runtime successors consume.
-	return value as Model<Api>;
+	if (compat !== undefined) value.compat = compat;
+	return value;
 }
 
 const supportsStrict = (): Promise<boolean> => Promise.resolve(true);

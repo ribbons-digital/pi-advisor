@@ -10,6 +10,7 @@ import {
 	formatAdvisorStatus,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type AdvisorRuntimeHooks,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
 import { runtimeInternals } from "../fixtures/runtime-internals.js";
@@ -32,15 +33,11 @@ function extensionFor(
 	onRuntime: (runtime: AdvisorRuntime) => void,
 	onWarning?: (message: string) => void,
 ): InlineExtension {
+	const hooks: AdvisorRuntimeHooks & { onRuntime(runtime: AdvisorRuntime): void } = { onRuntime };
+	if (onWarning !== undefined) hooks.onWarning = onWarning;
 	return {
 		name: "pi-advisor-retry-resilience-test",
-		factory: createPiAdvisorExtension({
-			config,
-			hooks: {
-				onRuntime,
-				...(onWarning === undefined ? {} : { onWarning }),
-			},
-		}),
+		factory: createPiAdvisorExtension({ config, hooks }),
 	};
 }
 

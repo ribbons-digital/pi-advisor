@@ -24,6 +24,7 @@ import {
 	type AcceptedAdvice,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type AdvisorRuntimeHooks,
 } from "../../src/index.js";
 import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
@@ -51,17 +52,13 @@ function extensionFor(
 	onStatus?: () => void,
 	onAdviseExecutionStart?: () => void | Promise<void>,
 ): InlineExtension {
+	const hooks: AdvisorRuntimeHooks & { onRuntime(runtime: AdvisorRuntime): void } = { onRuntime };
+	if (onWarning !== undefined) hooks.onWarning = onWarning;
+	if (onStatus !== undefined) hooks.onStatus = onStatus;
+	if (onAdviseExecutionStart !== undefined) hooks.onAdviseExecutionStart = onAdviseExecutionStart;
 	return {
 		name: "pi-advisor-safety-test",
-		factory: createPiAdvisorExtension({
-			config,
-			hooks: {
-				onRuntime,
-				...(onWarning === undefined ? {} : { onWarning }),
-				...(onStatus === undefined ? {} : { onStatus }),
-				...(onAdviseExecutionStart === undefined ? {} : { onAdviseExecutionStart }),
-			},
-		}),
+		factory: createPiAdvisorExtension({ config, hooks }),
 	};
 }
 

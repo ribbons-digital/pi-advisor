@@ -12,24 +12,23 @@ import {
 } from "../../src/index.js";
 
 function collector(memoryPolicy = false): AdviceCollector {
-	return {
+	const collected: AdviceCollector = {
 		validCalls: 0,
 		suppressedCalls: 0,
 		memoryPolicySuppressedCalls: 0,
 		memoryLimitSuppressedCalls: 0,
-		...(memoryPolicy
-			? {
-					memoryPolicy: {
-						enabled: true,
-						capabilityAvailable: true,
-						turnNumber: 10,
-						now: 1_000,
-						admittedCount: 0,
-						successfulMemoryTexts: new Set<string>(),
-					},
-				}
-			: {}),
 	};
+	if (memoryPolicy) {
+		collected.memoryPolicy = {
+			enabled: true,
+			capabilityAvailable: true,
+			turnNumber: 10,
+			now: 1_000,
+			admittedCount: 0,
+			successfulMemoryTexts: new Set<string>(),
+		};
+	}
+	return collected;
 }
 
 function prepareAndValidate(tool: ReturnType<typeof createStrictAdviseTool>, raw: unknown) {

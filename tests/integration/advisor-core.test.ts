@@ -13,6 +13,7 @@ import {
 	shouldAnimateAdvisorFooter,
 	type AdvisorConfig,
 	type AdvisorRuntime,
+	type AdvisorRuntimeHooks,
 	type AdvisorRuntimeStatus,
 } from "../../src/index.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
@@ -40,15 +41,11 @@ function advisorExtension(
 	onRuntime: (runtime: AdvisorRuntime) => void,
 	onStatus?: (status: AdvisorRuntimeStatus) => void,
 ): InlineExtension {
+	const hooks: AdvisorRuntimeHooks & { onRuntime(runtime: AdvisorRuntime): void } = { onRuntime };
+	if (onStatus !== undefined) hooks.onStatus = onStatus;
 	return {
 		name: "pi-advisor-under-test",
-		factory: createPiAdvisorExtension({
-			config,
-			hooks: {
-				onRuntime,
-				...(onStatus === undefined ? {} : { onStatus }),
-			},
-		}),
+		factory: createPiAdvisorExtension({ config, hooks }),
 	};
 }
 

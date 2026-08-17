@@ -11,6 +11,7 @@ import {
 	SessionManager,
 	SettingsManager,
 	type AgentSessionRuntime,
+	type CreateAgentSessionFromServicesOptions,
 	type CreateAgentSessionRuntimeFactory,
 	type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
@@ -107,15 +108,16 @@ describe("Pi 0.81.1 session replacement spike", () => {
 						appendSystemPromptOverride: () => [],
 					},
 				});
+				const sessionOptions: CreateAgentSessionFromServicesOptions = {
+					services,
+					sessionManager,
+					model: provider.model,
+					thinkingLevel: "off",
+					tools: [],
+				};
+				if (sessionStartEvent !== undefined) sessionOptions.sessionStartEvent = sessionStartEvent;
 				return {
-					...(await createAgentSessionFromServices({
-						services,
-						sessionManager,
-						...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-						model: provider.model,
-						thinkingLevel: "off",
-						tools: [],
-					})),
+					...(await createAgentSessionFromServices(sessionOptions)),
 					services,
 					diagnostics: services.diagnostics,
 				};
@@ -231,15 +233,16 @@ describe("Pi 0.81.1 session replacement spike", () => {
 						appendSystemPromptOverride: () => [],
 					},
 				});
+				const sessionOptions: CreateAgentSessionFromServicesOptions = {
+					services,
+					sessionManager,
+					model: primary.model,
+					thinkingLevel: "off",
+					tools: [],
+				};
+				if (sessionStartEvent !== undefined) sessionOptions.sessionStartEvent = sessionStartEvent;
 				return {
-					...(await createAgentSessionFromServices({
-						services,
-						sessionManager,
-						...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-						model: primary.model,
-						thinkingLevel: "off",
-						tools: [],
-					})),
+					...(await createAgentSessionFromServices(sessionOptions)),
 					services,
 					diagnostics: services.diagnostics,
 				};
