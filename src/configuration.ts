@@ -490,17 +490,20 @@ function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>)
 	>;
 	const memory = (document.memorySuggestions ?? {}) as Partial<AdvisorConfig["memorySuggestions"]>;
 	const persistence = (document.persistence ?? {}) as Partial<AdvisorConfig["persistence"]>;
-	return normalizeAdvisorConfig({
+	const merged: AdvisorConfig = {
 		...structuredClone(base),
-		...(document.defaultEnabled === undefined
-			? {}
-			: { defaultEnabled: document.defaultEnabled as boolean }),
-		...(document.model === undefined ? {} : { model: document.model as string }),
-		...(document.effort === undefined ? {} : { effort: document.effort as AdvisorEffort }),
-		...(document.tools === undefined ? {} : { tools: document.tools as ReadOnlyToolName[] }),
-		...(document.instructions === undefined
-			? {}
-			: { instructions: document.instructions as string }),
+	};
+	if (document.defaultEnabled !== undefined) {
+		merged.defaultEnabled = document.defaultEnabled as boolean;
+	}
+	if (document.model !== undefined) merged.model = document.model as string;
+	if (document.effort !== undefined) merged.effort = document.effort as AdvisorEffort;
+	if (document.tools !== undefined) merged.tools = document.tools as ReadOnlyToolName[];
+	if (document.instructions !== undefined) {
+		merged.instructions = document.instructions as string;
+	}
+	return normalizeAdvisorConfig({
+		...merged,
 		context: { ...base.context, ...context },
 		limits: { ...base.limits, ...limits },
 		security: {
@@ -604,10 +607,8 @@ export function mergeProjectConfiguration(
 		limits.minIntervalMs = Math.max(userConfig.limits.minIntervalMs, project.limits.minIntervalMs);
 	}
 	const projectMemory = project.memorySuggestions;
-	const memorySuggestions = {
-		...userConfig.memorySuggestions,
-		...(projectMemory?.enabled === false ? { enabled: false } : {}),
-	};
+	const memorySuggestions = { ...userConfig.memorySuggestions };
+	if (projectMemory?.enabled === false) memorySuggestions.enabled = false;
 	if (projectMemory !== undefined) {
 		memorySuggestions.minTurnsBetweenSuggestions = Math.max(
 			userConfig.memorySuggestions.minTurnsBetweenSuggestions,
@@ -847,14 +848,15 @@ export async function loadAdvisorConfiguration(options: {
 		);
 		effectiveConfig = mergeProjectConfiguration(userConfig, project);
 	}
-	return {
+	const loaded: LoadedAdvisorConfiguration = {
 		userConfig: persistedUserConfig,
 		effectiveConfig,
 		projectInstructions,
 		warnings,
 		paths,
-		...(userUnknownTopLevel === undefined ? {} : { userUnknownTopLevel }),
 	};
+	if (userUnknownTopLevel !== undefined) loaded.userUnknownTopLevel = userUnknownTopLevel;
+	return loaded;
 }
 
 export function serializeUserConfiguration(

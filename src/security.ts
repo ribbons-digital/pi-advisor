@@ -148,7 +148,9 @@ function textResult(text: string, details: Record<string, unknown> = {}) {
 	const truncation = truncateHead(text);
 	return {
 		content: [{ type: "text" as const, text: truncation.content }],
-		details: { blocked: false, ...details, ...(truncation.truncated ? { truncation } : {}) },
+		details: truncation.truncated
+			? { blocked: false, ...details, truncation }
+			: { blocked: false, ...details },
 	};
 }
 
