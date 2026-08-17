@@ -177,7 +177,10 @@ export interface ParsedMemorySuggestionInput {
 
 export type ParsedAdviceInput = ParsedReviewAdviceInput | ParsedMemorySuggestionInput;
 
-function isOptionalEnum<T>(value: T, values: readonly string[]): value is T & (string | undefined) {
+function isOptionalEnum<T, const Values extends readonly string[]>(
+	value: T,
+	values: Values,
+): value is T & (Values[number] | undefined) {
 	return value === undefined || (typeof value === "string" && values.includes(value));
 }
 
