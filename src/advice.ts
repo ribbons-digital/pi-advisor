@@ -363,7 +363,7 @@ export function adviceDedupeKey(advice: AdviceDedupeIdentity): string {
 
 const SEVERITY_RANK = { nit: 0, concern: 1, blocker: 2 } satisfies Record<AdviceSeverity, number>;
 
-export function isAdviceSeverity(value: unknown): value is AdviceSeverity {
+export function isAdviceSeverity<T>(value: T): value is T & AdviceSeverity {
 	return value === "nit" || value === "concern" || value === "blocker";
 }
 
@@ -872,7 +872,7 @@ export function createAdviseTool(
 	};
 }
 
-function isObjectRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+function isObjectRecord<T>(value: T): value is T & Readonly<Record<string, unknown>> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -884,10 +884,10 @@ function selectedOwnValue(
 	return Object.hasOwn(input, key) ? input[key] : fallback;
 }
 
-function isNullableEnum<const Values extends readonly string[]>(
-	value: unknown,
+function isNullableEnum<T, const Values extends readonly string[]>(
+	value: T,
 	values: Values,
-): value is Values[number] | null {
+): value is T & (Values[number] | null) {
 	return value === null || (typeof value === "string" && values.includes(value));
 }
 

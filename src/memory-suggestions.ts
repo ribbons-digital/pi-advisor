@@ -12,12 +12,12 @@ export const MEMORY_SUGGESTION_BASES = [
 ] as const;
 export type MemorySuggestionBasis = (typeof MEMORY_SUGGESTION_BASES)[number];
 
-export function isMemorySuggestionCategory(value: unknown): value is MemorySuggestionCategory {
+export function isMemorySuggestionCategory<T>(value: T): value is T & MemorySuggestionCategory {
 	return (
 		typeof value === "string" && MEMORY_SUGGESTION_CATEGORIES.some((category) => category === value)
 	);
 }
 
-export function isMemorySuggestionBasis(value: unknown): value is MemorySuggestionBasis {
+export function isMemorySuggestionBasis<T>(value: T): value is T & MemorySuggestionBasis {
 	return typeof value === "string" && MEMORY_SUGGESTION_BASES.some((basis) => basis === value);
 }
