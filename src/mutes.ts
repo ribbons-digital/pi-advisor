@@ -52,7 +52,10 @@ function truncateWithoutCuttingMarker(text: string): string | undefined {
 	if (characters.length <= MAX_FINDING_LABEL_CHARACTERS) return characters.join("");
 	let cut = MAX_FINDING_LABEL_CHARACTERS;
 	for (let index = Math.max(0, cut - (REDACTION.length - 1)); index < cut; index++) {
-		if (text.startsWith(REDACTION, index)) {
+		// Compare in code-point space: `cut` and `index` index `characters`, so the
+		// marker probe must also be built from `characters` rather than from the
+		// UTF-16 offsets that `String.prototype.startsWith` would use.
+		if (characters.slice(index, index + REDACTION.length).join("") === REDACTION) {
 			cut = index;
 			break;
 		}
