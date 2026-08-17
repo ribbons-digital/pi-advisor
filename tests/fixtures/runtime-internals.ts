@@ -106,5 +106,6 @@ export interface AdvisorRuntimeTestInternals {
 
 export function runtimeInternals(runtime: AdvisorRuntime): AdvisorRuntimeTestInternals {
 	// SAFETY: tests read the AdvisorRuntime private layout through this named contract.
-	return runtime as unknown as AdvisorRuntimeTestInternals;
+	// A direct assertion is rejected because config is private on AdvisorRuntime.
+	return runtime as never;
 }
