@@ -9,6 +9,7 @@ export default tseslint.config(
 			"node_modules/**",
 			"eslint.config.js",
 			"prettier.config.js",
+			"tools/oxlint/anti-slop/**",
 		],
 	},
 	eslint.configs.recommended,
