@@ -33,11 +33,10 @@ export interface RenderedAdvisorDelta {
 }
 
 export function cursorAtTail(branch: SessionEntry[]): AdvisorCursor {
+	const cursor: AdvisorCursor = { expectedIndex: branch.length };
 	const lastEntryId = branch.at(-1)?.id;
-	return {
-		...(lastEntryId === undefined ? {} : { lastEntryId }),
-		expectedIndex: branch.length,
-	};
+	if (lastEntryId !== undefined) cursor.lastEntryId = lastEntryId;
+	return cursor;
 }
 
 export type AdvisorCursorValidation = "valid" | "transcript-shrunk" | "ancestry-mismatch";
