@@ -301,23 +301,24 @@ function parsePresentationBase(note: Record<string, unknown>): AdvicePresentatio
 	) {
 		return undefined;
 	}
-	return {
+	const base: AdvicePresentationBase = {
 		note: note.note,
 		delivery: note.delivery,
-		...(note.stale === true ? { stale: true } : {}),
 		truncated: note.truncated,
 		originalCharacters: note.originalCharacters,
 		originalEstimatedTokens: note.originalEstimatedTokens,
 		createdAt: note.createdAt,
-		...(typeof note.deliveryId === "string" && note.deliveryId.length <= 512
-			? { deliveryId: note.deliveryId }
-			: {}),
-		...(typeof note.reviewId === "string" && note.reviewId.length <= 128
-			? { reviewId: note.reviewId }
-			: {}),
-		...(note.displayedInEntry === true ? { displayedInEntry: true } : {}),
-		...(note.restoredAfterResume === true ? { restoredAfterResume: true } : {}),
 	};
+	if (note.stale === true) base.stale = true;
+	if (typeof note.deliveryId === "string" && note.deliveryId.length <= 512) {
+		base.deliveryId = note.deliveryId;
+	}
+	if (typeof note.reviewId === "string" && note.reviewId.length <= 128) {
+		base.reviewId = note.reviewId;
+	}
+	if (note.displayedInEntry === true) base.displayedInEntry = true;
+	if (note.restoredAfterResume === true) base.restoredAfterResume = true;
+	return base;
 }
 
 function parsePresentationNote(value: unknown): AdvicePresentationNote | undefined {
@@ -326,16 +327,17 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 	const base = parsePresentationBase(note);
 	if (base === undefined) return undefined;
 	if (note.intent === "review" && isAdviceSeverity(note.severity)) {
-		return {
+		const review: ReviewAdvicePresentationNote = {
 			...base,
 			intent: "review",
 			severity: note.severity,
-			...(note.tag === "possible-duplicate" || note.tag === "re-raised" ? { tag: note.tag } : {}),
-			...(note.muteId === undefined || !isMuteId(note.muteId) ? {} : { muteId: note.muteId }),
-			...(note.findingKey === undefined || !isFindingLabel(note.findingKey)
-				? {}
-				: { findingKey: note.findingKey }),
 		};
+		if (note.tag === "possible-duplicate" || note.tag === "re-raised") review.tag = note.tag;
+		if (note.muteId !== undefined && isMuteId(note.muteId)) review.muteId = note.muteId;
+		if (note.findingKey !== undefined && isFindingLabel(note.findingKey)) {
+			review.findingKey = note.findingKey;
+		}
+		return review;
 	}
 	if (
 		note.intent !== "memory-suggestion" ||
@@ -353,12 +355,13 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 	) {
 		return undefined;
 	}
-	return {
+	const suggestion: MemorySuggestionPresentationNote = {
 		...base,
 		intent: "memory-suggestion",
 		memory: { text: memory.text, category: memory.category, basis: memory.basis },
-		...(note.queueState === "could-not-queue" ? { queueState: note.queueState } : {}),
 	};
+	if (note.queueState === "could-not-queue") suggestion.queueState = note.queueState;
+	return suggestion;
 }
 
 export function adviceNotesFromDetails(details: unknown): AdvicePresentationNote[] {
