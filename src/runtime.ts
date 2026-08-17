@@ -585,12 +585,46 @@ function boundedRequiredActivityTarget(value: unknown, fallback: string): string
 	return boundedActivityTarget(value, fallback) ?? fallback;
 }
 
+interface UnvalidatedToolActivityArguments {
+	path?: unknown;
+	pattern?: unknown;
+}
+
+interface UnvalidatedToolOutputPart {
+	type?: unknown;
+	text?: unknown;
+	data?: unknown;
+}
+
+interface UnvalidatedAdviceDetails {
+	note?: unknown;
+	truncated?: unknown;
+	originalCharacters?: unknown;
+	originalEstimatedTokens?: unknown;
+	createdAt?: unknown;
+	intent?: unknown;
+	severity?: unknown;
+	findingKey?: unknown;
+	findingKeyHash?: unknown;
+	memory?: unknown;
+	deliveryId?: unknown;
+	reviewId?: unknown;
+	delivery?: unknown;
+	stale?: unknown;
+}
+
+interface UnvalidatedMemorySuggestionDetails {
+	text?: unknown;
+	category?: unknown;
+	basis?: unknown;
+}
+
 function activityTargets(
 	toolName: string,
 	value: unknown,
 ): Pick<PersistedAdvisorToolAttempt, "path" | "pattern"> {
-	const arguments_ =
-		typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+	const arguments_: UnvalidatedToolActivityArguments =
+		typeof value === "object" && value !== null ? (value as UnvalidatedToolActivityArguments) : {};
 	switch (toolName) {
 		case "read":
 			return { path: boundedRequiredActivityTarget(arguments_.path, ".") };
@@ -626,7 +660,7 @@ export function measureAdvisorToolOutput(content: unknown) {
 	let outputLines = 0;
 	for (const part of content) {
 		if (typeof part !== "object" || part === null) continue;
-		const record = part as Record<string, unknown>;
+		const record = part as UnvalidatedToolOutputPart;
 		if (record.type === "text" && typeof record.text === "string") {
 			outputBytes = safeCountAdd(outputBytes, Buffer.byteLength(record.text, "utf8"));
 			outputLines = safeCountAdd(outputLines, textLineCount(record.text));
@@ -1809,7 +1843,7 @@ export class AdvisorRuntime {
 
 	private acceptedAdviceFromDetails(details: unknown): AcceptedAdvice | undefined {
 		if (typeof details !== "object" || details === null) return undefined;
-		const value = details as Record<string, unknown>;
+		const value = details as UnvalidatedAdviceDetails;
 		if (
 			typeof value.note !== "string" ||
 			typeof value.truncated !== "boolean" ||
@@ -1856,7 +1890,7 @@ export class AdvisorRuntime {
 		) {
 			return undefined;
 		}
-		const memory = value.memory as Record<string, unknown>;
+		const memory = value.memory as UnvalidatedMemorySuggestionDetails;
 		if (
 			typeof memory.text !== "string" ||
 			!isMemorySuggestionCategory(memory.category) ||
@@ -2466,7 +2500,7 @@ export class AdvisorRuntime {
 				return false;
 			}
 			if (typeof entry.details !== "object" || entry.details === null) return false;
-			const details = entry.details as Record<string, unknown>;
+			const details = entry.details as UnvalidatedAdviceDetails;
 			return (
 				details.deliveryId === deliveryId &&
 				details.intent === "memory-suggestion" &&
@@ -2487,7 +2521,7 @@ export class AdvisorRuntime {
 				return false;
 			}
 			if (typeof entry.details !== "object" || entry.details === null) return false;
-			const details = entry.details as Record<string, unknown>;
+			const details = entry.details as UnvalidatedAdviceDetails;
 			return (
 				details.deliveryId === deliveryId &&
 				details.intent === "review" &&
@@ -3500,7 +3534,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				customType: string;
 				content: string;
 				display: boolean;
-				details: Record<string, unknown>;
+				details: AdviceMessageDetails;
 		  }
 		| undefined {
 		if (this.pendingAdvice.length === 0) return undefined;
@@ -3602,13 +3636,13 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 
 	private deliveryIdFromDetails(details: unknown): string | undefined {
 		if (typeof details !== "object" || details === null) return undefined;
-		const deliveryId = (details as Record<string, unknown>).deliveryId;
+		const deliveryId = (details as UnvalidatedAdviceDetails).deliveryId;
 		return typeof deliveryId === "string" ? deliveryId : undefined;
 	}
 
 	private reviewIdFromDetails(details: unknown): string | undefined {
 		if (typeof details !== "object" || details === null) return undefined;
-		const reviewId = (details as Record<string, unknown>).reviewId;
+		const reviewId = (details as UnvalidatedAdviceDetails).reviewId;
 		return typeof reviewId === "string" ? reviewId : undefined;
 	}
 
