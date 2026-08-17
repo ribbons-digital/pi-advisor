@@ -13,7 +13,6 @@ import {
 	normalizeAdvisorConfig,
 	READ_ONLY_TOOL_NAMES,
 	type AdvisorConfig,
-	type AdvisorEffort,
 	type AdvisorProjectConfig,
 	type ReadOnlyToolName,
 } from "./config.js";
@@ -174,7 +173,48 @@ const ProjectSchema = Type.Object(
 const userValidator = Compile(UserSchema);
 const projectValidator = Compile(ProjectSchema);
 
-const USER_KEYS = new Set([
+interface ValidatedUserDocument {
+	version: AdvisorConfig["version"];
+	defaultEnabled?: boolean;
+	model?: string;
+	effort?: AdvisorConfig["effort"];
+	tools?: AdvisorConfig["tools"];
+	instructions?: string;
+	context?: Partial<AdvisorConfig["context"]>;
+	limits?: Partial<AdvisorConfig["limits"]>;
+	security?: Partial<AdvisorConfig["security"]>;
+	delivery?: Partial<AdvisorConfig["delivery"]>;
+	review?: Partial<Omit<AdvisorConfig["review"], "adaptiveCadence">> & {
+		adaptiveCadence?: Partial<AdvisorConfig["review"]["adaptiveCadence"]>;
+	};
+	dedupe?: Partial<AdvisorConfig["dedupe"]>;
+	memorySuggestions?: Partial<AdvisorConfig["memorySuggestions"]>;
+	persistence?: Partial<AdvisorConfig["persistence"]>;
+}
+
+type ConfigFieldName = keyof ValidatedUserDocument;
+
+interface UnvalidatedConfigRecord {
+	version?: unknown;
+	defaultEnabled?: unknown;
+	model?: unknown;
+	effort?: unknown;
+	tools?: unknown;
+	instructions?: unknown;
+	context?: unknown;
+	limits?: unknown;
+	security?: unknown;
+	delivery?: unknown;
+	review?: unknown;
+	dedupe?: unknown;
+	memorySuggestions?: unknown;
+	persistence?: unknown;
+	adaptiveCadence?: unknown;
+	enabled?: unknown;
+	skipNonMaterialTurns?: unknown;
+}
+
+const USER_KEY_NAMES: readonly ConfigFieldName[] = [
 	"version",
 	"defaultEnabled",
 	"model",
@@ -189,8 +229,8 @@ const USER_KEYS = new Set([
 	"dedupe",
 	"memorySuggestions",
 	"persistence",
-]);
-const PROJECT_KEYS = new Set([
+];
+const PROJECT_KEY_NAMES: readonly ConfigFieldName[] = [
 	"version",
 	"instructions",
 	"tools",
@@ -201,7 +241,9 @@ const PROJECT_KEYS = new Set([
 	"review",
 	"dedupe",
 	"memorySuggestions",
-]);
+];
+const USER_KEYS: ReadonlySet<string> = new Set(USER_KEY_NAMES);
+const PROJECT_KEYS: ReadonlySet<string> = new Set(PROJECT_KEY_NAMES);
 const CONTEXT_KEYS = new Set(["maxFraction", "reserveTokens", "maxUpdateTokens"]);
 const LIMIT_KEYS = new Set(Object.keys(DEFAULT_ADVISOR_CONFIG.limits));
 const SECURITY_USER_KEYS = new Set(["additionalProtectedPaths", "protectedPathExceptions"]);
@@ -242,7 +284,7 @@ export function advisorConfigurationPaths(agentDir: string, cwd: string) {
 	};
 }
 
-function isRecord<T>(value: T): value is T & Record<string, unknown> {
+function isRecord<T>(value: T): value is T & UnvalidatedConfigRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -265,7 +307,7 @@ function collectUnknownWarnings(
 			});
 		}
 	}
-	const nested: [string, Set<string>][] = [
+	const nested: [ConfigFieldName, Set<string>][] = [
 		["context", CONTEXT_KEYS],
 		["limits", LIMIT_KEYS],
 		["security", source === "user" ? SECURITY_USER_KEYS : SECURITY_PROJECT_KEYS],
@@ -352,11 +394,11 @@ function collectUnknownWarnings(
 	}
 }
 
-function pickKnown(value: unknown, source: "user" | "project") {
+function pickKnown(value: unknown, source: "user" | "project"): UnvalidatedConfigRecord {
 	if (!isRecord(value)) return {};
-	const topKeys = source === "user" ? USER_KEYS : PROJECT_KEYS;
-	const output: Record<string, unknown> = {};
-	for (const key of topKeys) {
+	const topKeyNames = source === "user" ? USER_KEY_NAMES : PROJECT_KEY_NAMES;
+	const output: UnvalidatedConfigRecord = {};
+	for (const key of topKeyNames) {
 		if (!(key in value)) continue;
 		const candidate = value[key];
 		if (isRecord(candidate)) {
@@ -381,7 +423,7 @@ function pickKnown(value: unknown, source: "user" | "project") {
 												? PERSISTENCE_KEYS
 												: undefined;
 			if (nestedKeys !== undefined) {
-				const picked = Object.fromEntries(
+				const picked: UnvalidatedConfigRecord = Object.fromEntries(
 					Object.entries(candidate).filter(([nestedKey, nestedValue]) => {
 						if (!nestedKeys.has(nestedKey)) return false;
 						if (
@@ -441,7 +483,7 @@ function parseYamlDocument(
 	source: "user" | "project",
 	path: string,
 	warnings: ConfigurationWarning[],
-): { known: Record<string, unknown>; unknownTopLevel: Record<string, unknown> } | undefined {
+): { known: ValidatedUserDocument; unknownTopLevel: Record<string, unknown> } | undefined {
 	if (Buffer.byteLength(text, "utf8") > MAX_WATCHDOG_YAML_BYTES) {
 		warnings.push({ source, path, message: `${path} exceeds the 1 MiB configuration limit.` });
 		return undefined;
@@ -475,33 +517,30 @@ function parseYamlDocument(
 	const unknownTopLevel = Object.fromEntries(
 		Object.entries(parsed).filter(([key]) => !topKeys.has(key)),
 	);
-	return { known, unknownTopLevel };
+	// SAFETY: validator.Check(known) accepted only schema-valid user or project fields.
+	return { known: known as ValidatedUserDocument, unknownTopLevel };
 }
 
-function mergeUserConfig(base: AdvisorConfig, document: Record<string, unknown>): AdvisorConfig {
-	const context = (document.context ?? {}) as Partial<AdvisorConfig["context"]>;
-	const limits = (document.limits ?? {}) as Partial<AdvisorConfig["limits"]>;
-	const security = (document.security ?? {}) as Partial<AdvisorConfig["security"]>;
-	const delivery = (document.delivery ?? {}) as Partial<AdvisorConfig["delivery"]>;
-	const review = (document.review ?? {}) as Partial<AdvisorConfig["review"]>;
-	const dedupe = (document.dedupe ?? {}) as Partial<AdvisorConfig["dedupe"]>;
-	const adaptive = (review.adaptiveCadence ?? {}) as Partial<
-		AdvisorConfig["review"]["adaptiveCadence"]
-	>;
-	const memory = (document.memorySuggestions ?? {}) as Partial<AdvisorConfig["memorySuggestions"]>;
-	const persistence = (document.persistence ?? {}) as Partial<AdvisorConfig["persistence"]>;
+function mergeUserConfig(base: AdvisorConfig, document: ValidatedUserDocument): AdvisorConfig {
+	const context = document.context ?? {};
+	const limits = document.limits ?? {};
+	const security = document.security ?? {};
+	const delivery = document.delivery ?? {};
+	const review = document.review ?? {};
+	const dedupe = document.dedupe ?? {};
+	const adaptive = review.adaptiveCadence ?? {};
+	const memory = document.memorySuggestions ?? {};
+	const persistence = document.persistence ?? {};
 	const merged: AdvisorConfig = {
 		...structuredClone(base),
 	};
 	if (document.defaultEnabled !== undefined) {
-		merged.defaultEnabled = document.defaultEnabled as boolean;
+		merged.defaultEnabled = document.defaultEnabled;
 	}
-	if (document.model !== undefined) merged.model = document.model as string;
-	if (document.effort !== undefined) merged.effort = document.effort as AdvisorEffort;
-	if (document.tools !== undefined) merged.tools = document.tools as ReadOnlyToolName[];
-	if (document.instructions !== undefined) {
-		merged.instructions = document.instructions as string;
-	}
+	if (document.model !== undefined) merged.model = document.model;
+	if (document.effort !== undefined) merged.effort = document.effort;
+	if (document.tools !== undefined) merged.tools = document.tools;
+	if (document.instructions !== undefined) merged.instructions = document.instructions;
 	return normalizeAdvisorConfig({
 		...merged,
 		context: { ...base.context, ...context },
