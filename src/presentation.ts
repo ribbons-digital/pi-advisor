@@ -51,6 +51,12 @@ export interface ReviewAdvicePresentationNote extends AdvicePresentationBase {
 	muteId?: string;
 	/** Bounded redacted display label of the raw findingKey; never command input. */
 	findingKey?: string;
+	/**
+	 * Opaque SHA-256 findingKeyHash, carried through the delivered-message
+	 * details so restart recovery can rebuild the dedupe identity and the
+	 * recent-findings mute index from the branch note.
+	 */
+	findingKeyHash?: string;
 }
 
 export interface MemorySuggestionPresentationNote extends AdvicePresentationBase {

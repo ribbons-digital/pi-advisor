@@ -20,6 +20,7 @@ import {
 	MUTES_FILE_NAME,
 	MuteStore,
 	normalizeAdviceForDedupe,
+	ADVISOR_CUSTOM_TYPE,
 	type AdvisorConfig,
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
@@ -439,6 +440,109 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			await harness.session.prompt("deliver deferred note");
 			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
 			expect(runtime?.getStatus()).toMatchObject({ mutedSuppressions: 2, notesDelivered: 1 });
+		} finally {
+			await harness.dispose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("rebuilds the findingKeyHash from a restored active review's branch note so mute IDs resolve and dedupe uses the finding identity", async () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const hashA = findingHash(KEY_A);
+		const reviewId = "restored-active-review-1";
+		// The window points at the pre-delivery tail so the recovery scan finds
+		// the delivered note below it.
+		const reviewWindow = cursorAtTail(manager.getBranch());
+		manager.appendCustomMessageEntry(ADVISOR_CUSTOM_TYPE, NOTE_A, true, {
+			note: NOTE_A,
+			truncated: false,
+			originalCharacters: NOTE_A.length,
+			originalEstimatedTokens: Math.ceil(NOTE_A.length / 4),
+			createdAt: Date.now(),
+			intent: "review",
+			severity: "concern",
+			muteId: hashA.slice(0, 8),
+			findingKey: KEY_A,
+			findingKeyHash: hashA,
+			reviewId,
+		});
+		const branch = manager.getBranch();
+		const state: PersistedAdvisorRuntimeState = {
+			version: ADVISOR_RUNTIME_STATE_VERSION,
+			sessionId: manager.getSessionId(),
+			savedAt: Date.now(),
+			cursor: cursorAtTail(branch),
+			activeDeliveries: [],
+			deferredAdvice: [],
+			dedupeHashes: [],
+			recentFindings: [],
+			memorySuggestions: {
+				meaningfulTurnCount: 1,
+				admittedCount: 0,
+				deliveredCount: 0,
+				sessionCapReached: false,
+			},
+			notesDelivered: 0,
+			activeReview: {
+				text: NOTE_A,
+				entryCount: 1,
+				truncated: false,
+				window: reviewWindow,
+				turnNumber: 1,
+				successfulMemoryTexts: [],
+				reviewId,
+				restoredReplayCount: 0,
+			},
+		};
+		manager.appendCustomEntry(ADVISOR_RUNTIME_STATE_ENTRY_TYPE, state);
+
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "resumed" }] },
+			{ content: [{ type: "text", text: "second turn" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			reviewAdvice(NOTE_A_PARAPHRASE, KEY_A),
+			{ content: [] },
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const harness = await createSessionHarness({
+			sessionManager: manager,
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			setup: (_cwd, agentDir) => {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+			},
+		});
+		try {
+			await harness.session.prompt("resumed session");
+			await waitFor(() => runtime?.getStatus().restoredActiveReviewPending === false);
+			// The recovered note's mute ID must resolve: the branch details now
+			// carry the full findingKeyHash, so the recovery records it in the
+			// recent-findings index instead of resolving to unknown.
+			expect(runtime?.resolveMuteTarget(hashA.slice(0, 8))).toEqual({
+				kind: "match",
+				hash: hashA,
+				label: KEY_A,
+			});
+			expect(runtime?.getStatus()).toMatchObject({
+				notesDelivered: 1,
+				lastNoteSeverity: "concern",
+			});
+
+			// The recovery's dedupe entry uses the finding-key identity: a fresh
+			// review of the same finding with different note text is suppressed
+			// instead of delivered a second time.
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			await harness.session.prompt("second turn");
+			await waitFor(() => runtime?.getStatus().deferredNotesPending === 0);
+			expect(runtime?.getStatus().notesSuppressed).toBe(1);
+			expect(runtime?.getStatus().notesDelivered).toBe(1);
 		} finally {
 			await harness.dispose();
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

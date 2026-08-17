@@ -1805,10 +1805,15 @@ export class AdvisorRuntime {
 				Array.from(value.findingKey).length <= 128
 					? value.findingKey
 					: undefined;
+			const findingKeyHash =
+				typeof value.findingKeyHash === "string" && /^[a-f0-9]{64}$/u.test(value.findingKeyHash)
+					? value.findingKeyHash
+					: undefined;
 			return {
 				...common,
 				intent: "review",
 				severity: value.severity,
+				...(findingKeyHash === undefined ? {} : { findingKeyHash }),
 				...(findingKey === undefined ? {} : { findingKey }),
 			};
 		}
@@ -3190,6 +3195,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					...(tag === undefined ? {} : { tag }),
 					...(muteId === undefined ? {} : { muteId }),
 					...(advice.findingKey === undefined ? {} : { findingKey: advice.findingKey }),
+					...(advice.findingKeyHash === undefined ? {} : { findingKeyHash: advice.findingKeyHash }),
 				};
 	}
 
