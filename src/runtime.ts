@@ -171,7 +171,7 @@ function serializedJsonBytes(value: unknown): number {
 	return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
-function isStaleHostContext(error: unknown): boolean {
+function isStaleHostContext<T>(error: T): error is T & Error {
 	return error instanceof Error && error.message.includes("This extension ctx is stale");
 }
 
