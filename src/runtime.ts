@@ -29,10 +29,12 @@ import {
 	createStrictAdviseTool,
 	formatAdviceForDelivery,
 	type AcceptedAdvice,
+	type AcceptedReviewAdvice,
 	type AdviceDedupeTag,
 	type AdviceCollector,
 	type AdviceDelivery,
 	type AdviceSeverity,
+	type MemorySuggestionPolicyContext,
 	type MemorySuggestionQueueState,
 } from "./advice.js";
 import {
@@ -67,6 +69,7 @@ import {
 	REVIEW_FOLLOW_UP_SESSION_CAP,
 	selectAdviceDispatch,
 	takeRenderedPrefix,
+	type AdviceDispatchState,
 } from "./delivery.js";
 import {
 	ADVISOR_LATE_ENTRY_TYPE,
@@ -74,6 +77,8 @@ import {
 	type AdviceMessageDetails,
 	type AdvicePresentationNote,
 	type LateAdviceEntryData,
+	type MemorySuggestionPresentationNote,
+	type ReviewAdvicePresentationNote,
 } from "./presentation.js";
 import {
 	estimateTokens as estimateTextTokens,
@@ -104,6 +109,7 @@ import {
 	type PersistedAdvisorTranscriptRecord,
 	type PersistedAdvisorTranscriptRecordV2,
 	type PersistedDeferredAdvice,
+	type PersistedMemorySuggestionState,
 } from "./persistence.js";
 import {
 	ADVISOR_CUSTOM_TYPE,
@@ -466,6 +472,20 @@ interface PendingAdvice {
 	restoredAfterResume?: boolean;
 	reviewId?: string;
 	tag?: AdviceDedupeTag;
+}
+
+interface AdvicePresentationFields {
+	note: string;
+	delivery: AdviceDelivery;
+	stale?: true;
+	truncated: boolean;
+	originalCharacters: number;
+	originalEstimatedTokens: number;
+	createdAt: number;
+	deliveryId?: string;
+	reviewId?: string;
+	displayedInEntry?: true;
+	restoredAfterResume?: true;
 }
 
 type TranscriptRecordDetails = PersistedAdvisorTranscriptRecordV2 extends infer Record
@@ -1504,14 +1524,14 @@ export class AdvisorRuntime {
 				stale: persisted.stale,
 				branchWindow: { ...persisted.branchWindow },
 				displayedInEntry: persisted.displayedInEntry,
-				...(persisted.restoredAfterResume ? { restoredAfterResume: true } : {}),
 				reviewId: persisted.reviewId,
 				identity: persisted.identity,
 				deliveryId: persisted.deliveryId,
 				turnNumber: persisted.turnNumber,
 				epoch: this.status.epoch,
-				...(persisted.tag === undefined ? {} : { tag: persisted.tag }),
 			};
+			if (persisted.restoredAfterResume) outstanding.restoredAfterResume = true;
+			if (persisted.tag !== undefined) outstanding.tag = persisted.tag;
 			this.activeAdvice.enqueue(
 				persisted.identity,
 				outstanding,
@@ -1542,9 +1562,9 @@ export class AdvisorRuntime {
 				branchWindow: { ...persisted.branchWindow },
 				displayedInEntry: false,
 				restoredAfterResume: true,
-				...(persisted.reviewId === undefined ? {} : { reviewId: persisted.reviewId }),
-				...(persisted.tag === undefined ? {} : { tag: persisted.tag }),
 			};
+			if (persisted.reviewId !== undefined) pending.reviewId = persisted.reviewId;
+			if (persisted.tag !== undefined) pending.tag = persisted.tag;
 			if (
 				this.pendingAdvice.enqueue(identity, pending, adviceQueueBytes(pending.advice)) ===
 				"accepted"
@@ -1642,15 +1662,18 @@ export class AdvisorRuntime {
 		}
 		const retainDeferred = this.config.limits.deferredAdviceRetentionHours > 0;
 		const deferredAdvice: PersistedDeferredAdvice[] = retainDeferred
-			? this.pendingAdvice.values().map((pending) => ({
-					advice: structuredClone(pending.advice),
-					stale: pending.stale,
-					branchWindow: { ...pending.branchWindow },
-					displayedInEntry: pending.displayedInEntry,
-					...(pending.restoredAfterResume ? { restoredAfterResume: true as const } : {}),
-					...(pending.reviewId === undefined ? {} : { reviewId: pending.reviewId }),
-					...(pending.tag === undefined ? {} : { tag: pending.tag }),
-				}))
+			? this.pendingAdvice.values().map((pending) => {
+					const persisted: PersistedDeferredAdvice = {
+						advice: structuredClone(pending.advice),
+						stale: pending.stale,
+						branchWindow: { ...pending.branchWindow },
+						displayedInEntry: pending.displayedInEntry,
+					};
+					if (pending.restoredAfterResume) persisted.restoredAfterResume = true;
+					if (pending.reviewId !== undefined) persisted.reviewId = pending.reviewId;
+					if (pending.tag !== undefined) persisted.tag = pending.tag;
+					return persisted;
+				})
 			: [];
 		const activeDeliveries: PersistedAdvisorActiveDelivery[] = this.activeAdvice
 			.values()
@@ -1674,11 +1697,9 @@ export class AdvisorRuntime {
 			queuedReview = compacted.update;
 			if (compacted.changed) {
 				this.status.serializedPersistenceTruncations++;
-				const bounded = {
-					...queuedUpdateFromPersisted(queuedReview),
-					...(queued?.restoredQueued ? { restoredQueued: true } : {}),
-					...(queued?.heldForMaterialTurn === true ? { heldForMaterialTurn: true } : {}),
-				};
+				const bounded = queuedUpdateFromPersisted(queuedReview);
+				if (queued?.restoredQueued) bounded.restoredQueued = true;
+				if (queued?.heldForMaterialTurn === true) bounded.heldForMaterialTurn = true;
 				if (this.pendingUpdate !== undefined) this.pendingUpdate = bounded;
 				else this.throttledUpdate = bounded;
 			}
@@ -1687,19 +1708,24 @@ export class AdvisorRuntime {
 			...this.pendingAdvice.values().map((pending) => adviceDedupeKey(pending.advice)),
 			...this.activeAdvice.values().map((pending) => pending.identity),
 		]);
+		const memorySuggestions: PersistedMemorySuggestionState = {
+			meaningfulTurnCount: this.meaningfulTurnCount,
+			admittedCount: this.memorySuggestionAdmissions,
+			deliveredCount: this.status.memorySuggestionsDelivered,
+			sessionCapReached:
+				this.memorySuggestionAdmissions >= this.config.memorySuggestions.sessionSuggestionCap,
+		};
+		if (this.lastMemorySuggestionTurn !== undefined) {
+			memorySuggestions.lastAdmittedTurn = this.lastMemorySuggestionTurn;
+		}
+		if (this.lastMemorySuggestionAt !== undefined) {
+			memorySuggestions.lastAdmittedAt = this.lastMemorySuggestionAt;
+		}
 		const state: PersistedAdvisorRuntimeState = {
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			sessionId,
 			savedAt: Date.now(),
 			cursor: { ...this.cursor },
-			...(activeReview === undefined ? {} : { activeReview }),
-			...(queuedReview === undefined ? {} : { queuedReview }),
-			...(this.lastReviewSubmittedTurn === undefined
-				? {}
-				: { lastReviewSubmittedTurn: this.lastReviewSubmittedTurn }),
-			...(this.lastReviewSubmittedAt === undefined
-				? {}
-				: { lastReviewSubmittedAt: this.lastReviewSubmittedAt }),
 			activeDeliveries,
 			deferredAdvice,
 			dedupeHashes: this.adviceDedupe.exportNewestEntries(
@@ -1707,22 +1733,18 @@ export class AdvisorRuntime {
 				transientIdentities,
 			),
 			recentFindings: [...this.recentFindings.entries()],
-			memorySuggestions: {
-				meaningfulTurnCount: this.meaningfulTurnCount,
-				admittedCount: this.memorySuggestionAdmissions,
-				deliveredCount: this.status.memorySuggestionsDelivered,
-				...(this.lastMemorySuggestionTurn === undefined
-					? {}
-					: { lastAdmittedTurn: this.lastMemorySuggestionTurn }),
-				...(this.lastMemorySuggestionAt === undefined
-					? {}
-					: { lastAdmittedAt: this.lastMemorySuggestionAt }),
-				sessionCapReached:
-					this.memorySuggestionAdmissions >= this.config.memorySuggestions.sessionSuggestionCap,
-			},
+			memorySuggestions,
 			reviewFollowUpsTriggered: this.status.reviewFollowUpsTriggered,
 			notesDelivered: this.status.notesDelivered,
 		};
+		if (activeReview !== undefined) state.activeReview = activeReview;
+		if (queuedReview !== undefined) state.queuedReview = queuedReview;
+		if (this.lastReviewSubmittedTurn !== undefined) {
+			state.lastReviewSubmittedTurn = this.lastReviewSubmittedTurn;
+		}
+		if (this.lastReviewSubmittedAt !== undefined) {
+			state.lastReviewSubmittedAt = this.lastReviewSubmittedAt;
+		}
 		while (
 			state.deferredAdvice.length > 0 &&
 			serializedJsonBytes(state) > MAX_PERSISTED_RUNTIME_STATE_BYTES
@@ -1818,13 +1840,14 @@ export class AdvisorRuntime {
 				typeof value.findingKeyHash === "string" && /^[a-f0-9]{64}$/u.test(value.findingKeyHash)
 					? value.findingKeyHash
 					: undefined;
-			return {
+			const review: AcceptedReviewAdvice = {
 				...common,
 				intent: "review",
 				severity: value.severity,
-				...(findingKeyHash === undefined ? {} : { findingKeyHash }),
-				...(findingKey === undefined ? {} : { findingKey }),
 			};
+			if (findingKeyHash !== undefined) review.findingKeyHash = findingKeyHash;
+			if (findingKey !== undefined) review.findingKey = findingKey;
+			return review;
 		}
 		if (
 			value.intent !== "memory-suggestion" ||
@@ -2175,17 +2198,22 @@ export class AdvisorRuntime {
 						result === undefined
 							? { outputBytes: 0, outputLines: 0 }
 							: measureAdvisorToolOutput(result.content);
-					const record = this.transcriptRecord({
+					const attempt: Extract<TranscriptRecordDetails, { kind: "tool-attempt" }> = {
 						kind: "tool-attempt",
 						reviewId: run.reviewId,
 						ordinal: run.reviewOrdinal.next++,
 						toolName,
 						internal: toolName === "advise",
-						...(toolName === "advise" ? {} : activityTargets(toolName, content.arguments)),
 						completed: result !== undefined,
 						isError: result?.isError ?? false,
 						...output,
-					});
+					};
+					if (toolName !== "advise") {
+						const targets = activityTargets(toolName, content.arguments);
+						if (targets.path !== undefined) attempt.path = targets.path;
+						if (targets.pattern !== undefined) attempt.pattern = targets.pattern;
+					}
+					const record = this.transcriptRecord(attempt);
 					if (record?.kind === "tool-attempt") run.transcriptRecords.push(record);
 				}
 			}
@@ -2417,15 +2445,16 @@ export class AdvisorRuntime {
 		const material =
 			!this.config.review.skipNonMaterialTurns ||
 			branchHasMateriallyNewerExecutorActivity(entries, { expectedIndex: 0 });
-		this.scheduleCadencedUpdate({
+		const scheduled: QueuedAdvisorUpdate = {
 			text: rendered.text,
 			entryCount: rendered.entryCount,
 			truncated: rendered.truncated,
 			window: nextCursor,
 			turnNumber: this.meaningfulTurnCount,
 			successfulMemoryTexts,
-			...(material ? {} : { heldForMaterialTurn: true }),
-		});
+		};
+		if (!material) scheduled.heldForMaterialTurn = true;
+		this.scheduleCadencedUpdate(scheduled);
 		this.persistState();
 	}
 
@@ -2533,7 +2562,7 @@ export class AdvisorRuntime {
 		const heldForMaterialTurn =
 			incoming.heldForMaterialTurn === true &&
 			(current === undefined || current.heldForMaterialTurn === true);
-		return {
+		const merged: QueuedAdvisorUpdate = {
 			text,
 			entryCount: (current?.entryCount ?? 0) + incoming.entryCount,
 			truncated: (current?.truncated ?? false) || incoming.truncated || text !== combined,
@@ -2541,8 +2570,9 @@ export class AdvisorRuntime {
 			turnNumber: incoming.turnNumber,
 			successfulMemoryTexts,
 			restoredQueued: current?.restoredQueued === true || incoming.restoredQueued === true,
-			...(heldForMaterialTurn ? { heldForMaterialTurn: true } : {}),
 		};
+		if (heldForMaterialTurn) merged.heldForMaterialTurn = true;
+		return merged;
 	}
 
 	private sessionIsPaused(): boolean {
@@ -2643,20 +2673,21 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.collector.suppressedCalls = 0;
 		this.collector.memoryPolicySuppressedCalls = 0;
 		this.collector.memoryLimitSuppressedCalls = 0;
-		this.collector.memoryPolicy = {
+		const memoryPolicy: MemorySuggestionPolicyContext = {
 			enabled: this.config.memorySuggestions.enabled,
 			capabilityAvailable: capability.state === "available",
 			turnNumber: update.turnNumber,
 			now: Date.now(),
 			admittedCount: this.memorySuggestionAdmissions,
-			...(this.lastMemorySuggestionTurn === undefined
-				? {}
-				: { lastDeliveredTurn: this.lastMemorySuggestionTurn }),
-			...(this.lastMemorySuggestionAt === undefined
-				? {}
-				: { lastDeliveredAt: this.lastMemorySuggestionAt }),
 			successfulMemoryTexts: update.successfulMemoryTexts,
 		};
+		if (this.lastMemorySuggestionTurn !== undefined) {
+			memoryPolicy.lastDeliveredTurn = this.lastMemorySuggestionTurn;
+		}
+		if (this.lastMemorySuggestionAt !== undefined) {
+			memoryPolicy.lastDeliveredAt = this.lastMemorySuggestionAt;
+		}
+		this.collector.memoryPolicy = memoryPolicy;
 	}
 
 	private extractStaleNestedQueue(session: AgentSession): number {
@@ -3173,36 +3204,39 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		reviewId?: string,
 		tag?: AdviceDedupeTag,
 	): AdvicePresentationNote {
-		const common = {
+		const common: AdvicePresentationFields = {
 			note: advice.note,
 			delivery,
-			...(stale ? { stale: true as const } : {}),
 			truncated: advice.truncated,
 			originalCharacters: advice.originalCharacters,
 			originalEstimatedTokens: advice.originalEstimatedTokens,
 			createdAt: advice.createdAt,
-			...(deliveryId === undefined ? {} : { deliveryId }),
-			...(reviewId === undefined ? {} : { reviewId }),
-			...(displayedInEntry ? { displayedInEntry: true as const } : {}),
-			...(restoredAfterResume ? { restoredAfterResume: true as const } : {}),
 		};
+		if (stale) common.stale = true;
+		if (deliveryId !== undefined) common.deliveryId = deliveryId;
+		if (reviewId !== undefined) common.reviewId = reviewId;
+		if (displayedInEntry) common.displayedInEntry = true;
+		if (restoredAfterResume) common.restoredAfterResume = true;
 		const muteId = advice.intent === "review" ? reviewNoteMuteId(advice) : undefined;
-		return advice.intent === "memory-suggestion"
-			? {
-					...common,
-					intent: advice.intent,
-					memory: { ...advice.memory },
-					...(queueState === undefined ? {} : { queueState }),
-				}
-			: {
-					...common,
-					intent: advice.intent,
-					severity: advice.severity,
-					...(tag === undefined ? {} : { tag }),
-					...(muteId === undefined ? {} : { muteId }),
-					...(advice.findingKey === undefined ? {} : { findingKey: advice.findingKey }),
-					...(advice.findingKeyHash === undefined ? {} : { findingKeyHash: advice.findingKeyHash }),
-				};
+		if (advice.intent === "memory-suggestion") {
+			const note: MemorySuggestionPresentationNote = {
+				...common,
+				intent: advice.intent,
+				memory: { ...advice.memory },
+			};
+			if (queueState !== undefined) note.queueState = queueState;
+			return note;
+		}
+		const note: ReviewAdvicePresentationNote = {
+			...common,
+			intent: advice.intent,
+			severity: advice.severity,
+		};
+		if (tag !== undefined) note.tag = tag;
+		if (muteId !== undefined) note.muteId = muteId;
+		if (advice.findingKey !== undefined) note.findingKey = advice.findingKey;
+		if (advice.findingKeyHash !== undefined) note.findingKeyHash = advice.findingKeyHash;
+		return note;
 	}
 
 	private memoryQueueState(advice: AcceptedAdvice): MemorySuggestionQueueState | undefined {
@@ -3290,7 +3324,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		}
 		const tag = dedupeDecision.tag;
 		const dedupeSnapshot = this.adviceDedupe.snapshotEntry(advice);
-		const dispatch = selectAdviceDispatch({
+		const dispatchState: AdviceDispatchState = {
 			forceDeferred,
 			aborted: ctx.signal?.aborted === true,
 			idle: ctx.isIdle(),
@@ -3299,12 +3333,13 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			memoryCapabilityAvailable:
 				advice.intent === "memory-suggestion" &&
 				this.refreshMemorySuggestionCapability().state === "available",
-			...(advice.intent === "review" ? { reviewSeverity: advice.severity } : {}),
 			activeIdleSeverities: this.config.delivery.activeIdleSeverities,
 			reviewFollowUpPending: this.automaticReviewFollowUpDeliveryId !== undefined,
 			reviewFollowUpCapExhausted:
 				this.status.reviewFollowUpsTriggered >= REVIEW_FOLLOW_UP_SESSION_CAP,
-		});
+		};
+		if (advice.intent === "review") dispatchState.reviewSeverity = advice.severity;
+		const dispatch = selectAdviceDispatch(dispatchState);
 		if (dispatch === "deferred") {
 			const pending: PendingAdvice = {
 				advice,
@@ -3312,8 +3347,8 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				branchWindow: cursorAtTail(ctx.sessionManager.getBranch()),
 				displayedInEntry: false,
 				reviewId,
-				...(tag === undefined ? {} : { tag }),
 			};
+			if (tag !== undefined) pending.tag = tag;
 			const admission = this.pendingAdvice.enqueue(identity, pending, adviceQueueBytes(advice));
 			if (admission !== "accepted") {
 				this.status.notesSuppressed++;
@@ -3342,8 +3377,8 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				reviewId,
 				turnNumber,
 				epoch: this.status.epoch,
-				...(tag === undefined ? {} : { tag }),
 			};
+			if (tag !== undefined) outstanding.tag = tag;
 			const candidateDeliveries = [...this.activeAdvice.values(), outstanding].map(
 				persistedActiveDelivery,
 			);
@@ -3553,7 +3588,8 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		);
 		const content = pending.map(({ formatted }) => formatted).join("\n\n");
 		const single = notes.length === 1 ? notes[0] : undefined;
-		const details: AdviceMessageDetails = { ...(single ?? {}), notes };
+		const details: AdviceMessageDetails = { notes };
+		if (single !== undefined) Object.assign(details, single);
 		this.persistState();
 		this.publishStatus();
 		return {
@@ -3667,8 +3703,8 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				displayedInEntry: false,
 				restoredAfterResume: this.status.restoredActiveDeliveriesPending > 0,
 				reviewId: outstanding.reviewId,
-				...(outstanding.tag === undefined ? {} : { tag: outstanding.tag }),
 			};
+			if (outstanding.tag !== undefined) pending.tag = outstanding.tag;
 			const admission = this.pendingAdvice.enqueue(
 				outstanding.identity,
 				pending,
