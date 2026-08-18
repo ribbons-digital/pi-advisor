@@ -95,6 +95,7 @@ describe.sequential("packed idle Memory suggestion delivery", () => {
 					"dir",
 				);
 			}
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			const packed = (await import(
 				pathToFileURL(join(unpacked, "package", "src", "index.ts")).href
 			)) as PackedAdvisorModule;

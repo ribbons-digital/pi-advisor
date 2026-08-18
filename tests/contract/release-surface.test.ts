@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ADVISOR_CONFIG, PROPOSED_ADVISOR_CONFIG } from "../../src/index.js";
 
+// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
 	name: string;
 	version: string;

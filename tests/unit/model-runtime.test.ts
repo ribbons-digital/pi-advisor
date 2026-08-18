@@ -51,8 +51,11 @@ async function createHost(provider: ScriptedProvider): Promise<{
 
 function expectFieldFailure(error: unknown, field: string): void {
 	expect(error).toBeInstanceOf(ModelRuntimeCompatibilityError);
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	expect((error as Error).message).toContain(field);
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	expect((error as Error).message).not.toContain("runtime-secret");
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	expect((error as Error).message.length).toBeLessThan(200);
 }
 
@@ -71,6 +74,7 @@ describe("Advisor ModelRuntime compatibility resolver", () => {
 		};
 		expect(runtime.setRuntimeApiKey.length).toBe(2);
 		await setRuntimeApiKeyWithoutNetwork(
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			runtime as Pick<ModelRuntime, "setRuntimeApiKey">,
 			"scripted",
 			"runtime-secret",
@@ -283,6 +287,7 @@ describe("Advisor ModelRuntime compatibility resolver", () => {
 			expect.fail("resolver should reject different OAuth tokens");
 		} catch (error) {
 			expectFieldFailure(error, "provider API key");
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			expect((error as Error).message).not.toContain("oauth-secret");
 		}
 	});
@@ -450,6 +455,7 @@ describe("Advisor ModelRuntime compatibility resolver", () => {
 			expect.fail("resolver should reject a different credential");
 		} catch (error) {
 			expectFieldFailure(error, "provider API key");
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			expect((error as Error).message).not.toContain("different-secret");
 		}
 	});

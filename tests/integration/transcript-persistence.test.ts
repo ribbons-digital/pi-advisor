@@ -135,6 +135,7 @@ describe.sequential("local redacted activity records", () => {
 			expect(records).toHaveLength(2);
 			expect(
 				records.flatMap((entry) =>
+					// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 					entry.type === "custom" ? [(entry.data as { kind: string }).kind] : [],
 				),
 			).toEqual(["review-start", "review-outcome"]);

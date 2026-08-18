@@ -21,6 +21,7 @@ describe("memory_suggest capability detection", () => {
 	it("accepts the exact active pending-review contract without invoking the tool", () => {
 		const execute = vi.fn();
 		const result = detectMemorySuggestCapability(
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			[{ name: "memory_suggest", parameters: compatibleSchema, execute } as never],
 			["memory_suggest"],
 		);

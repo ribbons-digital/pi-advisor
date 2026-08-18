@@ -12,8 +12,12 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
-export const SCRIPTED_API = "pi-advisor-scripted" as Api;
-export const ADVISOR_SCRIPTED_API = "pi-advisor-scripted-advisor" as Api;
+// SAFETY: fixture-only API identifiers are registered with the scripted ModelRuntime below.
+const SCRIPTED_API = "pi-advisor-scripted" as Api;
+// SAFETY: fixture-only API identifiers are registered with the scripted ModelRuntime below.
+const ADVISOR_SCRIPTED_API = "pi-advisor-scripted-advisor" as Api;
+
+export { ADVISOR_SCRIPTED_API, SCRIPTED_API };
 
 export interface ScriptedUsage {
 	input?: number;
@@ -103,6 +107,7 @@ function copyContext(context: Context): Context {
 		copied.tools = context.tools.map((tool) => ({
 			name: tool.name,
 			description: tool.description,
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			parameters: JSON.parse(JSON.stringify(tool.parameters)) as typeof tool.parameters,
 		}));
 	}
@@ -282,6 +287,7 @@ export class ScriptedProvider {
 
 			stream.push({
 				type: "done",
+				// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 				reason: message.stopReason as "stop" | "length" | "toolUse",
 				message,
 			});

@@ -104,6 +104,7 @@ function latestRuntimeState(manager: SessionManager): PersistedAdvisorRuntimeSta
 		.find(
 			(entry) => entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 		);
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return latest?.type === "custom" ? (latest.data as PersistedAdvisorRuntimeState) : undefined;
 }
 

@@ -56,7 +56,7 @@ function enableStrictAdvise(modelRuntime: ModelRuntime, advisor: ScriptedProvide
 						...model,
 						api: "anthropic-messages",
 						compat: { supportsStrictTools: true },
-					} as typeof model)
+					} satisfies typeof model)
 				: model,
 		),
 	});

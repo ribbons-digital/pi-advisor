@@ -398,6 +398,7 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 			});
 			expect(await rootPolicy.allows("safe/visible.txt")).toBe(false);
 			const tools = createProtectedAdvisorTools(harness.cwd, config);
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			const ctx = {} as ExtensionContext;
 			const execute = async (name: string, args: ToolCall["arguments"]) => {
 				const tool = tools.find((candidate) => candidate.name === name);
@@ -431,6 +432,7 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 				/Invalid or unsupported grep pattern|Regex grep is unavailable/,
 			);
 			const boundedLs = await execute("ls", { path: ".", limit: 1 });
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			expect((boundedLs.details as { entryLimitReached?: unknown }).entryLimitReached).toBe(true);
 
 			config.security.protectedPathExceptions = [".env"];

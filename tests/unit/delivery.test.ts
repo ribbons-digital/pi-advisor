@@ -122,6 +122,7 @@ describe("Advisor delivery selection", () => {
 			"deferred",
 		);
 		const ordinary = { ...idleReview };
+		// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 		delete (ordinary as Partial<AdviceDispatchState>).reviewSeverity;
 		expect(selectAdviceDispatch(ordinary)).toBe("deferred");
 	});

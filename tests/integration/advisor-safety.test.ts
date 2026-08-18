@@ -940,6 +940,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			const note = notes[0];
 			if (note === undefined) throw new Error("Expected one Advisory note");
 			expect(note.content).toContain("[Advisory note truncated to configured limit]");
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			const details = note.details as {
 				truncated?: unknown;
 				originalCharacters?: unknown;

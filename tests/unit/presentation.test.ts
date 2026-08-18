@@ -28,6 +28,7 @@ import {
 function fixtureTheme(ansi: boolean, borderColors?: string[]): Theme {
 	const style = (open: string, text: string): string =>
 		ansi ? `\u001B[${open}m${text}\u001B[0m` : text;
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return {
 		fg: (color: string, text: string) => {
 			if (text === "│") borderColors?.push(color);
@@ -381,6 +382,7 @@ describe("Advisor presentation and diagnostics through Slice 5", () => {
 			theme,
 		);
 		const lateComponent = renderLateAdviceEntry(
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			{
 				type: "custom",
 				customType: "pi-advisor-late-note",

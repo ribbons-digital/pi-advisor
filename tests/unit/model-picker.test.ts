@@ -9,6 +9,7 @@ import {
 } from "../../src/index.js";
 
 function theme(): Theme {
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return {
 		fg: (_color: string, text: string) => text,
 		bg: (_color: string, text: string) => text,

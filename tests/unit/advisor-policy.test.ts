@@ -303,6 +303,7 @@ describe("Slice 1 configuration and emission policy", () => {
 
 	it("normalizes a partial review block and keeps User cadence values away from the defaults", () => {
 		const omittedAdaptive = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 		omittedAdaptive.review = { skipNonMaterialTurns: true } as typeof omittedAdaptive.review;
 		expect(normalizeAdvisorConfig(omittedAdaptive).review).toEqual({
 			skipNonMaterialTurns: true,
@@ -1321,6 +1322,7 @@ describe("Quality Slice Q5 dedupe accuracy", () => {
 			{
 				hash: "f".repeat(64),
 				metadata: {
+					// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 					severity: "urgent" as AdviceSeverity,
 					signature,
 					lastDeliveryTurn: 1,

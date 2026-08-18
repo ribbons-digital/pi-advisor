@@ -83,7 +83,7 @@ describe.sequential("Advisor advise schema mode", () => {
 									...model,
 									api: "anthropic-messages",
 									compat: { supportsStrictTools: true },
-								} as typeof model)
+								} satisfies typeof model)
 							: model,
 					),
 				});
@@ -134,6 +134,7 @@ describe.sequential("Advisor advise schema mode", () => {
 			const statusText = formatAdvisorStatus(runtime.getStatus());
 			expect(statusText).toContain("Advise schema: portable");
 			const dump = formatAdvisorDiagnosticsDump(runtime.getStatus(), config);
+			// SAFETY: formatAdvisorDiagnosticsDump emits the status object inspected by this integration test.
 			const diagnosticPayload = JSON.parse(dump.slice(dump.indexOf("\n") + 1)) as {
 				status: { adviseSchemaMode?: unknown };
 			};

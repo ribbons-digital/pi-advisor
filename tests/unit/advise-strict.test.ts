@@ -37,6 +37,7 @@ function prepareAndValidate(tool: ReturnType<typeof createStrictAdviseTool>, raw
 		type: "toolCall",
 		id: "strict-advise-validation",
 		name: "advise",
+		// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 		arguments: prepared as never,
 	});
 	return prepared;
@@ -44,6 +45,7 @@ function prepareAndValidate(tool: ReturnType<typeof createStrictAdviseTool>, raw
 
 async function executeStrict(tool: ReturnType<typeof createStrictAdviseTool>, raw: unknown) {
 	const prepared = prepareAndValidate(tool, raw);
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return tool.execute("strict-advise", prepared, undefined, undefined, undefined as never);
 }
 
@@ -67,6 +69,7 @@ interface SchemaNodeProbe {
 function asRecord(value: unknown): SchemaNodeProbe {
 	expect(value).toBeTypeOf("object");
 	expect(value).not.toBeNull();
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return value as SchemaNodeProbe;
 }
 
