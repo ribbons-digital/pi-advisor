@@ -59,16 +59,19 @@ interface CommandContextStub {
 }
 
 function commandUi(ui: CommandUiStub): ExtensionCommandContext["ui"] {
+	// SAFETY: tests provide only the UI methods exercised by each command path.
 	return ui as ExtensionCommandContext["ui"];
 }
 
 function commandContext(ctx: CommandContextStub): ExtensionCommandContext {
+	// SAFETY: tests provide only the command-context fields exercised by the called function.
 	return ctx as ExtensionCommandContext;
 }
 
 function configureRuntime(
 	applyConfiguration: AdvisorRuntime["applyConfiguration"],
 ): AdvisorRuntime {
+	// SAFETY: configureAdvisor exercises only applyConfiguration on this runtime test double.
 	return { applyConfiguration } as AdvisorRuntime;
 }
 
@@ -105,6 +108,7 @@ describe("WATCHDOG configuration", () => {
 			.mockResolvedValueOnce("max");
 		const result = await pickAdvisorModelAndEffort({
 			mode: "rpc",
+			// SAFETY: this picker test double implements the only registry method used here.
 			modelRegistry: {
 				getAvailable: () => [
 					availableModel("zeta", "model-z"),
@@ -127,6 +131,7 @@ describe("WATCHDOG configuration", () => {
 			.mockResolvedValueOnce("off");
 		const result = await pickAdvisorModelAndEffort({
 			mode: "rpc",
+			// SAFETY: this picker test double implements the only registry method used here.
 			modelRegistry: {
 				getAvailable: () => [availableModel("alpha", "plain", { reasoning: false })],
 			} as ExtensionCommandContext["modelRegistry"],
@@ -146,6 +151,7 @@ describe("WATCHDOG configuration", () => {
 			{
 				mode: "rpc",
 				thinkingLevel: "low",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: {
 					getAvailable: () => [availableModel("alpha", "model-a")],
 				} as ExtensionCommandContext["modelRegistry"],
@@ -169,6 +175,7 @@ describe("WATCHDOG configuration", () => {
 		await pickAdvisorModelAndEffort(
 			{
 				mode: "rpc",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: {
 					getAvailable: () => [
 						availableModel("alpha", "model-a", { thinkingLevelMap: { high: null } }),
@@ -190,6 +197,7 @@ describe("WATCHDOG configuration", () => {
 		const result = await pickAdvisorModelAndEffort(
 			{
 				mode: "tui",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: { getAvailable: () => [model] } as ExtensionCommandContext["modelRegistry"],
 				ui: commandUi({ custom, select, notify: vi.fn() }),
 			},
@@ -203,6 +211,7 @@ describe("WATCHDOG configuration", () => {
 		expect(
 			await pickAdvisorModelAndEffort({
 				mode: "tui",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: { getAvailable: () => [model] } as ExtensionCommandContext["modelRegistry"],
 				ui: commandUi({
 					custom: cancelModel,
@@ -218,6 +227,7 @@ describe("WATCHDOG configuration", () => {
 		expect(
 			await pickAdvisorModelAndEffort({
 				mode: "rpc",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: { getAvailable: () => [model] } as ExtensionCommandContext["modelRegistry"],
 				ui: commandUi({ select: cancelEffort, notify: vi.fn() }),
 			}),
@@ -252,6 +262,7 @@ describe("WATCHDOG configuration", () => {
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
 				mode: "rpc",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
@@ -290,6 +301,7 @@ describe("WATCHDOG configuration", () => {
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
 				mode: "rpc",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
@@ -319,6 +331,7 @@ describe("WATCHDOG configuration", () => {
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
 				mode: "tui",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
@@ -357,6 +370,7 @@ describe("WATCHDOG configuration", () => {
 			const configured = await pickAdvisorInteractiveConfiguration(
 				{
 					mode: "rpc",
+					// SAFETY: this picker test double implements the only registry method used here.
 					modelRegistry: {
 						getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 					} as ExtensionCommandContext["modelRegistry"],
@@ -1335,6 +1349,7 @@ describe("Quality Slice Q6 configure menu model gate (F12)", () => {
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
 				mode: "rpc",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
@@ -1360,6 +1375,7 @@ describe("Quality Slice Q6 configure menu model gate (F12)", () => {
 		const configured = await pickAdvisorInteractiveConfiguration(
 			{
 				mode: "rpc",
+				// SAFETY: this picker test double implements the only registry method used here.
 				modelRegistry: {
 					getAvailable: () => [{ provider: "fixture", id: "advisor" }],
 				} as ExtensionCommandContext["modelRegistry"],
@@ -1378,7 +1394,7 @@ describe("Quality Slice Q6 configure menu model gate (F12)", () => {
 
 describe("Quality Slice Q6 legacy programmatic configuration (verified defect fix)", () => {
 	it("normalizes a legacy programmatic config missing every post-original group", () => {
-		const legacy = structuredClone(DEFAULT_ADVISOR_CONFIG) as Partial<AdvisorConfig>;
+		const legacy: Partial<AdvisorConfig> = structuredClone(DEFAULT_ADVISOR_CONFIG);
 		// A config built against the original shape lacks every group added
 		// later: delivery (Q3), review (Q4), dedupe (Q5), and the later
 		// memorySuggestions and persistence groups; deleting the original groups
@@ -1392,6 +1408,7 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		delete legacy.dedupe;
 		delete legacy.memorySuggestions;
 		delete legacy.persistence;
+		// SAFETY: this test intentionally passes a legacy partial object to verify runtime normalization.
 		const normalized = normalizeAdvisorConfig(legacy as AdvisorConfig);
 		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
 		expect(normalized.dedupe.similarityRedeliveryThreshold).toBe(0.5);
@@ -1405,14 +1422,17 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 
 	it("normalizes present-but-partial groups against the release defaults", () => {
 		const partial = structuredClone(DEFAULT_ADVISOR_CONFIG);
-		partial.delivery = {} as AdvisorConfig["delivery"];
-		partial.security = {} as AdvisorConfig["security"];
-		partial.dedupe = {} as AdvisorConfig["dedupe"];
-		partial.review = {} as AdvisorConfig["review"];
-		partial.context = {} as AdvisorConfig["context"];
-		partial.limits = {} as AdvisorConfig["limits"];
-		partial.memorySuggestions = {} as AdvisorConfig["memorySuggestions"];
-		partial.persistence = {} as AdvisorConfig["persistence"];
+		// SAFETY: this test intentionally creates incomplete nested groups to verify default merging.
+		Object.assign(partial, {
+			delivery: {} as AdvisorConfig["delivery"],
+			security: {} as AdvisorConfig["security"],
+			dedupe: {} as AdvisorConfig["dedupe"],
+			review: {} as AdvisorConfig["review"],
+			context: {} as AdvisorConfig["context"],
+			limits: {} as AdvisorConfig["limits"],
+			memorySuggestions: {} as AdvisorConfig["memorySuggestions"],
+			persistence: {} as AdvisorConfig["persistence"],
+		});
 		const normalized = normalizeAdvisorConfig(partial);
 		expect(normalized.delivery.activeIdleSeverities).toEqual(["blocker"]);
 		expect(normalized.security.additionalProtectedPaths).toEqual([]);
