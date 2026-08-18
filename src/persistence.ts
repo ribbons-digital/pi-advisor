@@ -296,7 +296,7 @@ function hasOnlyKeys(value: UnvalidatedPersistedRecord, keys: readonly string[])
 }
 
 function isFiniteInteger<T>(value: T, minimum = 0): value is T & number {
-	return Number.isSafeInteger(value) && (value as number) >= minimum;
+	return isPersistedNumber(value) && Number.isSafeInteger(value) && value >= minimum;
 }
 
 function isTimestamp<T>(value: T): value is T & number {
@@ -321,7 +321,7 @@ function isBoundedName<T>(value: T): value is T & string {
 
 function isCursor<T>(value: T): value is T & AdvisorCursor {
 	if (!isPersistedRecord(value)) return false;
-	const cursor = value as UnvalidatedPersistedRecord;
+	const cursor = value;
 	return (
 		hasOnlyKeys(cursor, ["expectedIndex", "lastEntryId"]) &&
 		isFiniteInteger(cursor.expectedIndex) &&
@@ -350,7 +350,7 @@ function isAcceptedAdvice<T>(
 	findingKeyMetadata: FindingKeyMetadataMode,
 ): value is T & AcceptedAdvice {
 	if (!isPersistedRecord(value)) return false;
-	const advice = value as UnvalidatedPersistedRecord;
+	const advice = value;
 	if (
 		!isBoundedSafeText(advice.note, HARD_LIMITS.maxAdviceCharacters) ||
 		!isPersistedBoolean(advice.truncated) ||
@@ -422,7 +422,7 @@ function serializedBytes(value: unknown): number | undefined {
 
 function isPersistedDedupeEntry<T>(value: T): value is T & PersistedDedupeEntry {
 	if (!isPersistedRecord(value)) return false;
-	const entry = value as UnvalidatedPersistedRecord;
+	const entry = value;
 	if (!hasOnlyKeys(entry, ["hash", "metadata"])) return false;
 	if (!isPersistedString(entry.hash) || !/^[a-f0-9]{64}$/u.test(entry.hash)) return false;
 	if (entry.metadata === undefined) return true;
@@ -448,7 +448,7 @@ function isLegacyDedupeHashes<T>(value: T): value is T & string[] {
 
 function isPersistedRecentFinding<T>(value: T): value is T & PersistedRecentFinding {
 	if (!isPersistedRecord(value)) return false;
-	const entry = value as UnvalidatedPersistedRecord;
+	const entry = value;
 	return (
 		hasOnlyKeys(entry, ["hash", "label"]) &&
 		isPersistedString(entry.hash) &&
@@ -469,7 +469,7 @@ function isPersistedDeferredAdvice<T>(
 	allowReviewId = false,
 ): value is T & PersistedDeferredAdvice {
 	if (!isPersistedRecord(value)) return false;
-	const pending = value as UnvalidatedPersistedRecord;
+	const pending = value;
 	return (
 		hasOnlyKeys(pending, [
 			"advice",
@@ -498,7 +498,7 @@ function isPersistedReviewUpdate<T>(
 	active: boolean,
 ): value is T & PersistedAdvisorReviewUpdate {
 	if (!isPersistedRecord(value)) return false;
-	const update = value as UnvalidatedPersistedRecord;
+	const update = value;
 	const allowed = [
 		"text",
 		"entryCount",
@@ -548,7 +548,7 @@ function isPersistedActiveDelivery<T>(
 	findingKeyMetadata: FindingKeyMetadataMode,
 ): value is T & PersistedAdvisorActiveDelivery {
 	if (!isPersistedRecord(value)) return false;
-	const delivery = value as UnvalidatedPersistedRecord;
+	const delivery = value;
 	return (
 		hasOnlyKeys(delivery, [
 			"advice",
@@ -582,7 +582,7 @@ function isPersistedActiveDelivery<T>(
 
 function isMemoryState<T>(value: T): value is T & PersistedMemorySuggestionState {
 	if (!isPersistedRecord(value)) return false;
-	const state = value as UnvalidatedPersistedRecord;
+	const state = value;
 	if (
 		!hasOnlyKeys(state, [
 			"meaningfulTurnCount",
@@ -688,15 +688,14 @@ export function parsePersistedAdvisorRuntimeState(
 		!Array.isArray(state.dedupeHashes) ||
 		state.dedupeHashes.length > MAX_PERSISTED_DEDUPE_HASHES ||
 		(version === 4 || version === ADVISOR_RUNTIME_STATE_VERSION
-			? !state.dedupeHashes.every((entry) => isPersistedDedupeEntry(entry)) ||
-				new Set(state.dedupeHashes.map((entry) => (entry as { hash: string }).hash)).size !==
-					state.dedupeHashes.length
+			? !state.dedupeHashes.every(isPersistedDedupeEntry) ||
+				new Set(state.dedupeHashes.map((entry) => entry.hash)).size !== state.dedupeHashes.length
 			: !isLegacyDedupeHashes(state.dedupeHashes)) ||
 		(version === ADVISOR_RUNTIME_STATE_VERSION &&
 			(!Array.isArray(state.recentFindings) ||
 				state.recentFindings.length > MAX_MUTE_ENTRIES ||
-				!state.recentFindings.every((entry) => isPersistedRecentFinding(entry)) ||
-				new Set(state.recentFindings.map((entry) => (entry as { hash: string }).hash)).size !==
+				!state.recentFindings.every(isPersistedRecentFinding) ||
+				new Set(state.recentFindings.map((entry) => entry.hash)).size !==
 					state.recentFindings.length)) ||
 		!isMemoryState(state.memorySuggestions) ||
 		(state.reviewFollowUpsTriggered !== undefined &&
@@ -733,6 +732,7 @@ export function parsePersistedAdvisorRuntimeState(
 		const activeReviewTurn = persistedReviewTurn(state.activeReview);
 		const queuedReviewTurn = persistedReviewTurn(state.queuedReview);
 		const meaningfulTurnCount = state.memorySuggestions.meaningfulTurnCount;
+		// SAFETY: versions 4 and 5 validate every dedupe entry above before metadata access.
 		if (
 			new Set(deliveries.map((delivery) => delivery.identity)).size !== deliveries.length ||
 			new Set(deliveries.map((delivery) => delivery.deliveryId)).size !== deliveries.length ||
@@ -755,6 +755,7 @@ export function parsePersistedAdvisorRuntimeState(
 			return undefined;
 		}
 		const current = structuredClone(value);
+		// SAFETY: the complete version-specific runtime state was validated above; cloning preserves it.
 		return {
 			...(current as Omit<
 				PersistedAdvisorRuntimeState,
@@ -772,6 +773,7 @@ export function parsePersistedAdvisorRuntimeState(
 		};
 	}
 	const migrated = structuredClone(value);
+	// SAFETY: legacy versions 1 and 2 were fully validated above before migration to version 5.
 	return {
 		...(migrated as Omit<
 			PersistedAdvisorRuntimeState,
@@ -919,6 +921,7 @@ function parseLegacyTranscriptRecord(
 					(record.outcome === "Advisor turn limit reached" && record.stopReason === "turn-limit"));
 			break;
 	}
+	// SAFETY: each accepted legacy kind passed its complete key and value validation above.
 	return valid ? (structuredClone(value) as PersistedAdvisorTranscriptRecordV1) : undefined;
 }
 
@@ -1019,6 +1022,7 @@ function parseActivityTranscriptRecord(
 			break;
 		}
 	}
+	// SAFETY: each accepted activity kind passed its complete key and value validation above.
 	return valid ? (structuredClone(value) as PersistedAdvisorTranscriptRecordV2) : undefined;
 }
 
