@@ -1,4 +1,6 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 
 import {
 	adviceDedupeKey,
@@ -267,6 +269,27 @@ interface UnvalidatedPersistedRecord {
 	outputLines?: number;
 }
 
+const PersistedRecordSchema = Type.Object({}, { additionalProperties: true });
+const PersistedStringSchema = Type.String();
+const PersistedBooleanSchema = Type.Boolean();
+const PersistedNumberSchema = Type.Number();
+
+function isPersistedRecord<T>(value: T): value is T & UnvalidatedPersistedRecord {
+	return Check(PersistedRecordSchema, value);
+}
+
+function isPersistedString<T>(value: T): value is T & string {
+	return Check(PersistedStringSchema, value);
+}
+
+function isPersistedBoolean<T>(value: T): value is T & boolean {
+	return Check(PersistedBooleanSchema, value);
+}
+
+function isPersistedNumber<T>(value: T): value is T & number {
+	return Check(PersistedNumberSchema, value);
+}
+
 function hasOnlyKeys(value: UnvalidatedPersistedRecord, keys: readonly string[]): boolean {
 	const allowed = new Set(keys);
 	return Object.keys(value).every((key) => allowed.has(key));
@@ -281,29 +304,29 @@ function isTimestamp<T>(value: T): value is T & number {
 }
 
 function isFiniteNonNegative<T>(value: T): value is T & number {
-	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+	return isPersistedNumber(value) && Number.isFinite(value) && value >= 0;
 }
 
 function isSafePersistedText<T>(value: T): value is T & string {
 	return (
-		typeof value === "string" &&
+		isPersistedString(value) &&
 		value.length <= MAX_PERSISTED_TRANSCRIPT_RECORD_BYTES * 2 &&
 		redactSecrets(value).text === value
 	);
 }
 
 function isBoundedName<T>(value: T): value is T & string {
-	return typeof value === "string" && value.length > 0 && value.length <= 256;
+	return isPersistedString(value) && value.length > 0 && value.length <= 256;
 }
 
 function isCursor<T>(value: T): value is T & AdvisorCursor {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const cursor = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(cursor, ["expectedIndex", "lastEntryId"]) &&
 		isFiniteInteger(cursor.expectedIndex) &&
 		(cursor.lastEntryId === undefined ||
-			(typeof cursor.lastEntryId === "string" &&
+			(isPersistedString(cursor.lastEntryId) &&
 				cursor.lastEntryId.length > 0 &&
 				cursor.lastEntryId.length <= 128)) &&
 		(cursor.expectedIndex === 0) === (cursor.lastEntryId === undefined)
@@ -311,7 +334,7 @@ function isCursor<T>(value: T): value is T & AdvisorCursor {
 }
 
 function isBoundedSafeText<T>(value: T, maximumCharacters: number): value is T & string {
-	if (typeof value !== "string" || value.length > maximumCharacters * 2) return false;
+	if (!isPersistedString(value) || value.length > maximumCharacters * 2) return false;
 	if (Array.from(value).length > maximumCharacters) return false;
 	return redactSecrets(value).text === value;
 }
@@ -326,11 +349,11 @@ function isAcceptedAdvice<T>(
 	value: T,
 	findingKeyMetadata: FindingKeyMetadataMode,
 ): value is T & AcceptedAdvice {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const advice = value as UnvalidatedPersistedRecord;
 	if (
 		!isBoundedSafeText(advice.note, HARD_LIMITS.maxAdviceCharacters) ||
-		typeof advice.truncated !== "boolean" ||
+		!isPersistedBoolean(advice.truncated) ||
 		!isFiniteInteger(advice.originalCharacters) ||
 		!isFiniteInteger(advice.originalEstimatedTokens) ||
 		!isTimestamp(advice.createdAt)
@@ -353,24 +376,20 @@ function isAcceptedAdvice<T>(
 			isAdviceSeverity(advice.severity) &&
 			(findingKeyMetadata === "none" ||
 				advice.findingKeyHash === undefined ||
-				(typeof advice.findingKeyHash === "string" &&
+				(isPersistedString(advice.findingKeyHash) &&
 					/^[a-f0-9]{64}$/u.test(advice.findingKeyHash))) &&
 			(findingKeyMetadata !== "hash-label" ||
 				advice.findingKey === undefined ||
-				(typeof advice.findingKey === "string" &&
+				(isPersistedString(advice.findingKey) &&
 					Array.from(advice.findingKey).length > 0 &&
 					Array.from(advice.findingKey).length <= 128 &&
 					redactSecrets(advice.findingKey).text === advice.findingKey))
 		);
 	}
-	if (
-		advice.intent !== "memory-suggestion" ||
-		typeof advice.memory !== "object" ||
-		advice.memory === null
-	) {
+	if (advice.intent !== "memory-suggestion" || !isPersistedRecord(advice.memory)) {
 		return false;
 	}
-	const memory = advice.memory as UnvalidatedPersistedRecord;
+	const memory = advice.memory;
 	return (
 		hasOnlyKeys(advice, [
 			"intent",
@@ -389,52 +408,52 @@ function isAcceptedAdvice<T>(
 }
 
 function isBoundedId<T>(value: T): value is T & string {
-	return typeof value === "string" && value.length > 0 && value.length <= 128;
+	return isPersistedString(value) && value.length > 0 && value.length <= 128;
 }
 
 function serializedBytes(value: unknown): number | undefined {
 	try {
 		const serialized = JSON.stringify(value);
-		return typeof serialized === "string" ? Buffer.byteLength(serialized, "utf8") : undefined;
+		return isPersistedString(serialized) ? Buffer.byteLength(serialized, "utf8") : undefined;
 	} catch {
 		return undefined;
 	}
 }
 
 function isPersistedDedupeEntry<T>(value: T): value is T & PersistedDedupeEntry {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const entry = value as UnvalidatedPersistedRecord;
 	if (!hasOnlyKeys(entry, ["hash", "metadata"])) return false;
-	if (typeof entry.hash !== "string" || !/^[a-f0-9]{64}$/u.test(entry.hash)) return false;
+	if (!isPersistedString(entry.hash) || !/^[a-f0-9]{64}$/u.test(entry.hash)) return false;
 	if (entry.metadata === undefined) return true;
-	if (typeof entry.metadata !== "object" || entry.metadata === null) return false;
-	const metadata = entry.metadata as UnvalidatedPersistedRecord;
+	if (!isPersistedRecord(entry.metadata)) return false;
+	const metadata = entry.metadata;
 	return (
 		hasOnlyKeys(metadata, ["severity", "signature", "lastDeliveryTurn"]) &&
 		isAdviceSeverity(metadata.severity) &&
-		typeof metadata.signature === "string" &&
+		isPersistedString(metadata.signature) &&
 		/^[a-f0-9]{16}$/u.test(metadata.signature) &&
 		isFiniteInteger(metadata.lastDeliveryTurn, 1)
 	);
 }
 
 function isLegacyDedupeHashes<T>(value: T): value is T & string[] {
+	if (!Array.isArray(value) || value.length > MAX_PERSISTED_DEDUPE_HASHES) return false;
+	const hashes: unknown[] = value;
 	return (
-		Array.isArray(value) &&
-		value.length <= MAX_PERSISTED_DEDUPE_HASHES &&
-		value.every((hash) => typeof hash === "string" && /^[a-f0-9]{64}$/u.test(hash)) &&
-		new Set(value).size === value.length
+		hashes.every((hash) => isPersistedString(hash) && /^[a-f0-9]{64}$/u.test(hash)) &&
+		new Set(hashes).size === hashes.length
 	);
 }
 
 function isPersistedRecentFinding<T>(value: T): value is T & PersistedRecentFinding {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const entry = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(entry, ["hash", "label"]) &&
-		typeof entry.hash === "string" &&
+		isPersistedString(entry.hash) &&
 		/^[a-f0-9]{64}$/u.test(entry.hash) &&
-		typeof entry.label === "string" &&
+		isPersistedString(entry.label) &&
 		Array.from(entry.label).length > 0 &&
 		isBoundedSafeText(entry.label, MAX_PERSISTED_RECENT_FINDING_LABEL_CHARACTERS) &&
 		!containsTerminalControlCharacters(entry.label)
@@ -449,7 +468,7 @@ function isPersistedDeferredAdvice<T>(
 	findingKeyMetadata: FindingKeyMetadataMode,
 	allowReviewId = false,
 ): value is T & PersistedDeferredAdvice {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const pending = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(pending, [
@@ -462,9 +481,9 @@ function isPersistedDeferredAdvice<T>(
 			...(allowReviewId ? ["reviewId"] : []),
 		]) &&
 		isAcceptedAdvice(pending.advice, findingKeyMetadata) &&
-		typeof pending.stale === "boolean" &&
+		isPersistedBoolean(pending.stale) &&
 		isCursor(pending.branchWindow) &&
-		typeof pending.displayedInEntry === "boolean" &&
+		isPersistedBoolean(pending.displayedInEntry) &&
 		(pending.restoredAfterResume === undefined || pending.restoredAfterResume === true) &&
 		(!allowReviewId || pending.reviewId === undefined || isBoundedId(pending.reviewId)) &&
 		(pending.tag === undefined ||
@@ -478,7 +497,7 @@ function isPersistedReviewUpdate<T>(
 	branch: SessionEntry[],
 	active: boolean,
 ): value is T & PersistedAdvisorReviewUpdate {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const update = value as UnvalidatedPersistedRecord;
 	const allowed = [
 		"text",
@@ -494,10 +513,10 @@ function isPersistedReviewUpdate<T>(
 		hasOnlyKeys(update, allowed) &&
 		bytes !== undefined &&
 		bytes <= MAX_PERSISTED_REVIEW_SLOT_BYTES &&
-		typeof update.text === "string" &&
+		isPersistedString(update.text) &&
 		redactSecrets(update.text).text === update.text &&
 		isFiniteInteger(update.entryCount) &&
-		typeof update.truncated === "boolean" &&
+		isPersistedBoolean(update.truncated) &&
 		isCursor(update.window) &&
 		cursorMatches(branch, update.window) &&
 		isFiniteInteger(update.turnNumber, 1) &&
@@ -505,7 +524,7 @@ function isPersistedReviewUpdate<T>(
 		update.successfulMemoryTexts.length <= MAX_PENDING_ADVICE_ITEMS &&
 		update.successfulMemoryTexts.every(
 			(text) =>
-				typeof text === "string" &&
+				isPersistedString(text) &&
 				redactSecrets(text).text === text &&
 				Buffer.byteLength(text, "utf8") <= HARD_LIMITS.maxPendingTranscriptBytes,
 		) &&
@@ -518,9 +537,9 @@ function isPersistedReviewUpdate<T>(
 }
 
 function persistedReviewTurn(value: unknown): number | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const turnNumber = (value as UnvalidatedPersistedRecord).turnNumber;
-	return typeof turnNumber === "number" ? turnNumber : undefined;
+	if (!isPersistedRecord(value)) return undefined;
+	const turnNumber = value.turnNumber;
+	return isPersistedNumber(turnNumber) ? turnNumber : undefined;
 }
 
 function isPersistedActiveDelivery<T>(
@@ -528,7 +547,7 @@ function isPersistedActiveDelivery<T>(
 	branch: SessionEntry[],
 	findingKeyMetadata: FindingKeyMetadataMode,
 ): value is T & PersistedAdvisorActiveDelivery {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const delivery = value as UnvalidatedPersistedRecord;
 	return (
 		hasOnlyKeys(delivery, [
@@ -544,13 +563,13 @@ function isPersistedActiveDelivery<T>(
 			"tag",
 		]) &&
 		isAcceptedAdvice(delivery.advice, findingKeyMetadata) &&
-		typeof delivery.stale === "boolean" &&
+		isPersistedBoolean(delivery.stale) &&
 		isCursor(delivery.branchWindow) &&
 		cursorMatches(branch, delivery.branchWindow) &&
-		typeof delivery.displayedInEntry === "boolean" &&
+		isPersistedBoolean(delivery.displayedInEntry) &&
 		(delivery.restoredAfterResume === undefined || delivery.restoredAfterResume === true) &&
 		isBoundedId(delivery.reviewId) &&
-		typeof delivery.identity === "string" &&
+		isPersistedString(delivery.identity) &&
 		/^[a-f0-9]{64}$/u.test(delivery.identity) &&
 		delivery.identity === adviceDedupeKey(delivery.advice) &&
 		isBoundedId(delivery.deliveryId) &&
@@ -562,7 +581,7 @@ function isPersistedActiveDelivery<T>(
 }
 
 function isMemoryState<T>(value: T): value is T & PersistedMemorySuggestionState {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isPersistedRecord(value)) return false;
 	const state = value as UnvalidatedPersistedRecord;
 	if (
 		!hasOnlyKeys(state, [
@@ -578,7 +597,7 @@ function isMemoryState<T>(value: T): value is T & PersistedMemorySuggestionState
 		!isFiniteInteger(state.deliveredCount) ||
 		(state.lastAdmittedTurn !== undefined && !isFiniteInteger(state.lastAdmittedTurn)) ||
 		(state.lastAdmittedAt !== undefined && !isTimestamp(state.lastAdmittedAt)) ||
-		typeof state.sessionCapReached !== "boolean"
+		!isPersistedBoolean(state.sessionCapReached)
 	) {
 		return false;
 	}
@@ -603,14 +622,13 @@ export function parsePersistedAdvisorRuntimeState(
 		return undefined;
 	}
 	if (
-		typeof serialized !== "string" ||
+		!isPersistedString(serialized) ||
 		Buffer.byteLength(serialized, "utf8") > MAX_PERSISTED_RUNTIME_STATE_BYTES ||
-		typeof value !== "object" ||
-		value === null
+		!isPersistedRecord(value)
 	) {
 		return undefined;
 	}
-	const state = value as UnvalidatedPersistedRecord;
+	const state = value;
 	const version = state.version;
 	if (
 		version !== 1 &&
@@ -656,7 +674,7 @@ export function parsePersistedAdvisorRuntimeState(
 	if (
 		!hasOnlyKeys(state, allowedKeys) ||
 		state.sessionId !== expectedSessionId ||
-		typeof state.sessionId !== "string" ||
+		!isPersistedString(state.sessionId) ||
 		state.sessionId.length === 0 ||
 		state.sessionId.length > 128 ||
 		!isTimestamp(state.savedAt) ||
@@ -720,7 +738,7 @@ export function parsePersistedAdvisorRuntimeState(
 			new Set(deliveries.map((delivery) => delivery.deliveryId)).size !== deliveries.length ||
 			(state.lastReviewSubmittedTurn === undefined) !==
 				(state.lastReviewSubmittedAt === undefined) ||
-			(typeof state.lastReviewSubmittedTurn === "number" &&
+			(state.lastReviewSubmittedTurn !== undefined &&
 				state.lastReviewSubmittedTurn > meaningfulTurnCount) ||
 			(activeReviewTurn !== undefined && activeReviewTurn > meaningfulTurnCount) ||
 			(queuedReviewTurn !== undefined && queuedReviewTurn > meaningfulTurnCount) ||
@@ -736,7 +754,7 @@ export function parsePersistedAdvisorRuntimeState(
 		) {
 			return undefined;
 		}
-		const current = structuredClone(value) as UnvalidatedPersistedRecord;
+		const current = structuredClone(value);
 		return {
 			...(current as Omit<
 				PersistedAdvisorRuntimeState,
@@ -753,7 +771,7 @@ export function parsePersistedAdvisorRuntimeState(
 					: [],
 		};
 	}
-	const migrated = structuredClone(value) as UnvalidatedPersistedRecord;
+	const migrated = structuredClone(value);
 	return {
 		...(migrated as Omit<
 			PersistedAdvisorRuntimeState,
@@ -773,7 +791,7 @@ function hasValidTranscriptBase(
 ): boolean {
 	return (
 		record.sessionId === expectedSessionId &&
-		typeof record.sessionId === "string" &&
+		isPersistedString(record.sessionId) &&
 		record.sessionId.length > 0 &&
 		record.sessionId.length <= 128 &&
 		isTimestamp(record.savedAt)
@@ -782,7 +800,7 @@ function hasValidTranscriptBase(
 
 function isActivityTarget<T>(value: T): value is T & string {
 	return (
-		typeof value === "string" &&
+		isPersistedString(value) &&
 		Buffer.byteLength(value, "utf8") <= MAX_PERSISTED_ACTIVITY_TARGET_BYTES &&
 		redactSecrets(value).text === value
 	);
@@ -826,7 +844,7 @@ function parseLegacyTranscriptRecord(
 				]) &&
 				isSafePersistedText(record.text) &&
 				isFiniteInteger(record.entryCount) &&
-				typeof record.truncated === "boolean";
+				isPersistedBoolean(record.truncated);
 			break;
 		case "advisor-tool-call":
 			valid =
@@ -846,7 +864,7 @@ function parseLegacyTranscriptRecord(
 					"text",
 				]) &&
 				isBoundedName(record.toolName) &&
-				typeof record.isError === "boolean" &&
+				isPersistedBoolean(record.isError) &&
 				isSafePersistedText(record.text);
 			break;
 		case "usage":
@@ -885,7 +903,7 @@ function parseLegacyTranscriptRecord(
 				]) &&
 				isAcceptedAdvice(record.advice, "none") &&
 				(record.delivery === "active" || record.delivery === "deferred") &&
-				typeof record.stale === "boolean";
+				isPersistedBoolean(record.stale);
 			break;
 		case "failure":
 			valid =
@@ -923,7 +941,7 @@ function parseActivityTranscriptRecord(
 					"truncated",
 				]) &&
 				isFiniteInteger(record.entryCount) &&
-				typeof record.truncated === "boolean";
+				isPersistedBoolean(record.truncated);
 			break;
 		case "tool-attempt": {
 			valid =
@@ -945,9 +963,9 @@ function parseActivityTranscriptRecord(
 				]) &&
 				isFiniteInteger(record.ordinal, 1) &&
 				isBoundedName(record.toolName) &&
-				typeof record.internal === "boolean" &&
-				typeof record.completed === "boolean" &&
-				typeof record.isError === "boolean" &&
+				isPersistedBoolean(record.internal) &&
+				isPersistedBoolean(record.completed) &&
+				isPersistedBoolean(record.isError) &&
 				isFiniteInteger(record.outputBytes) &&
 				isFiniteInteger(record.outputLines) &&
 				hasValidToolTargets(record);
@@ -991,7 +1009,7 @@ function parseActivityTranscriptRecord(
 					hasOnlyKeys(record, [...commonKeys, "delivery", "stale"]) &&
 					validUsage &&
 					(record.delivery === "active" || record.delivery === "deferred") &&
-					typeof record.stale === "boolean";
+					isPersistedBoolean(record.stale);
 			} else if (record.outcome === "governor-skipped" || record.outcome === "failed") {
 				valid =
 					hasOnlyKeys(record, [...commonKeys, "reason"]) &&
@@ -1015,14 +1033,13 @@ export function parsePersistedAdvisorTranscriptRecord(
 		return undefined;
 	}
 	if (
-		typeof serialized !== "string" ||
+		!isPersistedString(serialized) ||
 		Buffer.byteLength(serialized, "utf8") > MAX_PERSISTED_TRANSCRIPT_RECORD_BYTES ||
-		typeof value !== "object" ||
-		value === null
+		!isPersistedRecord(value)
 	) {
 		return undefined;
 	}
-	const record = value as UnvalidatedPersistedRecord;
+	const record = value;
 	if (!hasValidTranscriptBase(record, expectedSessionId)) return undefined;
 	if (record.version === ADVISOR_TRANSCRIPT_LEGACY_RECORD_VERSION) {
 		return parseLegacyTranscriptRecord(value, record);
