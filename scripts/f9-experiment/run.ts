@@ -346,7 +346,10 @@ async function registerUserProviderExtensions(
 	if (!entryPath.startsWith(`${extensionsDir}${sep}`)) return [];
 	try {
 		interface ProviderRegistrationApi {
-			registerProvider(registeredProviderId: string, config: unknown): void;
+			registerProvider(
+				registeredProviderId: string,
+				config: Parameters<ModelRuntime["registerProvider"]>[1],
+			): void;
 			registerCommand(): void;
 			on(): void;
 		}
@@ -359,12 +362,11 @@ async function registerUserProviderExtensions(
 			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
 		);
 		const adapter: ProviderRegistrationApi = {
-			registerProvider: (registeredProviderId: string, config: unknown) => {
-				modelRuntime.registerProvider(
-					registeredProviderId,
-					// SAFETY: the provider registration adapter forwards the upstream registration config unchanged.
-					config as Parameters<ModelRuntime["registerProvider"]>[1],
-				);
+			registerProvider: (
+				registeredProviderId: string,
+				config: Parameters<ModelRuntime["registerProvider"]>[1],
+			) => {
+				modelRuntime.registerProvider(registeredProviderId, config);
 			},
 			registerCommand: () => {
 				// The experiment harness needs only provider registration.
