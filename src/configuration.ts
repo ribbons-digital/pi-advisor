@@ -472,6 +472,7 @@ export async function readBounded(path: string, maximumBytes: number): Promise<s
 		const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
 		return buffer.subarray(0, bytesRead).toString("utf8");
 	} catch (error) {
+		// SAFETY: Node filesystem failures expose code through ErrnoException.
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	} finally {
@@ -863,6 +864,7 @@ export async function loadAdvisorConfiguration(options: {
 			if (text !== undefined) {
 				const parsed = parseYamlDocument(text, "project", paths.projectYaml, warnings);
 				if (parsed !== undefined) {
+					// SAFETY: the parsed known fields were validated against the Advisor project schema.
 					project = parsed.known as AdvisorProjectConfig;
 					projectInstructions = boundInstructions(
 						project.instructions ?? "",
@@ -946,5 +948,6 @@ export async function saveUserConfigurationAtomic(
 }
 
 export function isReadOnlyToolName(value: string): value is ReadOnlyToolName {
+	// SAFETY: the membership check is against the complete readonly tool-name list.
 	return READ_ONLY_TOOL_NAMES.includes(value as ReadOnlyToolName);
 }

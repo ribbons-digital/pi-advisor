@@ -346,9 +346,11 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 		},
 		security: {
 			additionalProtectedPaths: [
+				// SAFETY: normalization accepts legacy partial nested groups and fills missing fields from defaults.
 				...((merged.security as Partial<AdvisorConfig["security"]>).additionalProtectedPaths ?? []),
 			],
 			protectedPathExceptions: [
+				// SAFETY: normalization accepts legacy partial nested groups and fills missing fields from defaults.
 				...((merged.security as Partial<AdvisorConfig["security"]>).protectedPathExceptions ?? []),
 			],
 		},
@@ -356,13 +358,15 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 			// The merged defaults above cover a wholly missing group; a
 			// present-but-partial group (for example `delivery: {}` from a
 			// programmatic config) still needs the sub-field fallback.
-			activeIdleSeverities: (
-				(merged.delivery as Partial<AdvisorConfig["delivery"]>).activeIdleSeverities ??
-				defaults.delivery.activeIdleSeverities
-			).filter(
-				(severity, index, values) =>
-					isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
-			),
+			activeIdleSeverities:
+				// SAFETY: normalization accepts legacy partial nested groups and fills missing fields from defaults.
+				(
+					(merged.delivery as Partial<AdvisorConfig["delivery"]>).activeIdleSeverities ??
+					defaults.delivery.activeIdleSeverities
+				).filter(
+					(severity, index, values) =>
+						isActiveIdleSeverity(severity) && values.indexOf(severity) === index,
+				),
 		},
 		review: normalizeReviewConfig(merged.review, merged.limits.minTurnsBetweenReviews),
 		dedupe: {
@@ -385,6 +389,7 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 		},
 		memorySuggestions: {
 			enabled:
+				// SAFETY: normalization accepts legacy partial nested groups and fills missing fields from defaults.
 				(merged.memorySuggestions as Partial<MemorySuggestionConfig>).enabled ??
 				defaults.memorySuggestions.enabled,
 			minTurnsBetweenSuggestions: finiteAtLeast(
@@ -419,6 +424,7 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 		},
 		persistence: {
 			transcript:
+				// SAFETY: normalization accepts legacy partial nested groups and fills missing fields from defaults.
 				(merged.persistence as Partial<AdvisorConfig["persistence"]>).transcript ??
 				defaults.persistence.transcript,
 		},

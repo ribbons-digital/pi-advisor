@@ -221,6 +221,7 @@ function persistedUpdateFromQueued(update: QueuedAdvisorUpdate): PersistedAdviso
 }
 
 function queuedUpdateFromPersisted(update: PersistedAdvisorReviewUpdate): QueuedAdvisorUpdate {
+	// SAFETY: persisted review updates may include the validated active-review extension fields.
 	const active = update as Partial<PersistedAdvisorActiveReview>;
 	const queued: QueuedAdvisorUpdate = {
 		text: update.text,
@@ -687,6 +688,7 @@ export function measureAdvisorToolOutput(content: unknown) {
 	let outputLines = 0;
 	for (const part of content) {
 		if (!isRuntimeRecord(part)) continue;
+		// SAFETY: the record guard above permits inspected tool-output fields.
 		const record = part as UnvalidatedToolOutputPart;
 		if (record.type === "text" && isRuntimeString(record.text)) {
 			outputBytes = safeCountAdd(outputBytes, Buffer.byteLength(record.text, "utf8"));
@@ -1663,6 +1665,7 @@ export class AdvisorRuntime {
 	): PersistedAdvisorTranscriptRecordV2 | undefined {
 		const sessionId = this.sessionId;
 		if (sessionId === undefined) return undefined;
+		// SAFETY: all transcript fields are assembled from validated runtime state before persistence.
 		return {
 			version: ADVISOR_TRANSCRIPT_RECORD_VERSION,
 			sessionId,
@@ -1913,6 +1916,7 @@ export class AdvisorRuntime {
 		if (value.intent !== "memory-suggestion" || !isRuntimeRecord(value.memory)) {
 			return undefined;
 		}
+		// SAFETY: the surrounding record and intent checks select memory-suggestion details.
 		const memory = value.memory as UnvalidatedMemorySuggestionDetails;
 		if (
 			!isRuntimeString(memory.text) ||
@@ -1932,6 +1936,7 @@ export class AdvisorRuntime {
 		branch: SessionEntry[],
 		review: PersistedAdvisorActiveReview,
 	): Extract<SessionEntry, { type: "custom_message" }> | undefined {
+		// SAFETY: the predicate only returns custom messages with the Advisor delivery marker.
 		return branch.slice(review.window.expectedIndex).find((entry) => {
 			return (
 				entry.type === "custom_message" &&

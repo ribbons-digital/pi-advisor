@@ -88,6 +88,7 @@ export async function pickAdvisorModelAndEffort(
 	);
 	if (selectedModel === undefined) return undefined;
 
+	// SAFETY: Pi returns only supported Advisor effort literals.
 	const effortOptions = getSupportedThinkingLevels(selectedModel) as AdvisorConfig["effort"][];
 	if (current !== undefined) {
 		const index = effortOptions.indexOf(current.effort);
@@ -105,6 +106,7 @@ export async function pickAdvisorModelAndEffort(
 			: `Select Advisor reasoning level (current Executor reasoning: ${ctx.thinkingLevel}; Advisor selection is independent)`;
 	const effort = await ctx.ui.select(reasoningPrompt, effortOptions);
 	if (effort === undefined) return undefined;
+	// SAFETY: the selected value came from the supported Advisor effort options.
 	return { model: modelReference, effort: effort as AdvisorConfig["effort"] };
 }
 

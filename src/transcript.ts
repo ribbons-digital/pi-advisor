@@ -79,6 +79,7 @@ export function branchHasNewerInstructionInput(
 }
 
 function isReadOnlyToolName(toolName: string): boolean {
+	// SAFETY: the readonly Advisor tool-name tuple contains only strings.
 	return (READ_ONLY_TOOL_NAMES as readonly string[]).includes(toolName);
 }
 
@@ -138,6 +139,7 @@ interface UnvalidatedMemoryToolArguments {
 function contentText(content: unknown, includeReasoning: boolean): string {
 	if (isStringValue(content)) return content;
 	if (!Array.isArray(content)) return "";
+	// SAFETY: the array check above narrows content to an array of unvalidated parts.
 	return (content as unknown[])
 		.map((part) => {
 			if (!isRecordValue<UnvalidatedMessageContentPart>(part)) return "";
@@ -374,6 +376,7 @@ export function successfulMemoryToolTexts(
 			) {
 				continue;
 			}
+			// SAFETY: the memory tool name check above selects the memory argument shape.
 			const text = (content.arguments as UnvalidatedMemoryToolArguments).text;
 			if (
 				!isStringValue(text) ||

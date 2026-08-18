@@ -26,7 +26,9 @@ interface PackageManifest {
 }
 
 const inputPath = process.argv[2] ?? "pack.json";
+// SAFETY: pnpm pack writes the PackManifest shape consumed by this validation script.
 const pack = JSON.parse(readFileSync(inputPath, "utf8")) as PackManifest;
+// SAFETY: the repository package.json provides the PackageManifest fields validated below.
 const manifest = JSON.parse(readFileSync("package.json", "utf8")) as PackageManifest;
 const paths = pack.files.map((file) => file.path);
 

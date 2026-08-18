@@ -22,6 +22,7 @@ export async function setRuntimeApiKeyWithoutNetwork(
 	providerId: string,
 	apiKey: string,
 ): Promise<void> {
+	// SAFETY: the compatibility check above confirms the runtime method signature used here.
 	const apply = runtime.setRuntimeApiKey.bind(runtime) as (
 		providerId: string,
 		apiKey: string,
