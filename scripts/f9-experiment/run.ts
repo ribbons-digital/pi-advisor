@@ -44,6 +44,7 @@ import {
 	tieredPromptUpdateRelevance,
 } from "../../src/experiment.js";
 import { buildAdvisorSystemPrompt } from "../../src/runtime.js";
+import { isFunctionValue } from "../../src/value-guards.js";
 import { F9_DATASET, type F9DatasetExpectation } from "./dataset.js";
 
 const REVIEW_TOKEN_CEILING = 1_000_000;
@@ -352,7 +353,7 @@ async function registerUserProviderExtensions(
 		const module = (await import(pathToFileURL(entryPath).href)) as {
 			default?: (pi: ProviderRegistrationApi) => Promise<void> | void;
 		};
-		if (module.default === undefined) return [];
+		if (!isFunctionValue(module.default)) return [];
 		console.warn(
 			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
 		);
