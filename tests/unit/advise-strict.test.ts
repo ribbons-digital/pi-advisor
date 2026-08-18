@@ -31,7 +31,10 @@ function collector(memoryPolicy = false): AdviceCollector {
 	return collected;
 }
 
-function prepareAndValidate(tool: ReturnType<typeof createStrictAdviseTool>, raw: unknown) {
+function prepareAndValidate(
+	tool: ReturnType<typeof createStrictAdviseTool>,
+	raw: Parameters<typeof JSON.stringify>[0],
+) {
 	const prepared = tool.prepareArguments?.(raw);
 	validateToolArguments(tool, {
 		type: "toolCall",
@@ -43,7 +46,10 @@ function prepareAndValidate(tool: ReturnType<typeof createStrictAdviseTool>, raw
 	return prepared;
 }
 
-async function executeStrict(tool: ReturnType<typeof createStrictAdviseTool>, raw: unknown) {
+async function executeStrict(
+	tool: ReturnType<typeof createStrictAdviseTool>,
+	raw: Parameters<typeof JSON.stringify>[0],
+) {
 	const prepared = prepareAndValidate(tool, raw);
 	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return tool.execute("strict-advise", prepared, undefined, undefined, undefined as never);
@@ -66,14 +72,14 @@ interface SchemaNodeProbe {
 	basis?: unknown;
 }
 
-function asRecord(value: unknown): SchemaNodeProbe {
+function asRecord(value: Parameters<typeof JSON.stringify>[0]): SchemaNodeProbe {
 	expect(value).toBeTypeOf("object");
 	expect(value).not.toBeNull();
 	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return value as SchemaNodeProbe;
 }
 
-function lintStrictSchema(schema: unknown): void {
+function lintStrictSchema(schema: Parameters<typeof JSON.stringify>[0]): void {
 	const node = asRecord(schema);
 	expect(node).not.toHaveProperty("anyOf");
 	expect(node).not.toHaveProperty("oneOf");
