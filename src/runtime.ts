@@ -9,6 +9,8 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { isContextOverflow } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
@@ -129,6 +131,32 @@ const PENDING_TRUNCATION_MARKER =
 	"[Older coalesced Advisor update content discarded at pending-byte limit]\n";
 const PENDING_MEMORY_METADATA_FRACTION = 0.5;
 const FAILURE_PAUSE_COUNT = 3;
+const RuntimeRecordSchema = Type.Object({}, { additionalProperties: true });
+const RuntimeStringSchema = Type.String();
+const RuntimeBooleanSchema = Type.Boolean();
+const RuntimeNumberSchema = Type.Number();
+
+type UnvalidatedRuntimeRecord = UnvalidatedAdviceDetails &
+	UnvalidatedToolActivityArguments &
+	UnvalidatedToolOutputPart &
+	UnvalidatedMemorySuggestionDetails;
+
+function isRuntimeRecord<T>(value: T): value is T & UnvalidatedRuntimeRecord {
+	return Check(RuntimeRecordSchema, value);
+}
+
+function isRuntimeString<T>(value: T): value is T & string {
+	return Check(RuntimeStringSchema, value);
+}
+
+function isRuntimeBoolean<T>(value: T): value is T & boolean {
+	return Check(RuntimeBooleanSchema, value);
+}
+
+function isRuntimeNumber<T>(value: T): value is T & number {
+	return Check(RuntimeNumberSchema, value);
+}
+
 export const MAX_ADVISOR_RETRIES_PER_UPDATE = 1;
 export const ADVISOR_RETRY_DELAY_MS = 250;
 export const MAX_ADVISOR_DUMP_BYTES = 16 * 1_024;
@@ -202,8 +230,8 @@ function queuedUpdateFromPersisted(update: PersistedAdvisorReviewUpdate): Queued
 		turnNumber: update.turnNumber,
 		successfulMemoryTexts: new Set([...update.successfulMemoryTexts].reverse()),
 	};
-	if (typeof active.reviewId === "string") queued.reviewId = active.reviewId;
-	if (typeof active.restoredReplayCount === "number") {
+	if (active.reviewId !== undefined) queued.reviewId = active.reviewId;
+	if (active.restoredReplayCount !== undefined) {
 		queued.restoredReplayCount = active.restoredReplayCount;
 	}
 	return queued;
@@ -572,7 +600,7 @@ function boundedReason(error: unknown): string {
 }
 
 function boundedActivityTarget(value: unknown, fallback?: string): string | undefined {
-	const target = typeof value === "string" ? value : fallback;
+	const target = isRuntimeString(value) ? value : fallback;
 	if (target === undefined) return undefined;
 	return truncateUtf8Bytes(
 		redactSecrets(target).text,
@@ -623,8 +651,7 @@ function activityTargets(
 	toolName: string,
 	value: unknown,
 ): Pick<PersistedAdvisorToolAttempt, "path" | "pattern"> {
-	const arguments_: UnvalidatedToolActivityArguments =
-		typeof value === "object" && value !== null ? (value as UnvalidatedToolActivityArguments) : {};
+	const arguments_: UnvalidatedToolActivityArguments = isRuntimeRecord(value) ? value : {};
 	switch (toolName) {
 		case "read":
 			return { path: boundedRequiredActivityTarget(arguments_.path, ".") };
@@ -659,12 +686,12 @@ export function measureAdvisorToolOutput(content: unknown) {
 	let outputBytes = 0;
 	let outputLines = 0;
 	for (const part of content) {
-		if (typeof part !== "object" || part === null) continue;
+		if (!isRuntimeRecord(part)) continue;
 		const record = part as UnvalidatedToolOutputPart;
-		if (record.type === "text" && typeof record.text === "string") {
+		if (record.type === "text" && isRuntimeString(record.text)) {
 			outputBytes = safeCountAdd(outputBytes, Buffer.byteLength(record.text, "utf8"));
 			outputLines = safeCountAdd(outputLines, textLineCount(record.text));
-		} else if (record.type === "image" && typeof record.data === "string") {
+		} else if (record.type === "image" && isRuntimeString(record.data)) {
 			outputBytes = safeCountAdd(outputBytes, Buffer.byteLength(record.data, "base64"));
 		}
 	}
@@ -674,8 +701,8 @@ export function measureAdvisorToolOutput(content: unknown) {
 function boundedPersistedValue(value: unknown, maximumBytes = 64 * 1_024): string {
 	let serialized: string;
 	try {
-		const encoded = typeof value === "string" ? value : JSON.stringify(value);
-		serialized = typeof encoded === "string" ? encoded : "[Value omitted]";
+		const encoded = isRuntimeString(value) ? value : JSON.stringify(value);
+		serialized = isRuntimeString(encoded) ? encoded : "[Value omitted]";
 	} catch {
 		serialized = "[Unserializable value omitted]";
 	}
@@ -695,11 +722,11 @@ type RedactedDiagnostic =
 	| { readonly [key: string]: RedactedDiagnostic };
 
 function redactDiagnosticValue(value: unknown): RedactedDiagnostic {
-	if (typeof value === "string") return redactSecrets(value).text;
+	if (isRuntimeString(value)) return redactSecrets(value).text;
 	if (Array.isArray(value)) return value.map((item) => redactDiagnosticValue(item));
 	if (value === null) return null;
-	if (typeof value !== "object") {
-		if (typeof value === "number") return value;
+	if (!isRuntimeRecord(value)) {
+		if (isRuntimeNumber(value)) return value;
 		if (value === true || value === false) return value;
 		return null;
 	}
@@ -1842,14 +1869,14 @@ export class AdvisorRuntime {
 	}
 
 	private acceptedAdviceFromDetails(details: unknown): AcceptedAdvice | undefined {
-		if (typeof details !== "object" || details === null) return undefined;
-		const value = details as UnvalidatedAdviceDetails;
+		if (!isRuntimeRecord(details)) return undefined;
+		const value = details;
 		if (
-			typeof value.note !== "string" ||
-			typeof value.truncated !== "boolean" ||
-			typeof value.originalCharacters !== "number" ||
-			typeof value.originalEstimatedTokens !== "number" ||
-			typeof value.createdAt !== "number"
+			!isRuntimeString(value.note) ||
+			!isRuntimeBoolean(value.truncated) ||
+			!isRuntimeNumber(value.originalCharacters) ||
+			!isRuntimeNumber(value.originalEstimatedTokens) ||
+			!isRuntimeNumber(value.createdAt)
 		) {
 			return undefined;
 		}
@@ -1865,13 +1892,13 @@ export class AdvisorRuntime {
 			(value.severity === "nit" || value.severity === "concern" || value.severity === "blocker")
 		) {
 			const findingKey =
-				typeof value.findingKey === "string" &&
+				isRuntimeString(value.findingKey) &&
 				Array.from(value.findingKey).length > 0 &&
 				Array.from(value.findingKey).length <= 128
 					? value.findingKey
 					: undefined;
 			const findingKeyHash =
-				typeof value.findingKeyHash === "string" && /^[a-f0-9]{64}$/u.test(value.findingKeyHash)
+				isRuntimeString(value.findingKeyHash) && /^[a-f0-9]{64}$/u.test(value.findingKeyHash)
 					? value.findingKeyHash
 					: undefined;
 			const review: AcceptedReviewAdvice = {
@@ -1883,16 +1910,12 @@ export class AdvisorRuntime {
 			if (findingKey !== undefined) review.findingKey = findingKey;
 			return review;
 		}
-		if (
-			value.intent !== "memory-suggestion" ||
-			typeof value.memory !== "object" ||
-			value.memory === null
-		) {
+		if (value.intent !== "memory-suggestion" || !isRuntimeRecord(value.memory)) {
 			return undefined;
 		}
 		const memory = value.memory as UnvalidatedMemorySuggestionDetails;
 		if (
-			typeof memory.text !== "string" ||
+			!isRuntimeString(memory.text) ||
 			!isMemorySuggestionCategory(memory.category) ||
 			!isMemorySuggestionBasis(memory.basis)
 		) {
@@ -2499,8 +2522,8 @@ export class AdvisorRuntime {
 			if (entry.type !== "custom_message" || entry.customType !== ADVISOR_CUSTOM_TYPE) {
 				return false;
 			}
-			if (typeof entry.details !== "object" || entry.details === null) return false;
-			const details = entry.details as UnvalidatedAdviceDetails;
+			if (!isRuntimeRecord(entry.details)) return false;
+			const details = entry.details;
 			return (
 				details.deliveryId === deliveryId &&
 				details.intent === "memory-suggestion" &&
@@ -2520,8 +2543,8 @@ export class AdvisorRuntime {
 			if (entry.type !== "custom_message" || entry.customType !== ADVISOR_CUSTOM_TYPE) {
 				return false;
 			}
-			if (typeof entry.details !== "object" || entry.details === null) return false;
-			const details = entry.details as UnvalidatedAdviceDetails;
+			if (!isRuntimeRecord(entry.details)) return false;
+			const details = entry.details;
 			return (
 				details.deliveryId === deliveryId &&
 				details.intent === "review" &&
@@ -3635,15 +3658,13 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 	}
 
 	private deliveryIdFromDetails(details: unknown): string | undefined {
-		if (typeof details !== "object" || details === null) return undefined;
-		const deliveryId = (details as UnvalidatedAdviceDetails).deliveryId;
-		return typeof deliveryId === "string" ? deliveryId : undefined;
+		if (!isRuntimeRecord(details)) return undefined;
+		return isRuntimeString(details.deliveryId) ? details.deliveryId : undefined;
 	}
 
 	private reviewIdFromDetails(details: unknown): string | undefined {
-		if (typeof details !== "object" || details === null) return undefined;
-		const reviewId = (details as UnvalidatedAdviceDetails).reviewId;
-		return typeof reviewId === "string" ? reviewId : undefined;
+		if (!isRuntimeRecord(details)) return undefined;
+		return isRuntimeString(details.reviewId) ? details.reviewId : undefined;
 	}
 
 	private acknowledgeActiveAdvice(deliveryId: string, publish = true): boolean {
