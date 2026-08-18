@@ -200,6 +200,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 					(entry) =>
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			expect(
 				claimed?.type === "custom"
 					? (claimed.data as PersistedAdvisorRuntimeState).activeReview?.reviewId
@@ -382,6 +383,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 					(entry) =>
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			expect(
 				latestState?.type === "custom"
 					? (latestState.data as PersistedAdvisorRuntimeState).deferredAdvice
@@ -533,6 +535,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						(entry) =>
 							entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 					);
+				// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 				return (
 					latest?.type === "custom" &&
 					(latest.data as PersistedAdvisorRuntimeState).queuedReview?.text.includes(
@@ -616,6 +619,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 							entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 					);
 				if (latest?.type !== "custom") return false;
+				// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 				const state = latest.data as PersistedAdvisorRuntimeState;
 				return state.activeReview !== undefined && state.queuedReview !== undefined;
 			});
@@ -837,6 +841,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 					(entry) =>
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			expect(
 				latest?.type === "custom"
 					? (latest.data as PersistedAdvisorRuntimeState).activeReview
@@ -912,11 +917,13 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 					(entry) =>
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			expect(
 				latest?.type === "custom"
 					? (latest.data as PersistedAdvisorRuntimeState).activeReview
 					: "missing",
 			).toBeUndefined();
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			expect(
 				latest?.type === "custom"
 					? (latest.data as PersistedAdvisorRuntimeState).deferredAdvice[0]?.reviewId
@@ -1189,6 +1196,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
 			if (latest?.type !== "custom") throw new Error("Expected trimmed persisted state");
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			const persisted = latest.data as PersistedAdvisorRuntimeState;
 			expect(persisted.deferredAdvice.length).toBeGreaterThan(0);
 			expect(persisted.deferredAdvice.length).toBeLessThan(pendingCount);
@@ -1277,6 +1285,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
 			if (latest?.type !== "custom") throw new Error("Expected compacted runtime state");
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			const queued = (latest.data as PersistedAdvisorRuntimeState).queuedReview;
 			expect(queued).toBeDefined();
 			expect(Buffer.byteLength(JSON.stringify(queued), "utf8")).toBeLessThanOrEqual(1_000_000);
@@ -1388,6 +1397,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
 			if (latest?.type !== "custom") throw new Error("Expected priority runtime state");
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			const state = latest.data as PersistedAdvisorRuntimeState;
 			expect(Buffer.byteLength(JSON.stringify(state), "utf8")).toBeLessThanOrEqual(
 				4 * 1_024 * 1_024,
@@ -1490,6 +1500,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
 			const data = latestState?.type === "custom" ? latestState.data : undefined;
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			expect((data as PersistedAdvisorRuntimeState | undefined)?.deferredAdvice).toEqual([]);
 			expect(JSON.stringify(data)).not.toContain(note);
 		} finally {
@@ -1615,6 +1626,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
 			if (latest?.type !== "custom") throw new Error("Expected persisted dedupe state");
+			// SAFETY: the entry was filtered to the Advisor runtime custom type above.
 			const persisted = latest.data as PersistedAdvisorRuntimeState;
 			expect(persisted.dedupeHashes).toHaveLength(MAX_PERSISTED_DEDUPE_HASHES);
 			expect(persisted.dedupeHashes).toEqual(
