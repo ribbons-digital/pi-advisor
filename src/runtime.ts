@@ -201,7 +201,7 @@ function adviceQueueBytes(advice: AcceptedAdvice): number {
 	);
 }
 
-function serializedJsonBytes(value: unknown): number {
+function serializedJsonBytes(value: Parameters<typeof JSON.stringify>[0]): number {
 	return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
@@ -595,12 +595,15 @@ function hasToolCall(message: AssistantMessage): boolean {
 	return message.content.some((content) => content.type === "toolCall");
 }
 
-function boundedReason(error: unknown): string {
-	const message = error instanceof Error ? error.message : String(error);
+function boundedReason(cause: unknown): string {
+	const message = cause instanceof Error ? cause.message : String(cause);
 	return redactSecrets(message).text.slice(0, 500);
 }
 
-function boundedActivityTarget(value: unknown, fallback?: string): string | undefined {
+function boundedActivityTarget(
+	value: Parameters<typeof isRuntimeString>[0],
+	fallback?: string,
+): string | undefined {
 	const target = isRuntimeString(value) ? value : fallback;
 	if (target === undefined) return undefined;
 	return truncateUtf8Bytes(
@@ -610,7 +613,10 @@ function boundedActivityTarget(value: unknown, fallback?: string): string | unde
 	);
 }
 
-function boundedRequiredActivityTarget(value: unknown, fallback: string): string {
+function boundedRequiredActivityTarget(
+	value: Parameters<typeof isRuntimeString>[0],
+	fallback: string,
+): string {
 	return boundedActivityTarget(value, fallback) ?? fallback;
 }
 
@@ -650,7 +656,7 @@ interface UnvalidatedMemorySuggestionDetails {
 
 function activityTargets(
 	toolName: string,
-	value: unknown,
+	value: Parameters<typeof isRuntimeRecord>[0],
 ): Pick<PersistedAdvisorToolAttempt, "path" | "pattern"> {
 	const arguments_: UnvalidatedToolActivityArguments = isRuntimeRecord(value) ? value : {};
 	switch (toolName) {
@@ -682,7 +688,7 @@ function textLineCount(text: string): number {
 	return lines;
 }
 
-export function measureAdvisorToolOutput(content: unknown) {
+export function measureAdvisorToolOutput(content: Parameters<typeof isRuntimeRecord>[0]) {
 	if (!Array.isArray(content)) return { outputBytes: 0, outputLines: 0 };
 	let outputBytes = 0;
 	let outputLines = 0;
@@ -700,7 +706,10 @@ export function measureAdvisorToolOutput(content: unknown) {
 	return { outputBytes, outputLines };
 }
 
-function boundedPersistedValue(value: unknown, maximumBytes = 64 * 1_024): string {
+function boundedPersistedValue(
+	value: Parameters<typeof isRuntimeString>[0],
+	maximumBytes = 64 * 1_024,
+): string {
 	let serialized: string;
 	try {
 		const encoded = isRuntimeString(value) ? value : JSON.stringify(value);
@@ -723,13 +732,13 @@ type RedactedDiagnostic =
 	| readonly RedactedDiagnostic[]
 	| { readonly [key: string]: RedactedDiagnostic };
 
-function redactDiagnosticValue(value: unknown): RedactedDiagnostic {
+function redactDiagnosticValue(value: Parameters<typeof isRuntimeRecord>[0]): RedactedDiagnostic {
 	if (isRuntimeString(value)) return redactSecrets(value).text;
 	if (Array.isArray(value)) return value.map((item) => redactDiagnosticValue(item));
 	if (value === null) return null;
 	if (!isRuntimeRecord(value)) {
 		if (isRuntimeNumber(value)) return value;
-		if (value === true || value === false) return value;
+		if (isRuntimeBoolean(value)) return value;
 		return null;
 	}
 	return Object.fromEntries(
@@ -1871,7 +1880,9 @@ export class AdvisorRuntime {
 		}
 	}
 
-	private acceptedAdviceFromDetails(details: unknown): AcceptedAdvice | undefined {
+	private acceptedAdviceFromDetails(
+		details: Parameters<typeof isRuntimeRecord>[0],
+	): AcceptedAdvice | undefined {
 		if (!isRuntimeRecord(details)) return undefined;
 		const value = details;
 		if (
@@ -2589,9 +2600,9 @@ export class AdvisorRuntime {
 			return;
 		}
 		this.draining = true;
-		void this.drain(update).catch((error: unknown) => {
+		void this.drain(update).catch((cause: unknown) => {
 			if (!this.disposed && this.status.enabled) {
-				const reason = boundedReason(error);
+				const reason = boundedReason(cause);
 				this.recordAttemptFailure(reason);
 				this.recordFailedUpdate(reason);
 			}
@@ -3662,12 +3673,14 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		};
 	}
 
-	private deliveryIdFromDetails(details: unknown): string | undefined {
+	private deliveryIdFromDetails(
+		details: Parameters<typeof isRuntimeRecord>[0],
+	): string | undefined {
 		if (!isRuntimeRecord(details)) return undefined;
 		return isRuntimeString(details.deliveryId) ? details.deliveryId : undefined;
 	}
 
-	private reviewIdFromDetails(details: unknown): string | undefined {
+	private reviewIdFromDetails(details: Parameters<typeof isRuntimeRecord>[0]): string | undefined {
 		if (!isRuntimeRecord(details)) return undefined;
 		return isRuntimeString(details.reviewId) ? details.reviewId : undefined;
 	}
@@ -3810,9 +3823,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		await this.resetForBranchMismatch(branch);
 	}
 
-	private recordDeliveryFailure(error: unknown): void {
+	private recordDeliveryFailure(cause: unknown): void {
 		this.status.deliveryFailures++;
-		this.status.lastDeliveryFailure = boundedReason(error);
+		this.status.lastDeliveryFailure = boundedReason(cause);
 	}
 
 	private recordAttemptFailure(reason: string): void {
