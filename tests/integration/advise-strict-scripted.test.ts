@@ -43,6 +43,15 @@ function extensionFor(
 	};
 }
 
+function strictCompatibleModel<T>(model: T): T {
+	// SAFETY: Pi 0.81 types omit supportsStrictTools, but supported newer runtimes consume it.
+	return {
+		...model,
+		api: "anthropic-messages",
+		compat: { supportsStrictTools: true },
+	} as T;
+}
+
 function enableStrictAdvise(modelRuntime: ModelRuntime, advisor: ScriptedProvider): void {
 	const registration = modelRuntime.getRegisteredProviderConfig(advisor.model.provider);
 	if (registration?.models === undefined) throw new Error("Expected registered Advisor models");
@@ -50,14 +59,7 @@ function enableStrictAdvise(modelRuntime: ModelRuntime, advisor: ScriptedProvide
 		...registration,
 		api: "anthropic-messages",
 		models: registration.models.map((model) =>
-			model.id === advisor.model.id
-				? // Pi 0.81 omits the strict flag that its 0.82 runtime successor consumes.
-					({
-						...model,
-						api: "anthropic-messages",
-						compat: { supportsStrictTools: true },
-					} satisfies typeof model)
-				: model,
+			model.id === advisor.model.id ? strictCompatibleModel(model) : model,
 		),
 	});
 }

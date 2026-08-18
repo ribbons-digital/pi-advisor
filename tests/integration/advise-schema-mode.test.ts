@@ -56,6 +56,15 @@ function nestedAdviseTool(runtime: AdvisorRuntime): InspectedAdviseTool {
 	return inspectAdviseTool(tool);
 }
 
+function strictCompatibleModel<T>(model: T): T {
+	// SAFETY: Pi 0.81 types omit supportsStrictTools, but supported newer runtimes consume it.
+	return {
+		...model,
+		api: "anthropic-messages",
+		compat: { supportsStrictTools: true },
+	} as T;
+}
+
 const runtimeSupportsConstrainedSampling = await probeConstrainedSamplingSupport();
 
 describe.sequential("Advisor advise schema mode", () => {
@@ -77,14 +86,7 @@ describe.sequential("Advisor advise schema mode", () => {
 					...registration,
 					api: "anthropic-messages",
 					models: models.map((model) =>
-						model.id === advisor.model.id
-							? // Pi 0.81 omits the strict flag that its 0.82 runtime successor consumes.
-								({
-									...model,
-									api: "anthropic-messages",
-									compat: { supportsStrictTools: true },
-								} satisfies typeof model)
-							: model,
+						model.id === advisor.model.id ? strictCompatibleModel(model) : model,
 					),
 				});
 			},
