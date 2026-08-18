@@ -130,6 +130,7 @@ function latestRuntimeState(manager: SessionManager): PersistedAdvisorRuntimeSta
 		.find(
 			(entry) => entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 		);
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return latest?.type === "custom" ? (latest.data as PersistedAdvisorRuntimeState) : undefined;
 }
 
@@ -650,7 +651,10 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 					(entry): entry is CustomEntry =>
 						entry.type === "custom" && entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE,
 				)
-				.map((entry) => entry.data as { kind?: string; outcome?: string });
+				.map((entry) => {
+					// SAFETY: the custom transcript type filter above selects transcript record data.
+					return entry.data as { kind?: string; outcome?: string };
+				});
 			expect(
 				records.some(
 					(record) => record.kind === "review-outcome" && record.outcome === "superseded",

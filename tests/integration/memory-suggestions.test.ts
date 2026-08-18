@@ -619,14 +619,13 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 				"terminal result after the stale Memory steer",
 			);
 			expect(
-				harness.sessionManager
-					.getBranch()
-					.some(
-						(entry) =>
-							entry.type === "custom_message" &&
-							entry.customType === "pi-advisor-note" &&
-							(entry.details as { stale?: unknown } | undefined)?.stale === true,
-					),
+				harness.sessionManager.getBranch().some(
+					(entry) =>
+						entry.type === "custom_message" &&
+						entry.customType === "pi-advisor-note" &&
+						// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
+						(entry.details as { stale?: unknown } | undefined)?.stale === true,
+				),
 			).toBe(true);
 
 			continuationBarrier.release();

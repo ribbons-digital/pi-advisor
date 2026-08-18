@@ -56,6 +56,15 @@ function nestedAdviseTool(runtime: AdvisorRuntime): InspectedAdviseTool {
 	return inspectAdviseTool(tool);
 }
 
+function strictCompatibleModel<T>(model: T): T {
+	// SAFETY: Pi 0.81 types omit supportsStrictTools, but supported newer runtimes consume it.
+	return {
+		...model,
+		api: "anthropic-messages",
+		compat: { supportsStrictTools: true },
+	} as T;
+}
+
 const runtimeSupportsConstrainedSampling = await probeConstrainedSamplingSupport();
 
 describe.sequential("Advisor advise schema mode", () => {
@@ -77,14 +86,7 @@ describe.sequential("Advisor advise schema mode", () => {
 					...registration,
 					api: "anthropic-messages",
 					models: models.map((model) =>
-						model.id === advisor.model.id
-							? // Pi 0.81 omits the strict flag that its 0.82 runtime successor consumes.
-								({
-									...model,
-									api: "anthropic-messages",
-									compat: { supportsStrictTools: true },
-								} as typeof model)
-							: model,
+						model.id === advisor.model.id ? strictCompatibleModel(model) : model,
 					),
 				});
 			},
@@ -134,6 +136,7 @@ describe.sequential("Advisor advise schema mode", () => {
 			const statusText = formatAdvisorStatus(runtime.getStatus());
 			expect(statusText).toContain("Advise schema: portable");
 			const dump = formatAdvisorDiagnosticsDump(runtime.getStatus(), config);
+			// SAFETY: formatAdvisorDiagnosticsDump emits the status object inspected by this integration test.
 			const diagnosticPayload = JSON.parse(dump.slice(dump.indexOf("\n") + 1)) as {
 				status: { adviseSchemaMode?: unknown };
 			};

@@ -174,6 +174,7 @@ describe.sequential("Pi 0.81.1 branch and lifecycle spikes", () => {
 			await prompt;
 
 			expect(observedTurnEnds).toHaveLength(1);
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			const event = observedTurnEnds[0] as {
 				message: { stopReason: string };
 			};

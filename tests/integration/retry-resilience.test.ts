@@ -394,6 +394,7 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
 			if (latest?.type !== "custom") throw new Error("Expected persisted runtime state");
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			const state = latest.data as PersistedAdvisorRuntimeState;
 			expect(state.queuedReview?.text).toContain("QUEUED-WHILE-FAILING");
 			expect(state.queuedReview?.turnNumber).toBe(4);
@@ -475,6 +476,7 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 						entry.type === "custom" && entry.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 				);
 			if (whileQueued?.type !== "custom") throw new Error("Expected persisted runtime state");
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			const queuedState = whileQueued.data as PersistedAdvisorRuntimeState;
 			expect(queuedState.activeReview?.reviewId).toBe(stranded.reviewId);
 			expect(queuedState.queuedReview?.text).toContain("NEWER-EVIDENCE-AFTER-UNPAUSE");

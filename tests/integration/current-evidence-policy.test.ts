@@ -355,15 +355,15 @@ describe.sequential("current implementation evidence review policy", () => {
 			);
 			expect(runtime?.getStatus()).toMatchObject({ notesDelivered: 1, activeNotesPending: 0 });
 
-			const acceptedRecord = harness.sessionManager
-				.getBranch()
-				.find(
-					(entry) =>
-						entry.type === "custom" &&
-						entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
-						(entry.data as { kind?: unknown; outcome?: unknown }).kind === "review-outcome" &&
-						(entry.data as { outcome?: unknown }).outcome === "accepted",
-				);
+			const acceptedRecord = harness.sessionManager.getBranch().find(
+				(entry) =>
+					entry.type === "custom" &&
+					entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
+					// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
+					(entry.data as { kind?: unknown; outcome?: unknown }).kind === "review-outcome" &&
+					// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
+					(entry.data as { outcome?: unknown }).outcome === "accepted",
+			);
 			if (acceptedRecord?.type !== "custom") {
 				throw new Error("Expected accepted review activity outcome");
 			}

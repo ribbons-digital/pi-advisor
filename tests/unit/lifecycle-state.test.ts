@@ -49,6 +49,7 @@ function stateFor(
 	};
 	if (version === 1 || version === 2) delete state.activeDeliveries;
 	if (version !== ADVISOR_RUNTIME_STATE_VERSION) delete state.recentFindings;
+	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 	return state as PersistedAdvisorRuntimeState;
 }
 
@@ -645,11 +646,13 @@ describe("Quality Slice Q6 runtime state version 5 (Q6-A1)", () => {
 			parsePersistedAdvisorRuntimeState(version4, manager.getSessionId(), branch),
 		).toBeUndefined();
 		// Strict v4 migration restores an empty index from an otherwise valid v4 document.
+		// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 		const hashOnly = structuredClone(version4) as {
 			deferredAdvice: { advice: { findingKey?: string } }[];
 		};
 		delete hashOnly.deferredAdvice[0]?.advice.findingKey;
 		expect(parsePersistedAdvisorRuntimeState(hashOnly, manager.getSessionId(), branch)).toEqual({
+			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 			...(hashOnly as object),
 			version: ADVISOR_RUNTIME_STATE_VERSION,
 			recentFindings: [],

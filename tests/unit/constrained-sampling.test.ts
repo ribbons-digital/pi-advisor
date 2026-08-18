@@ -40,6 +40,7 @@ describe("constrained-sampling runtime probe", () => {
 		try {
 			const runtime: unknown = await import(moduleName);
 			expected = isFunctionValue(
+				// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 				(runtime as { resolveJsonSchemaStrictSampling?: unknown }).resolveJsonSchemaStrictSampling,
 			);
 		} catch {
