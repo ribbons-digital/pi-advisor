@@ -120,7 +120,7 @@ export function branchHasMateriallyNewerExecutorActivity(
 	return false;
 }
 
-function stringValue(value: unknown, fallback = ""): string {
+function stringValue(value: Parameters<typeof isStringValue>[0], fallback = ""): string {
 	return isStringValue(value) ? value : fallback;
 }
 
@@ -136,7 +136,10 @@ interface UnvalidatedMemoryToolArguments {
 	text?: unknown;
 }
 
-function contentText(content: unknown, includeReasoning: boolean): string {
+function contentText(
+	content: Parameters<typeof isRecordValue>[0],
+	includeReasoning: boolean,
+): string {
 	if (isStringValue(content)) return content;
 	if (!Array.isArray(content)) return "";
 	// SAFETY: the array check above narrows content to an array of unvalidated parts.

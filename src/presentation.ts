@@ -356,7 +356,9 @@ function parsePresentationBase(
 	return base;
 }
 
-function parsePresentationNote(value: unknown): AdvicePresentationNote | undefined {
+function parsePresentationNote(
+	value: Parameters<typeof isRecordValue>[0],
+): AdvicePresentationNote | undefined {
 	if (!isRecordValue<UnvalidatedPresentationNote>(value)) return undefined;
 	const note = value;
 	const base = parsePresentationBase(note);
@@ -398,7 +400,9 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 	return suggestion;
 }
 
-export function adviceNotesFromDetails(details: unknown): AdvicePresentationNote[] {
+export function adviceNotesFromDetails(
+	details: Parameters<typeof isRecordValue>[0],
+): AdvicePresentationNote[] {
 	if (!isRecordValue<{ notes?: unknown }>(details)) return [];
 	const values = details.notes;
 	if (!Array.isArray(values) || values.length > MAX_PENDING_ADVICE_ITEMS) return [];

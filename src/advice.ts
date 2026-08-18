@@ -210,7 +210,7 @@ function hasValidLocalStringBounds(input: Readonly<UnvalidatedAdviseFields>): bo
 	);
 }
 
-export function isAdviseWireInput(input: unknown): input is AdviseWireInput {
+export function isAdviseWireInput<T>(input: T): input is T & AdviseWireInput {
 	if (!isObjectRecord(input)) return false;
 	const wire = input;
 	const { note, intent, severity, findingKey, memory } = wire;
@@ -899,7 +899,7 @@ function isObjectRecord<T>(value: T): value is T & Readonly<UnvalidatedAdviseFie
 function selectedOwnValue(
 	input: Readonly<UnvalidatedAdviseFields>,
 	key: keyof UnvalidatedAdviseFields,
-	fallback: unknown,
+	fallback: UnvalidatedAdviseFields[keyof UnvalidatedAdviseFields],
 ) {
 	return Object.hasOwn(input, key) ? input[key] : fallback;
 }
@@ -931,7 +931,7 @@ function isStrictSemanticArguments(input: Readonly<UnvalidatedAdviseFields>): bo
 	);
 }
 
-function prepareStrictAdviseArguments(raw: unknown) {
+function prepareStrictAdviseArguments(raw: Parameters<typeof isObjectRecord>[0]) {
 	if (!isObjectRecord(raw)) {
 		throw new Error("Advise arguments did not match the internal schema");
 	}
@@ -964,7 +964,9 @@ function prepareStrictAdviseArguments(raw: unknown) {
 		: prepared;
 }
 
-function normalizeStrictAdviseWireInput(input: unknown): AdviseWireInput {
+function normalizeStrictAdviseWireInput(
+	input: Parameters<typeof isObjectRecord>[0],
+): AdviseWireInput {
 	if (!isObjectRecord(input)) {
 		throw new Error("Advise arguments did not match the internal schema");
 	}

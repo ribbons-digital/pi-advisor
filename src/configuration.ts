@@ -290,7 +290,7 @@ function isRecord<T>(value: T): value is T & UnvalidatedConfigRecord {
 }
 
 function collectUnknownWarnings(
-	value: unknown,
+	value: Parameters<typeof isRecord>[0],
 	source: "user" | "project",
 	warnings: ConfigurationWarning[],
 ): void {
@@ -395,7 +395,10 @@ function collectUnknownWarnings(
 	}
 }
 
-function pickKnown(value: unknown, source: "user" | "project"): UnvalidatedConfigRecord {
+function pickKnown(
+	value: Parameters<typeof isRecord>[0],
+	source: "user" | "project",
+): UnvalidatedConfigRecord {
 	if (!isRecord(value)) return {};
 	const topKeyNames = source === "user" ? USER_KEY_NAMES : PROJECT_KEY_NAMES;
 	const output: UnvalidatedConfigRecord = {};

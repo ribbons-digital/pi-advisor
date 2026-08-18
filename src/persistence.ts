@@ -411,7 +411,7 @@ function isBoundedId<T>(value: T): value is T & string {
 	return isPersistedString(value) && value.length > 0 && value.length <= 128;
 }
 
-function serializedBytes(value: unknown): number | undefined {
+function serializedBytes(value: Parameters<typeof JSON.stringify>[0]): number | undefined {
 	try {
 		const serialized = JSON.stringify(value);
 		return isPersistedString(serialized) ? Buffer.byteLength(serialized, "utf8") : undefined;
@@ -536,7 +536,7 @@ function isPersistedReviewUpdate<T>(
 	);
 }
 
-function persistedReviewTurn(value: unknown): number | undefined {
+function persistedReviewTurn(value: Parameters<typeof isPersistedRecord>[0]): number | undefined {
 	if (!isPersistedRecord(value)) return undefined;
 	const turnNumber = value.turnNumber;
 	return isPersistedNumber(turnNumber) ? turnNumber : undefined;
@@ -611,7 +611,7 @@ function isMemoryState<T>(value: T): value is T & PersistedMemorySuggestionState
 }
 
 export function parsePersistedAdvisorRuntimeState(
-	value: unknown,
+	value: Parameters<typeof isPersistedRecord>[0],
 	expectedSessionId: string,
 	branch: SessionEntry[],
 ): PersistedAdvisorRuntimeState | undefined {
@@ -828,7 +828,7 @@ function hasValidToolTargets(record: UnvalidatedPersistedRecord): boolean {
 }
 
 function parseLegacyTranscriptRecord(
-	value: unknown,
+	value: Parameters<typeof isPersistedRecord>[0],
 	record: UnvalidatedPersistedRecord,
 ): PersistedAdvisorTranscriptRecordV1 | undefined {
 	let valid = false;
@@ -926,7 +926,7 @@ function parseLegacyTranscriptRecord(
 }
 
 function parseActivityTranscriptRecord(
-	value: unknown,
+	value: Parameters<typeof isPersistedRecord>[0],
 	record: UnvalidatedPersistedRecord,
 ): PersistedAdvisorTranscriptRecordV2 | undefined {
 	if (!isBoundedName(record.reviewId) || record.reviewId.length > 128) return undefined;
@@ -1027,7 +1027,7 @@ function parseActivityTranscriptRecord(
 }
 
 export function parsePersistedAdvisorTranscriptRecord(
-	value: unknown,
+	value: Parameters<typeof isPersistedRecord>[0],
 	expectedSessionId: string,
 ): PersistedAdvisorTranscriptRecord | undefined {
 	let serialized: unknown;

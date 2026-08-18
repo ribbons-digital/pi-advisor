@@ -28,7 +28,7 @@ interface MemorySuggestSchemaProperties {
 	status?: unknown;
 }
 
-function asSchema(value: unknown): JsonSchemaNode | undefined {
+function asSchema(value: Parameters<typeof isRecordValue>[0]): JsonSchemaNode | undefined {
 	return isRecordValue<JsonSchemaNode>(value) ? value : undefined;
 }
 
@@ -142,7 +142,7 @@ interface CriticalCapabilitySurface {
 }
 
 function missingMethods(
-	target: unknown,
+	target: Parameters<typeof isRecordValue>[0],
 	names: readonly (keyof CriticalCapabilitySurface)[],
 	prefix: string,
 ): string[] {
@@ -154,8 +154,8 @@ function missingMethods(
 
 /** Fail closed before any nested session or background work is created. */
 export function checkCriticalCapabilities(
-	extensionApi: unknown,
-	context: unknown,
+	extensionApi: Parameters<typeof isRecordValue>[0],
+	context: Parameters<typeof isRecordValue>[0],
 ): CriticalCapabilityResult {
 	const missing = [
 		...missingMethods(extensionApi, CRITICAL_EXTENSION_METHODS, "ExtensionAPI"),
