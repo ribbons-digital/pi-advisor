@@ -177,11 +177,18 @@ export interface ParsedMemorySuggestionInput {
 
 export type ParsedAdviceInput = ParsedReviewAdviceInput | ParsedMemorySuggestionInput;
 
+const AdviseRecordSchema = Type.Object({}, { additionalProperties: true });
+const AdviseStringSchema = Type.String();
+
+function isAdviseString<T>(value: T): value is T & string {
+	return Check(AdviseStringSchema, value);
+}
+
 function isOptionalEnum<T, const Values extends readonly string[]>(
 	value: T,
 	values: Values,
 ): value is T & (Values[number] | undefined) {
-	return value === undefined || (typeof value === "string" && values.includes(value));
+	return value === undefined || (isAdviseString(value) && values.includes(value));
 }
 
 interface UnvalidatedAdviseFields {
@@ -197,30 +204,29 @@ interface UnvalidatedAdviseFields {
 
 function hasValidLocalStringBounds(input: Readonly<UnvalidatedAdviseFields>): boolean {
 	return (
-		(typeof input.note !== "string" || Check(ADVISE_WIRE_SCHEMA.properties.note, input.note)) &&
-		(typeof input.findingKey !== "string" ||
+		(!isAdviseString(input.note) || Check(ADVISE_WIRE_SCHEMA.properties.note, input.note)) &&
+		(!isAdviseString(input.findingKey) ||
 			Check(ADVISE_WIRE_SCHEMA.properties.findingKey, input.findingKey))
 	);
 }
 
 export function isAdviseWireInput(input: unknown): input is AdviseWireInput {
-	if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
-	const wire = input as Readonly<UnvalidatedAdviseFields>;
+	if (!isObjectRecord(input)) return false;
+	const wire = input;
 	const { note, intent, severity, findingKey, memory } = wire;
 	if (
-		typeof note !== "string" ||
+		!isAdviseString(note) ||
 		!isOptionalEnum(intent, ["review", "memory-suggestion"]) ||
 		!isOptionalEnum(severity, ["nit", "concern", "blocker"]) ||
-		(findingKey !== undefined && typeof findingKey !== "string") ||
-		(memory !== undefined &&
-			(typeof memory !== "object" || memory === null || Array.isArray(memory)))
+		(findingKey !== undefined && !isAdviseString(findingKey)) ||
+		(memory !== undefined && !isObjectRecord(memory))
 	) {
 		return false;
 	}
 	if (memory !== undefined) {
-		const nested = memory as Readonly<UnvalidatedAdviseFields>;
+		const nested = memory;
 		if (
-			(nested.text !== undefined && typeof nested.text !== "string") ||
+			(nested.text !== undefined && !isAdviseString(nested.text)) ||
 			!isOptionalEnum(nested.category, MEMORY_SUGGESTION_CATEGORIES) ||
 			!isOptionalEnum(nested.basis, MEMORY_SUGGESTION_BASES)
 		) {
@@ -887,7 +893,7 @@ export function createAdviseTool(
 }
 
 function isObjectRecord<T>(value: T): value is T & Readonly<UnvalidatedAdviseFields> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+	return Check(AdviseRecordSchema, value);
 }
 
 function selectedOwnValue(
@@ -902,16 +908,16 @@ function isNullableEnum<T, const Values extends readonly string[]>(
 	value: T,
 	values: Values,
 ): value is T & (Values[number] | null) {
-	return value === null || (typeof value === "string" && values.includes(value));
+	return value === null || (isAdviseString(value) && values.includes(value));
 }
 
 function isStrictSemanticArguments(input: Readonly<UnvalidatedAdviseFields>): boolean {
 	const { note, intent, severity, findingKey, memory } = input;
 	if (
-		typeof note !== "string" ||
+		!isAdviseString(note) ||
 		!isNullableEnum(intent, ["review", "memory-suggestion"]) ||
 		!isNullableEnum(severity, ["nit", "concern", "blocker"]) ||
-		(findingKey !== null && typeof findingKey !== "string") ||
+		(findingKey !== null && !isAdviseString(findingKey)) ||
 		(memory !== null && !isObjectRecord(memory)) ||
 		!hasValidLocalStringBounds(input)
 	) {
@@ -919,7 +925,7 @@ function isStrictSemanticArguments(input: Readonly<UnvalidatedAdviseFields>): bo
 	}
 	if (memory === null) return true;
 	return (
-		(memory.text === null || typeof memory.text === "string") &&
+		(memory.text === null || isAdviseString(memory.text)) &&
 		isNullableEnum(memory.category, MEMORY_SUGGESTION_CATEGORIES) &&
 		isNullableEnum(memory.basis, MEMORY_SUGGESTION_BASES)
 	);
@@ -964,10 +970,10 @@ function normalizeStrictAdviseWireInput(input: unknown): AdviseWireInput {
 	}
 	const { note, intent, severity, findingKey, memory } = input;
 	if (
-		typeof note !== "string" ||
+		!isAdviseString(note) ||
 		!isNullableEnum(intent, ["review", "memory-suggestion"]) ||
 		!isNullableEnum(severity, ["nit", "concern", "blocker"]) ||
-		(findingKey !== null && typeof findingKey !== "string") ||
+		(findingKey !== null && !isAdviseString(findingKey)) ||
 		(memory !== null && !isObjectRecord(memory)) ||
 		!hasValidLocalStringBounds(input)
 	) {
@@ -978,7 +984,7 @@ function normalizeStrictAdviseWireInput(input: unknown): AdviseWireInput {
 	if (memory !== null) {
 		const { text, category, basis } = memory;
 		if (
-			(text !== null && typeof text !== "string") ||
+			(text !== null && !isAdviseString(text)) ||
 			!isNullableEnum(category, MEMORY_SUGGESTION_CATEGORIES) ||
 			!isNullableEnum(basis, MEMORY_SUGGESTION_BASES)
 		) {
