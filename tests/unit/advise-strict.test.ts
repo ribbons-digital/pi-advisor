@@ -47,10 +47,27 @@ async function executeStrict(tool: ReturnType<typeof createStrictAdviseTool>, ra
 	return tool.execute("strict-advise", prepared, undefined, undefined, undefined as never);
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+interface SchemaNodeProbe {
+	type?: unknown;
+	enum?: unknown;
+	description?: unknown;
+	additionalProperties?: unknown;
+	required?: unknown;
+	properties?: unknown;
+	note?: unknown;
+	intent?: unknown;
+	severity?: unknown;
+	findingKey?: unknown;
+	memory?: unknown;
+	text?: unknown;
+	category?: unknown;
+	basis?: unknown;
+}
+
+function asRecord(value: unknown): SchemaNodeProbe {
 	expect(value).toBeTypeOf("object");
 	expect(value).not.toBeNull();
-	return value as Record<string, unknown>;
+	return value as SchemaNodeProbe;
 }
 
 function lintStrictSchema(schema: unknown): void {

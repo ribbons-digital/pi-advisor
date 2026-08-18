@@ -20,6 +20,12 @@ interface JsonSchemaNode {
 	required?: unknown;
 }
 
+interface MemorySuggestSchemaProperties {
+	text?: unknown;
+	category?: unknown;
+	status?: unknown;
+}
+
 function asSchema(value: unknown): JsonSchemaNode | undefined {
 	return value !== null && typeof value === "object" ? (value as JsonSchemaNode) : undefined;
 }
@@ -65,7 +71,7 @@ export function detectMemorySuggestCapability(
 	if (schema.properties === null || typeof schema.properties !== "object") {
 		return { state: "malformed", reason: "memory_suggest schema has no properties object" };
 	}
-	const properties = schema.properties as Record<string, unknown>;
+	const properties = schema.properties as MemorySuggestSchemaProperties;
 	const required = new Set(
 		Array.isArray(schema.required)
 			? schema.required.filter((item) => typeof item === "string")
@@ -116,12 +122,34 @@ export interface CriticalCapabilityResult {
 	reason?: string;
 }
 
-function missingMethods(target: unknown, names: readonly string[], prefix: string): string[] {
+interface CriticalCapabilitySurface {
+	registerTool?: unknown;
+	registerCommand?: unknown;
+	registerFlag?: unknown;
+	getFlag?: unknown;
+	getActiveTools?: unknown;
+	getAllTools?: unknown;
+	setActiveTools?: unknown;
+	sendMessage?: unknown;
+	appendEntry?: unknown;
+	registerMessageRenderer?: unknown;
+	registerEntryRenderer?: unknown;
+	isIdle?: unknown;
+	hasPendingMessages?: unknown;
+	getContextUsage?: unknown;
+	isProjectTrusted?: unknown;
+}
+
+function missingMethods(
+	target: unknown,
+	names: readonly (keyof CriticalCapabilitySurface)[],
+	prefix: string,
+): string[] {
 	if (target === null || typeof target !== "object")
 		return names.map((name) => `${prefix}.${name}`);
-	const record = target as Record<string, unknown>;
+	const surface = target as CriticalCapabilitySurface;
 	return names
-		.filter((name) => typeof record[name] !== "function")
+		.filter((name) => typeof surface[name] !== "function")
 		.map((name) => `${prefix}.${name}`);
 }
 

@@ -63,7 +63,7 @@ describe("Advisor ModelRuntime compatibility resolver", () => {
 			setRuntimeApiKey(
 				_providerId: string,
 				_apiKey: string,
-				options: Record<string, unknown> = {},
+				options: { allowNetwork?: boolean } = {},
 			): Promise<void> {
 				received.push(options);
 				return Promise.resolve();

@@ -144,7 +144,23 @@ function blockedResult() {
 	};
 }
 
-function textResult(text: string, details: Record<string, unknown> = {}) {
+interface SecurityToolResultDetails {
+	entryLimitReached?: boolean;
+	scanned?: number;
+	resultLimitReached?: boolean;
+	traversalTruncated?: boolean;
+	visitedDirectories?: number;
+	examinedEntries?: number;
+	matchLimitReached?: boolean;
+	totalBytes?: number;
+	patternTimedOut?: boolean;
+	unavailable?: boolean;
+	literalFallback?: boolean;
+	systemError?: boolean;
+	patternError?: boolean;
+}
+
+function textResult(text: string, details: SecurityToolResultDetails = {}) {
 	const truncation = truncateHead(text);
 	return {
 		content: [{ type: "text" as const, text: truncation.content }],

@@ -1,6 +1,7 @@
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join, parse } from "node:path";
 
+import type { ToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionContext, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
@@ -398,7 +399,7 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 			expect(await rootPolicy.allows("safe/visible.txt")).toBe(false);
 			const tools = createProtectedAdvisorTools(harness.cwd, config);
 			const ctx = {} as ExtensionContext;
-			const execute = async (name: string, args: Record<string, unknown>) => {
+			const execute = async (name: string, args: ToolCall["arguments"]) => {
 				const tool = tools.find((candidate) => candidate.name === name);
 				if (tool === undefined) throw new Error(`Missing ${name} tool`);
 				return tool.execute(`call-${name}`, args, undefined, undefined, ctx);
@@ -430,7 +431,7 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 				/Invalid or unsupported grep pattern|Regex grep is unavailable/,
 			);
 			const boundedLs = await execute("ls", { path: ".", limit: 1 });
-			expect((boundedLs.details as Record<string, unknown>).entryLimitReached).toBe(true);
+			expect((boundedLs.details as { entryLimitReached?: unknown }).entryLimitReached).toBe(true);
 
 			config.security.protectedPathExceptions = [".env"];
 			const exceptionRead = createProtectedAdvisorTools(harness.cwd, config).find(

@@ -73,9 +73,16 @@ export type AdvicePresentationNote =
 	| ReviewAdvicePresentationNote
 	| MemorySuggestionPresentationNote;
 
-export interface AdviceMessageDetails {
+export interface AdviceMessageDetails extends Partial<AdvicePresentationBase> {
 	notes: AdvicePresentationNote[];
-	[key: string]: unknown;
+	intent?: AdvicePresentationNote["intent"];
+	severity?: AdviceSeverity;
+	tag?: AdviceDedupeTag;
+	muteId?: string;
+	findingKey?: string;
+	findingKeyHash?: string;
+	memory?: MemorySuggestionPresentationNote["memory"];
+	queueState?: MemorySuggestionQueueState;
 }
 
 export interface LateAdviceEntryData {
@@ -290,7 +297,36 @@ function textFitsBound<T>(value: T, maximumCharacters: number): value is T & str
 	return Array.from(value).length <= maximumCharacters;
 }
 
-function parsePresentationBase(note: Record<string, unknown>): AdvicePresentationBase | undefined {
+interface UnvalidatedPresentationNote {
+	note?: unknown;
+	delivery?: unknown;
+	truncated?: unknown;
+	originalCharacters?: unknown;
+	originalEstimatedTokens?: unknown;
+	createdAt?: unknown;
+	stale?: unknown;
+	deliveryId?: unknown;
+	reviewId?: unknown;
+	displayedInEntry?: unknown;
+	restoredAfterResume?: unknown;
+	intent?: unknown;
+	severity?: unknown;
+	tag?: unknown;
+	muteId?: unknown;
+	findingKey?: unknown;
+	memory?: unknown;
+	queueState?: unknown;
+}
+
+interface UnvalidatedPresentationMemory {
+	text?: unknown;
+	category?: unknown;
+	basis?: unknown;
+}
+
+function parsePresentationBase(
+	note: UnvalidatedPresentationNote,
+): AdvicePresentationBase | undefined {
 	if (
 		!textFitsBound(note.note, HARD_LIMITS.maxAdviceCharacters) ||
 		!isAdviceDelivery(note.delivery) ||
@@ -323,7 +359,7 @@ function parsePresentationBase(note: Record<string, unknown>): AdvicePresentatio
 
 function parsePresentationNote(value: unknown): AdvicePresentationNote | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
-	const note = value as Record<string, unknown>;
+	const note = value as UnvalidatedPresentationNote;
 	const base = parsePresentationBase(note);
 	if (base === undefined) return undefined;
 	if (note.intent === "review" && isAdviceSeverity(note.severity)) {
@@ -346,7 +382,7 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 	) {
 		return undefined;
 	}
-	const memory = note.memory as Record<string, unknown>;
+	const memory = note.memory as UnvalidatedPresentationMemory;
 	if (
 		!textFitsBound(memory.text, HARD_LIMITS.maxProposedMemoryCharacters) ||
 		!isMemorySuggestionCategory(memory.category) ||
@@ -366,7 +402,7 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 
 export function adviceNotesFromDetails(details: unknown): AdvicePresentationNote[] {
 	if (typeof details !== "object" || details === null) return [];
-	const values = (details as Record<string, unknown>).notes;
+	const values = (details as { notes?: unknown }).notes;
 	if (!Array.isArray(values) || values.length > MAX_PENDING_ADVICE_ITEMS) return [];
 	const notes: AdvicePresentationNote[] = [];
 	let retainedBytes = Buffer.byteLength("[]", "utf8");

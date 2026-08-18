@@ -940,7 +940,10 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			const note = notes[0];
 			if (note === undefined) throw new Error("Expected one Advisory note");
 			expect(note.content).toContain("[Advisory note truncated to configured limit]");
-			const details = note.details as Record<string, unknown>;
+			const details = note.details as {
+				truncated?: unknown;
+				originalCharacters?: unknown;
+			};
 			expect(details.truncated).toBe(true);
 			expect(details.originalCharacters).toBe(longNote.length);
 			expect(JSON.stringify(notes)).not.toContain(discarded);

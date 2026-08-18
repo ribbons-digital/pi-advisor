@@ -22,6 +22,34 @@ interface PackResult {
 	files: { path: string }[];
 }
 
+interface SchemaProbe {
+	type?: unknown;
+	required?: unknown;
+	properties?: unknown;
+	additionalProperties?: unknown;
+}
+
+interface RpcRecord {
+	id?: string;
+	success?: boolean;
+	data?: { commands?: unknown };
+	entry?: unknown;
+}
+
+interface CommandProbe {
+	name?: unknown;
+	source?: unknown;
+}
+
+interface AdviseToolProbe {
+	constrainedSampling?: unknown;
+	parameters?: unknown;
+}
+
+interface PersistedEntryProbe {
+	customType?: unknown;
+}
+
 const projectRoot = process.cwd();
 const piExecutable = join(projectRoot, "node_modules", ".bin", "pi");
 const projectManifest = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")) as {
@@ -180,7 +208,7 @@ process.stdout.write(JSON.stringify({ mode, constrainedSampling: tool.constraine
 			) as {
 				mode: string;
 				constrainedSampling?: unknown;
-				parameters: Record<string, unknown>;
+				parameters: SchemaProbe;
 			};
 			if (expectedPiVersion === "0.81.1") {
 				expect(packagedProbe.mode).toBe("portable");
@@ -228,11 +256,7 @@ process.stdout.write(JSON.stringify({ mode, constrainedSampling: tool.constraine
 				.trim()
 				.split("\n")
 				.filter(Boolean)
-				.map((line) => JSON.parse(line) as unknown) as {
-				id?: string;
-				success?: boolean;
-				data?: Record<string, unknown>;
-			}[];
+				.map((line) => JSON.parse(line) as unknown) as RpcRecord[];
 			const state = records.find((record) => record.id === "state");
 			const commands = records.find((record) => record.id === "commands");
 			expect(state?.success).toBe(true);
@@ -248,7 +272,7 @@ process.stdout.write(JSON.stringify({ mode, constrainedSampling: tool.constraine
 			expect(
 				commandRecords.some((command) => {
 					if (typeof command !== "object" || command === null) return false;
-					const record = command as Record<string, unknown>;
+					const record = command as CommandProbe;
 					return record.name === "advisor" && record.source === "extension";
 				}),
 			).toBe(true);
@@ -410,11 +434,8 @@ export default function(pi) {
 				"Packed nested review completed through the scripted provider.",
 			);
 			expect(readFileSync(requestMarker, "utf8")).toContain("advisor");
-			const adviseTool = JSON.parse(readFileSync(adviseToolMarker, "utf8")) as Record<
-				string,
-				unknown
-			>;
-			const adviseParameters = adviseTool.parameters as Record<string, unknown>;
+			const adviseTool = JSON.parse(readFileSync(adviseToolMarker, "utf8")) as AdviseToolProbe;
+			const adviseParameters = adviseTool.parameters as SchemaProbe;
 			expect(adviseTool).not.toHaveProperty("constrainedSampling");
 			expect(adviseParameters).toMatchObject({
 				type: "object",
@@ -427,13 +448,13 @@ export default function(pi) {
 			const persistedStates = activeReview.stdout
 				.trim()
 				.split("\n")
-				.map((line) => JSON.parse(line) as Record<string, unknown>)
+				.map((line) => JSON.parse(line) as RpcRecord)
 				.filter((record) => {
 					const entry = record.entry;
 					return (
 						typeof entry === "object" &&
 						entry !== null &&
-						(entry as Record<string, unknown>).customType === "pi-advisor-runtime-state"
+						(entry as PersistedEntryProbe).customType === "pi-advisor-runtime-state"
 					);
 				});
 			expect(persistedStates.length).toBeGreaterThan(0);
@@ -617,7 +638,7 @@ export default function(pi) {
 					(command) =>
 						typeof command === "object" &&
 						command !== null &&
-						(command as Record<string, unknown>).name === "advisor",
+						(command as CommandProbe).name === "advisor",
 				),
 			).toBe(false);
 		} finally {
