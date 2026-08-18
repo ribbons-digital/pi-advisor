@@ -54,6 +54,7 @@ interface PersistedEntryProbe {
 
 const projectRoot = process.cwd();
 const piExecutable = join(projectRoot, "node_modules", ".bin", "pi");
+// SAFETY: repository package.json is controlled by this test checkout.
 const projectManifest = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")) as {
 	devDependencies?: Record<string, string>;
 };
@@ -73,6 +74,7 @@ function runPi(args: string[], cwd: string, env: NodeJS.ProcessEnv, input?: stri
 describe("packed Pi package", () => {
 	it("uses the intended installed Pi version", () => {
 		expect(expectedPiVersion).toMatch(/^0\.8[1-4]\.\d+$/);
+		// SAFETY: the installed package.json is controlled by pnpm.
 		const installedManifest = JSON.parse(
 			readFileSync(
 				join(projectRoot, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
@@ -99,6 +101,7 @@ describe("packed Pi package", () => {
 		};
 
 		try {
+			// SAFETY: pnpm pack --json defines the PackResult payload consumed here.
 			const pack = JSON.parse(
 				execFileSync("pnpm", ["pack", "--out", archive, "--json"], {
 					cwd: projectRoot,
@@ -119,6 +122,7 @@ describe("packed Pi package", () => {
 			expect(resolve(pack.filename)).toBe(resolve(archive));
 			execFileSync("tar", ["-xzf", archive, "-C", unpacked]);
 			const packedPackageDir = join(unpacked, "package");
+			// SAFETY: the packed package.json is produced from this repository manifest.
 			const packedManifest = JSON.parse(
 				execFileSync(
 					"node",
@@ -188,6 +192,7 @@ describe("packed Pi package", () => {
 			const configUrl = pathToFileURL(
 				join(realpathSync(installedPackageDir), "src", "config.ts"),
 			).href;
+			// SAFETY: the probe script emits the exact packaged compatibility payload.
 			const packagedProbe = JSON.parse(
 				execFileSync(
 					join(projectRoot, "node_modules", ".bin", "tsx"),
@@ -254,6 +259,7 @@ process.stdout.write(JSON.stringify({ mode, constrainedSampling: tool.constraine
 				`${JSON.stringify({ id: "state", type: "get_state" })}\n${JSON.stringify({ id: "commands", type: "get_commands" })}\n`,
 			);
 			expect(rpc.status, rpc.stderr).toBe(0);
+			// SAFETY: Pi RPC emits one protocol record per parsed line.
 			const records = rpc.stdout
 				.trim()
 				.split("\n")
@@ -436,7 +442,9 @@ export default function(pi) {
 				"Packed nested review completed through the scripted provider.",
 			);
 			expect(readFileSync(requestMarker, "utf8")).toContain("advisor");
+			// SAFETY: the scripted provider writes the captured advise tool shape.
 			const adviseTool = JSON.parse(readFileSync(adviseToolMarker, "utf8")) as AdviseToolProbe;
+			// SAFETY: the captured advise tool always exposes its schema parameters.
 			const adviseParameters = adviseTool.parameters as SchemaProbe;
 			expect(adviseTool).not.toHaveProperty("constrainedSampling");
 			expect(adviseParameters).toMatchObject({
@@ -447,6 +455,7 @@ export default function(pi) {
 				note: { type: "string", minLength: 1 },
 				intent: { type: "string", enum: ["review", "memory-suggestion"] },
 			});
+			// SAFETY: Pi RPC emits one protocol record per parsed line.
 			const persistedStates = activeReview.stdout
 				.trim()
 				.split("\n")
@@ -626,6 +635,7 @@ export default function(pi) {
 				`${JSON.stringify({ id: "removed-commands", type: "get_commands" })}\n`,
 			);
 			expect(removedRpc.status, removedRpc.stderr).toBe(0);
+			// SAFETY: Pi RPC emits one protocol record per parsed line.
 			const removedRecords = removedRpc.stdout
 				.trim()
 				.split("\n")
