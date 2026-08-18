@@ -1,3 +1,5 @@
+import { isStringValue } from "./value-guards.js";
+
 export interface RedactionResult {
 	text: string;
 	redactions: number;
@@ -23,7 +25,7 @@ export function redactSecrets(input: string): RedactionResult {
 	for (const pattern of PATTERNS) {
 		text = text.replace(pattern, (match: string, ...groups: unknown[]) => {
 			redactions++;
-			const prefix = typeof groups[0] === "string" ? groups[0] : undefined;
+			const prefix = isStringValue(groups[0]) ? groups[0] : undefined;
 			if (prefix !== undefined && match.startsWith(prefix)) return `${prefix}${REDACTION}`;
 			if (/^Bearer\s/i.test(match)) return `Bearer ${REDACTION}`;
 			return REDACTION;

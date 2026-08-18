@@ -11,6 +11,7 @@ import {
 	redactSecrets,
 	sanitizeTerminalText,
 } from "./redaction.js";
+import { isRecordValue, isStringValue } from "./value-guards.js";
 
 /**
  * Durable user-scope mutes and the bounded recent-findings index (Q6-A1).
@@ -120,13 +121,13 @@ interface UnvalidatedMutesFileEntry {
 }
 
 function isRecentFinding<T>(value: T): value is T & RecentFinding {
-	if (typeof value !== "object" || value === null) return false;
-	const entry = value as UnvalidatedRecentFinding;
+	if (!isRecordValue<UnvalidatedRecentFinding, T>(value)) return false;
+	const entry = value;
 	return (
 		Object.keys(entry).length === 2 &&
-		typeof entry.hash === "string" &&
+		isStringValue(entry.hash) &&
 		HASH_PATTERN.test(entry.hash) &&
-		typeof entry.label === "string" &&
+		isStringValue(entry.label) &&
 		Array.from(entry.label).length > 0 &&
 		Array.from(entry.label).length <= MAX_FINDING_LABEL_CHARACTERS &&
 		!containsTerminalControlCharacters(entry.label) &&
@@ -192,13 +193,13 @@ export class RecentFindingsIndex {
 }
 
 function isMutesFileEntry<T>(value: T): value is T & { id: string; label: string } {
-	if (typeof value !== "object" || value === null) return false;
-	const entry = value as UnvalidatedMutesFileEntry;
+	if (!isRecordValue<UnvalidatedMutesFileEntry, T>(value)) return false;
+	const entry = value;
 	return (
 		Object.keys(entry).length === 2 &&
-		typeof entry.id === "string" &&
+		isStringValue(entry.id) &&
 		HASH_PATTERN.test(entry.id) &&
-		typeof entry.label === "string" &&
+		isStringValue(entry.label) &&
 		Array.from(entry.label).length > 0 &&
 		Array.from(entry.label).length <= MAX_FINDING_LABEL_CHARACTERS &&
 		!containsTerminalControlCharacters(entry.label) &&

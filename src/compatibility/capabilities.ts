@@ -1,3 +1,5 @@
+import { isFunctionValue, isRecordValue, isStringValue } from "../value-guards.js";
+
 export type CapabilityState = "available" | "absent" | "inactive" | "malformed" | "incompatible";
 
 export interface ToolDescriptor {
@@ -27,7 +29,7 @@ interface MemorySuggestSchemaProperties {
 }
 
 function asSchema(value: unknown): JsonSchemaNode | undefined {
-	return value !== null && typeof value === "object" ? (value as JsonSchemaNode) : undefined;
+	return isRecordValue<JsonSchemaNode>(value) ? value : undefined;
 }
 
 function supportsString(schema: JsonSchemaNode | undefined): boolean {
@@ -36,9 +38,10 @@ function supportsString(schema: JsonSchemaNode | undefined): boolean {
 
 function supportedLiteralValues(schema: JsonSchemaNode | undefined): Set<string> {
 	const values = new Set<string>();
-	if (typeof schema?.const === "string") values.add(schema.const);
+	if (isStringValue(schema?.const)) values.add(schema.const);
 	if (Array.isArray(schema?.enum)) {
-		for (const value of schema.enum) if (typeof value === "string") values.add(value);
+		const enumValues: unknown[] = schema.enum;
+		for (const value of enumValues) if (isStringValue(value)) values.add(value);
 	}
 	for (const branchKey of ["anyOf", "oneOf"] as const) {
 		const branches = schema?.[branchKey];
@@ -68,14 +71,12 @@ export function detectMemorySuggestCapability(
 	if (schema?.type !== "object") {
 		return { state: "malformed", reason: "memory_suggest parameters are not an object schema" };
 	}
-	if (schema.properties === null || typeof schema.properties !== "object") {
+	if (!isRecordValue<MemorySuggestSchemaProperties>(schema.properties)) {
 		return { state: "malformed", reason: "memory_suggest schema has no properties object" };
 	}
-	const properties = schema.properties as MemorySuggestSchemaProperties;
+	const properties = schema.properties;
 	const required = new Set(
-		Array.isArray(schema.required)
-			? schema.required.filter((item) => typeof item === "string")
-			: [],
+		Array.isArray(schema.required) ? schema.required.filter((item) => isStringValue(item)) : [],
 	);
 	if (!required.has("text") || !supportsString(asSchema(properties.text))) {
 		return { state: "incompatible", reason: "text must be a required string" };
@@ -145,12 +146,10 @@ function missingMethods(
 	names: readonly (keyof CriticalCapabilitySurface)[],
 	prefix: string,
 ): string[] {
-	if (target === null || typeof target !== "object")
+	if (!isRecordValue<CriticalCapabilitySurface>(target))
 		return names.map((name) => `${prefix}.${name}`);
-	const surface = target as CriticalCapabilitySurface;
-	return names
-		.filter((name) => typeof surface[name] !== "function")
-		.map((name) => `${prefix}.${name}`);
+	const surface = target;
+	return names.filter((name) => !isFunctionValue(surface[name])).map((name) => `${prefix}.${name}`);
 }
 
 /** Fail closed before any nested session or background work is created. */

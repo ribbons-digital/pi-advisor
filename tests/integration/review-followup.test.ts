@@ -12,6 +12,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
+import { isStringValue } from "../../src/value-guards.js";
 import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
@@ -389,7 +390,7 @@ describe.sequential("Q3 severity-aware idle review dispatch", () => {
 			// follow-up delivery id is still pending when the epoch changes.
 			await waitFor(() => {
 				if (runtime === undefined || primary.requests.length < 2) return false;
-				return typeof runtimeInternals(runtime).automaticReviewFollowUpDeliveryId === "string";
+				return isStringValue(runtimeInternals(runtime).automaticReviewFollowUpDeliveryId);
 			});
 			expect(runtime?.getStatus()).toMatchObject({ reviewFollowUpsTriggered: 1 });
 

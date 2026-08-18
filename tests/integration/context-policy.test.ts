@@ -15,6 +15,7 @@ import {
 	type AdvisorRuntime,
 	type AdvisorRuntimeHooks,
 } from "../../src/index.js";
+import { isRecordValue } from "../../src/value-guards.js";
 import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
@@ -644,8 +645,7 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 					(entry) =>
 						entry.type === "custom" &&
 						entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
-						typeof entry.data === "object" &&
-						entry.data !== null &&
+						isRecordValue<{ kind?: unknown }>(entry.data) &&
 						"kind" in entry.data &&
 						entry.data.kind === "failure",
 				);

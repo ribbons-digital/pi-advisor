@@ -13,6 +13,7 @@ import {
 import { Type } from "typebox";
 
 import type { AdvisorConfig, ReadOnlyToolName } from "./config.js";
+import { isNumberValue, isStringValue } from "./value-guards.js";
 
 const BLOCKED_DIRECTORY_NAMES = new Set([
 	".ssh",
@@ -555,10 +556,10 @@ function createGrepTool(cwd: string, policy: ProtectedPathPolicy) {
 					literalFallback: true,
 				});
 			}
-			if (typeof result.code === "string") {
+			if (isStringValue(result.code)) {
 				return textResult("Grep failed in this Pi environment.", { systemError: true });
 			}
-			if (typeof result.code === "number" && result.code > 1) {
+			if (isNumberValue(result.code) && result.code > 1) {
 				return textResult("Invalid or unsupported grep pattern.", { patternError: true });
 			}
 			const normalizedOutput = replaceAbsolutePaths(result.stdout, files, cwd);

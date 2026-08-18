@@ -26,6 +26,7 @@ import {
 	type MemorySuggestionCategory,
 } from "./memory-suggestions.js";
 import { MAX_DEFERRED_DELIVERY_BYTES, MAX_PENDING_ADVICE_ITEMS } from "./delivery.js";
+import { isBooleanValue, isNumberValue, isRecordValue, isStringValue } from "./value-guards.js";
 
 export const ADVISOR_LATE_ENTRY_TYPE = "pi-advisor-late-note";
 
@@ -271,13 +272,11 @@ function isAdviceSeverity<T>(value: T): value is T & AdviceSeverity {
 }
 
 function isMuteId<T>(value: T): value is T & string {
-	return typeof value === "string" && /^[a-f0-9]{8}$/u.test(value);
+	return isStringValue(value) && /^[a-f0-9]{8}$/u.test(value);
 }
 
 function isFindingLabel<T>(value: T): value is T & string {
-	return (
-		typeof value === "string" && Array.from(value).length > 0 && Array.from(value).length <= 128
-	);
+	return isStringValue(value) && Array.from(value).length > 0 && Array.from(value).length <= 128;
 }
 
 function isAdviceDelivery<T>(value: T): value is T & AdviceDelivery {
@@ -285,7 +284,7 @@ function isAdviceDelivery<T>(value: T): value is T & AdviceDelivery {
 }
 
 function isFiniteNonNegative<T>(value: T): value is T & number {
-	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+	return isNumberValue(value) && Number.isFinite(value) && value >= 0;
 }
 
 function isRenderableTimestamp<T>(value: T): value is T & number {
@@ -293,7 +292,7 @@ function isRenderableTimestamp<T>(value: T): value is T & number {
 }
 
 function textFitsBound<T>(value: T, maximumCharacters: number): value is T & string {
-	if (typeof value !== "string" || value.length > maximumCharacters * 2) return false;
+	if (!isStringValue(value) || value.length > maximumCharacters * 2) return false;
 	return Array.from(value).length <= maximumCharacters;
 }
 
@@ -330,7 +329,7 @@ function parsePresentationBase(
 	if (
 		!textFitsBound(note.note, HARD_LIMITS.maxAdviceCharacters) ||
 		!isAdviceDelivery(note.delivery) ||
-		typeof note.truncated !== "boolean" ||
+		!isBooleanValue(note.truncated) ||
 		!isFiniteNonNegative(note.originalCharacters) ||
 		!isFiniteNonNegative(note.originalEstimatedTokens) ||
 		!isRenderableTimestamp(note.createdAt)
@@ -346,10 +345,10 @@ function parsePresentationBase(
 		createdAt: note.createdAt,
 	};
 	if (note.stale === true) base.stale = true;
-	if (typeof note.deliveryId === "string" && note.deliveryId.length <= 512) {
+	if (isStringValue(note.deliveryId) && note.deliveryId.length <= 512) {
 		base.deliveryId = note.deliveryId;
 	}
-	if (typeof note.reviewId === "string" && note.reviewId.length <= 128) {
+	if (isStringValue(note.reviewId) && note.reviewId.length <= 128) {
 		base.reviewId = note.reviewId;
 	}
 	if (note.displayedInEntry === true) base.displayedInEntry = true;
@@ -358,8 +357,8 @@ function parsePresentationBase(
 }
 
 function parsePresentationNote(value: unknown): AdvicePresentationNote | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const note = value as UnvalidatedPresentationNote;
+	if (!isRecordValue<UnvalidatedPresentationNote>(value)) return undefined;
+	const note = value;
 	const base = parsePresentationBase(note);
 	if (base === undefined) return undefined;
 	if (note.intent === "review" && isAdviceSeverity(note.severity)) {
@@ -377,12 +376,11 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 	}
 	if (
 		note.intent !== "memory-suggestion" ||
-		typeof note.memory !== "object" ||
-		note.memory === null
+		!isRecordValue<UnvalidatedPresentationMemory>(note.memory)
 	) {
 		return undefined;
 	}
-	const memory = note.memory as UnvalidatedPresentationMemory;
+	const memory = note.memory;
 	if (
 		!textFitsBound(memory.text, HARD_LIMITS.maxProposedMemoryCharacters) ||
 		!isMemorySuggestionCategory(memory.category) ||
@@ -401,8 +399,8 @@ function parsePresentationNote(value: unknown): AdvicePresentationNote | undefin
 }
 
 export function adviceNotesFromDetails(details: unknown): AdvicePresentationNote[] {
-	if (typeof details !== "object" || details === null) return [];
-	const values = (details as { notes?: unknown }).notes;
+	if (!isRecordValue<{ notes?: unknown }>(details)) return [];
+	const values = details.notes;
 	if (!Array.isArray(values) || values.length > MAX_PENDING_ADVICE_ITEMS) return [];
 	const notes: AdvicePresentationNote[] = [];
 	let retainedBytes = Buffer.byteLength("[]", "utf8");

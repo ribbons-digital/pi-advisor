@@ -1,5 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 
+import { isFunctionValue, isRecordValue } from "../value-guards.js";
+
 export type AdviseSchemaMode = "strict" | "portable";
 export interface ConstrainedSamplingModule {
 	readonly resolveJsonSchemaStrictSampling?: unknown;
@@ -18,7 +20,7 @@ const defaultImporter: ConstrainedSamplingImporter = async () => {
 const probeCache = new WeakMap<ConstrainedSamplingImporter, Promise<boolean>>();
 
 function hasStrictSamplingResolver(module: ConstrainedSamplingModule): boolean {
-	return typeof module.resolveJsonSchemaStrictSampling === "function";
+	return isFunctionValue(module.resolveJsonSchemaStrictSampling);
 }
 
 /**
@@ -49,8 +51,8 @@ interface StrictCapabilityFlags {
 
 function hasExplicitStrictCapability(model: Model<Api>): boolean {
 	const compat: unknown = model.compat;
-	if (compat === undefined || compat === null || typeof compat !== "object") return false;
-	const flags = compat as StrictCapabilityFlags;
+	if (!isRecordValue<StrictCapabilityFlags>(compat)) return false;
+	const flags = compat;
 
 	switch (model.api) {
 		case "anthropic-messages":
