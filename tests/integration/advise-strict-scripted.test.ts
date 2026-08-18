@@ -1,4 +1,4 @@
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, type ToolCall } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type InlineExtension,
@@ -82,7 +82,7 @@ function compatibleMemoryTool(execute = vi.fn()): ToolDefinition {
 	});
 }
 
-function toolCall(id: string, arguments_: Record<string, unknown>) {
+function toolCall(id: string, arguments_: ToolCall["arguments"]) {
 	return {
 		content: [{ type: "toolCall" as const, id, name: "advise", arguments: arguments_ }],
 		stopReason: "toolUse" as const,

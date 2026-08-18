@@ -122,13 +122,25 @@ function stringValue(value: unknown, fallback = ""): string {
 	return typeof value === "string" ? value : fallback;
 }
 
+interface UnvalidatedMessageContentPart {
+	type?: unknown;
+	text?: unknown;
+	thinking?: unknown;
+	name?: unknown;
+	arguments?: unknown;
+}
+
+interface UnvalidatedMemoryToolArguments {
+	text?: unknown;
+}
+
 function contentText(content: unknown, includeReasoning: boolean): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return (content as unknown[])
 		.map((part) => {
 			if (!part || typeof part !== "object") return "";
-			const record = part as Record<string, unknown>;
+			const record = part as UnvalidatedMessageContentPart;
 			if (record.type === "text") return stringValue(record.text);
 			if (record.type === "thinking") {
 				return includeReasoning ? `[reasoning]\n${stringValue(record.thinking)}` : "";
@@ -361,7 +373,7 @@ export function successfulMemoryToolTexts(
 			) {
 				continue;
 			}
-			const text = (content.arguments as Record<string, unknown>).text;
+			const text = (content.arguments as UnvalidatedMemoryToolArguments).text;
 			if (
 				typeof text !== "string" ||
 				text.length > MAX_MEMORY_TOOL_TEXT_INPUT_UTF16_UNITS ||

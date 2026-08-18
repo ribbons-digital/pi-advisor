@@ -39,7 +39,8 @@ describe("constrained-sampling runtime probe", () => {
 		try {
 			const runtime: unknown = await import(moduleName);
 			expected =
-				typeof (runtime as Record<string, unknown>).resolveJsonSchemaStrictSampling === "function";
+				typeof (runtime as { resolveJsonSchemaStrictSampling?: unknown })
+					.resolveJsonSchemaStrictSampling === "function";
 		} catch {
 			// Pi 0.81 does not expose this subpath.
 		}

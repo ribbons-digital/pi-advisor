@@ -184,7 +184,18 @@ function isOptionalEnum<T, const Values extends readonly string[]>(
 	return value === undefined || (typeof value === "string" && values.includes(value));
 }
 
-function hasValidLocalStringBounds(input: Readonly<Record<string, unknown>>): boolean {
+interface UnvalidatedAdviseFields {
+	note?: unknown;
+	intent?: unknown;
+	severity?: unknown;
+	findingKey?: unknown;
+	memory?: unknown;
+	text?: unknown;
+	category?: unknown;
+	basis?: unknown;
+}
+
+function hasValidLocalStringBounds(input: Readonly<UnvalidatedAdviseFields>): boolean {
 	return (
 		(typeof input.note !== "string" || Check(ADVISE_WIRE_SCHEMA.properties.note, input.note)) &&
 		(typeof input.findingKey !== "string" ||
@@ -194,7 +205,7 @@ function hasValidLocalStringBounds(input: Readonly<Record<string, unknown>>): bo
 
 export function isAdviseWireInput(input: unknown): input is AdviseWireInput {
 	if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
-	const wire = input as Readonly<Record<string, unknown>>;
+	const wire = input as Readonly<UnvalidatedAdviseFields>;
 	const { note, intent, severity, findingKey, memory } = wire;
 	if (
 		typeof note !== "string" ||
@@ -207,7 +218,7 @@ export function isAdviseWireInput(input: unknown): input is AdviseWireInput {
 		return false;
 	}
 	if (memory !== undefined) {
-		const nested = memory as Readonly<Record<string, unknown>>;
+		const nested = memory as Readonly<UnvalidatedAdviseFields>;
 		if (
 			(nested.text !== undefined && typeof nested.text !== "string") ||
 			!isOptionalEnum(nested.category, MEMORY_SUGGESTION_CATEGORIES) ||
@@ -875,13 +886,13 @@ export function createAdviseTool(
 	};
 }
 
-function isObjectRecord<T>(value: T): value is T & Readonly<Record<string, unknown>> {
+function isObjectRecord<T>(value: T): value is T & Readonly<UnvalidatedAdviseFields> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function selectedOwnValue(
-	input: Readonly<Record<string, unknown>>,
-	key: string,
+	input: Readonly<UnvalidatedAdviseFields>,
+	key: keyof UnvalidatedAdviseFields,
 	fallback: unknown,
 ) {
 	return Object.hasOwn(input, key) ? input[key] : fallback;
@@ -894,7 +905,7 @@ function isNullableEnum<T, const Values extends readonly string[]>(
 	return value === null || (typeof value === "string" && values.includes(value));
 }
 
-function isStrictSemanticArguments(input: Readonly<Record<string, unknown>>): boolean {
+function isStrictSemanticArguments(input: Readonly<UnvalidatedAdviseFields>): boolean {
 	const { note, intent, severity, findingKey, memory } = input;
 	if (
 		typeof note !== "string" ||

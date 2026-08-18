@@ -21,6 +21,12 @@ import {
 	type ScriptedProvider,
 } from "../fixtures/scripted-provider.js";
 
+interface TranscriptRecordProbe {
+	kind?: unknown;
+	reviewId?: unknown;
+	outputBytes?: number;
+}
+
 function configFor(provider: ScriptedProvider, transcript?: boolean): AdvisorConfig {
 	const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
 	config.defaultEnabled = true;
@@ -251,7 +257,7 @@ describe.sequential("local redacted activity records", () => {
 					entry.data !== null &&
 					"kind" in entry.data &&
 					entry.data.kind === "tool-attempt"
-						? [entry.data as Record<string, unknown>]
+						? [entry.data as TranscriptRecordProbe]
 						: [],
 				)[0];
 			expect(attempt).toMatchObject({
@@ -296,7 +302,7 @@ describe.sequential("local redacted activity records", () => {
 				)
 				.flatMap((entry) =>
 					entry.type === "custom" && typeof entry.data === "object" && entry.data !== null
-						? [entry.data as Record<string, unknown>]
+						? [entry.data as TranscriptRecordProbe]
 						: [],
 				);
 			expect(records.map((record) => record.kind)).toEqual(["review-start", "review-outcome"]);
@@ -370,7 +376,7 @@ describe.sequential("local redacted activity records", () => {
 					if (entry.type !== "custom" || typeof entry.data !== "object" || entry.data === null) {
 						return undefined;
 					}
-					return (entry.data as Record<string, unknown>).kind;
+					return (entry.data as TranscriptRecordProbe).kind;
 				});
 			expect(activeRecordKinds).not.toContain("tool-attempt");
 			expect(activeRecordKinds).not.toContain("review-outcome");

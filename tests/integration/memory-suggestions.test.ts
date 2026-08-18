@@ -47,10 +47,17 @@ function extensionFor(
 
 const memoryRationale = "This verified project constraint will matter in future sessions.";
 
+interface MemorySuggestionOverrides {
+	severity?: unknown;
+	findingKey?: unknown;
+	rootUnknown?: unknown;
+	memory?: unknown;
+}
+
 function memorySuggestion(
 	text: string,
 	id = "memory-advice",
-	overrides: Record<string, unknown> = {},
+	overrides: MemorySuggestionOverrides = {},
 ) {
 	return {
 		content: [
@@ -618,7 +625,7 @@ describe.sequential("Slice 2 Batch C Memory suggestions", () => {
 						(entry) =>
 							entry.type === "custom_message" &&
 							entry.customType === "pi-advisor-note" &&
-							(entry.details as Record<string, unknown> | undefined)?.stale === true,
+							(entry.details as { stale?: unknown } | undefined)?.stale === true,
 					),
 			).toBe(true);
 

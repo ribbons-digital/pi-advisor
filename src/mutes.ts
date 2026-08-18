@@ -109,9 +109,19 @@ export function isHexPrefix(value: string): boolean {
 	);
 }
 
+interface UnvalidatedRecentFinding {
+	hash?: unknown;
+	label?: unknown;
+}
+
+interface UnvalidatedMutesFileEntry {
+	id?: unknown;
+	label?: unknown;
+}
+
 function isRecentFinding<T>(value: T): value is T & RecentFinding {
 	if (typeof value !== "object" || value === null) return false;
-	const entry = value as Record<string, unknown>;
+	const entry = value as UnvalidatedRecentFinding;
 	return (
 		Object.keys(entry).length === 2 &&
 		typeof entry.hash === "string" &&
@@ -183,7 +193,7 @@ export class RecentFindingsIndex {
 
 function isMutesFileEntry<T>(value: T): value is T & { id: string; label: string } {
 	if (typeof value !== "object" || value === null) return false;
-	const entry = value as Record<string, unknown>;
+	const entry = value as UnvalidatedMutesFileEntry;
 	return (
 		Object.keys(entry).length === 2 &&
 		typeof entry.id === "string" &&

@@ -13,7 +13,9 @@ interface PackageManifest {
 	private?: boolean;
 	license?: string;
 	types?: string;
-	exports?: Record<string, unknown>;
+	exports?: {
+		"."?: { types?: string; import?: string };
+	};
 	keywords?: string[];
 	files?: string[];
 	publishConfig?: { access?: string; provenance?: boolean };

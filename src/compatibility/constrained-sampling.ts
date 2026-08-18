@@ -42,10 +42,15 @@ export function probeConstrainedSamplingSupport(
 	return result;
 }
 
+interface StrictCapabilityFlags {
+	supportsStrictTools?: unknown;
+	supportsStrictMode?: unknown;
+}
+
 function hasExplicitStrictCapability(model: Model<Api>): boolean {
 	const compat: unknown = model.compat;
 	if (compat === undefined || compat === null || typeof compat !== "object") return false;
-	const flags = compat as Record<string, unknown>;
+	const flags = compat as StrictCapabilityFlags;
 
 	switch (model.api) {
 		case "anthropic-messages":

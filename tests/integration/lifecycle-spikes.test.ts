@@ -176,7 +176,6 @@ describe.sequential("Pi 0.81.1 branch and lifecycle spikes", () => {
 			expect(observedTurnEnds).toHaveLength(1);
 			const event = observedTurnEnds[0] as {
 				message: { stopReason: string };
-				[key: string]: unknown;
 			};
 			expect(event.message.stopReason).toBe("aborted");
 			expect(Object.keys(event).sort()).toEqual(["message", "toolResults", "turnIndex", "type"]);

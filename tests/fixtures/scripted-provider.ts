@@ -26,7 +26,7 @@ export interface ScriptedUsage {
 export type ScriptedContent =
 	| { type: "text"; text: string }
 	| { type: "thinking"; thinking: string }
-	| { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+	| { type: "toolCall"; id: string; name: string; arguments: ToolCall["arguments"] };
 
 export interface ScriptedResponse {
 	content?: ScriptedContent[];

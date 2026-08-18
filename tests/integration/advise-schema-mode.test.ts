@@ -135,7 +135,7 @@ describe.sequential("Advisor advise schema mode", () => {
 			expect(statusText).toContain("Advise schema: portable");
 			const dump = formatAdvisorDiagnosticsDump(runtime.getStatus(), config);
 			const diagnosticPayload = JSON.parse(dump.slice(dump.indexOf("\n") + 1)) as {
-				status: Record<string, unknown>;
+				status: { adviseSchemaMode?: unknown };
 			};
 			expect(diagnosticPayload.status.adviseSchemaMode).toBe("portable");
 			expect(diagnosticPayload.status).not.toHaveProperty("arguments");

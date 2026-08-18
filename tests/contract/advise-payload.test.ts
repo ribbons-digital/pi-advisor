@@ -9,17 +9,29 @@ import { createStrictAdviseTool } from "../../src/advice.js";
 import { probeConstrainedSamplingSupport } from "../../src/compatibility/constrained-sampling.js";
 import { DEFAULT_ADVISOR_CONFIG } from "../../src/config.js";
 
+interface CapturedToolPayload {
+	type?: unknown;
+	name?: unknown;
+	strict?: unknown;
+	parameters?: unknown;
+	input_schema?: unknown;
+}
+
+interface CapturedRequestBody {
+	tools?: unknown;
+}
+
 interface CapturedRequest {
 	url: string;
-	body: Record<string, unknown>;
+	body: CapturedRequestBody;
 }
 
 const servers: Server[] = [];
 
-async function readRequestBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readRequestBody(request: IncomingMessage): Promise<CapturedRequestBody> {
 	const chunks: Buffer[] = [];
 	for await (const chunk of request) chunks.push(Buffer.from(chunk as Uint8Array));
-	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as CapturedRequestBody;
 }
 
 async function startCaptureServer(): Promise<{
@@ -91,7 +103,11 @@ function expectStrictAdviseSchema(schema: unknown): void {
 		},
 	});
 	expect(JSON.stringify(schema)).not.toContain('"anyOf"');
-	const properties = (schema as { properties: Record<string, Record<string, unknown>> }).properties;
+	const properties = (
+		schema as {
+			properties: { memory?: { description?: unknown } };
+		}
+	).properties;
 	expect(properties.memory?.description).toContain(
 		"provide memory.text, memory.category, and memory.basis",
 	);
@@ -146,7 +162,7 @@ describe("strict advise provider payload contract", () => {
 		await result.result();
 
 		expect(request.url).toBe("/v1/responses");
-		const tools = request.body.tools as Record<string, unknown>[];
+		const tools = request.body.tools as CapturedToolPayload[];
 		expect(tools).toHaveLength(1);
 		expect(tools[0]).toMatchObject({ type: "function", name: "advise", strict: true });
 		expectStrictAdviseSchema(tools[0]?.parameters);
@@ -170,7 +186,7 @@ describe("strict advise provider payload contract", () => {
 		await result.result();
 
 		expect(request.url).toBe("/v1/messages");
-		const tools = request.body.tools as Record<string, unknown>[];
+		const tools = request.body.tools as CapturedToolPayload[];
 		expect(tools).toHaveLength(1);
 		expect(tools[0]).toMatchObject({ name: "advise", strict: true });
 		expectStrictAdviseSchema(tools[0]?.input_schema);
