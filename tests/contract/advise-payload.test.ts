@@ -31,7 +31,11 @@ const servers: Server[] = [];
 
 async function readRequestBody(request: IncomingMessage): Promise<CapturedRequestBody> {
 	const chunks: Buffer[] = [];
-	for await (const chunk of request) chunks.push(Buffer.from(chunk as Uint8Array));
+	for await (const chunk of request) {
+		// SAFETY: Node IncomingMessage yields byte chunks compatible with Uint8Array.
+		chunks.push(Buffer.from(chunk as Uint8Array));
+	}
+	// SAFETY: the capture server receives the provider request object exercised by this contract test.
 	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as CapturedRequestBody;
 }
 
@@ -104,6 +108,7 @@ function expectStrictAdviseSchema(schema: unknown): void {
 		},
 	});
 	expect(JSON.stringify(schema)).not.toContain('"anyOf"');
+	// SAFETY: toMatchObject above verifies the properties and memory object shape before inspection.
 	const properties = (
 		schema as {
 			properties: { memory?: { description?: unknown } };
@@ -154,7 +159,7 @@ describe("strict advise provider payload contract", () => {
 			baseUrl: `${capture.baseUrl}/v1`,
 			compat: { supportsStrictMode: true },
 		};
-		// Pi 0.81 omits the strict flag that its 0.82 runtime successor consumes.
+		// SAFETY: this fixture supplies the complete OpenAI model fields consumed by the provider.
 		const result = streamOpenAI(model as Model<"openai-responses">, context(createTool()), {
 			apiKey: "dummy-openai-key",
 			maxRetries: 0,
@@ -163,6 +168,7 @@ describe("strict advise provider payload contract", () => {
 		await result.result();
 
 		expect(request.url).toBe("/v1/responses");
+		// SAFETY: the captured request is emitted by the provider with its serialized tools array.
 		const tools = request.body.tools as CapturedToolPayload[];
 		expect(tools).toHaveLength(1);
 		expect(tools[0]).toMatchObject({ type: "function", name: "advise", strict: true });
@@ -178,7 +184,7 @@ describe("strict advise provider payload contract", () => {
 			baseUrl: capture.baseUrl,
 			compat: { supportsStrictTools: true },
 		};
-		// Pi 0.81 omits the strict flag that its 0.82 runtime successor consumes.
+		// SAFETY: this fixture supplies the complete Anthropic model fields consumed by the provider.
 		const result = streamAnthropic(model as Model<"anthropic-messages">, context(createTool()), {
 			apiKey: "dummy-anthropic-key",
 			maxRetries: 0,
@@ -187,6 +193,7 @@ describe("strict advise provider payload contract", () => {
 		await result.result();
 
 		expect(request.url).toBe("/v1/messages");
+		// SAFETY: the captured request is emitted by the provider with its serialized tools array.
 		const tools = request.body.tools as CapturedToolPayload[];
 		expect(tools).toHaveLength(1);
 		expect(tools[0]).toMatchObject({ name: "advise", strict: true });
