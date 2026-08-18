@@ -14,6 +14,7 @@ import {
 	type AdvisorConfig,
 	type AdvisorRuntime,
 } from "../../src/index.js";
+import { isRecordValue } from "../../src/value-guards.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -253,11 +254,10 @@ describe.sequential("local redacted activity records", () => {
 				.flatMap((entry) =>
 					entry.type === "custom" &&
 					entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
-					typeof entry.data === "object" &&
-					entry.data !== null &&
+					isRecordValue<TranscriptRecordProbe>(entry.data) &&
 					"kind" in entry.data &&
 					entry.data.kind === "tool-attempt"
-						? [entry.data as TranscriptRecordProbe]
+						? [entry.data]
 						: [],
 				)[0];
 			expect(attempt).toMatchObject({
@@ -301,8 +301,8 @@ describe.sequential("local redacted activity records", () => {
 					(entry) => entry.type === "custom" && entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE,
 				)
 				.flatMap((entry) =>
-					entry.type === "custom" && typeof entry.data === "object" && entry.data !== null
-						? [entry.data as TranscriptRecordProbe]
+					entry.type === "custom" && isRecordValue<TranscriptRecordProbe>(entry.data)
+						? [entry.data]
 						: [],
 				);
 			expect(records.map((record) => record.kind)).toEqual(["review-start", "review-outcome"]);
@@ -373,10 +373,10 @@ describe.sequential("local redacted activity records", () => {
 					(entry) => entry.type === "custom" && entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE,
 				)
 				.map((entry) => {
-					if (entry.type !== "custom" || typeof entry.data !== "object" || entry.data === null) {
+					if (entry.type !== "custom" || !isRecordValue<TranscriptRecordProbe>(entry.data)) {
 						return undefined;
 					}
-					return (entry.data as TranscriptRecordProbe).kind;
+					return entry.data.kind;
 				});
 			expect(activeRecordKinds).not.toContain("tool-attempt");
 			expect(activeRecordKinds).not.toContain("review-outcome");

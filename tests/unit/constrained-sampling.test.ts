@@ -6,6 +6,7 @@ import {
 	resolveAdviseSchemaMode,
 	type ConstrainedSamplingImporter,
 } from "../../src/compatibility/constrained-sampling.js";
+import { isFunctionValue } from "../../src/value-guards.js";
 
 interface StrictCompatFlags {
 	supportsStrictMode?: boolean;
@@ -38,9 +39,9 @@ describe("constrained-sampling runtime probe", () => {
 		let expected = false;
 		try {
 			const runtime: unknown = await import(moduleName);
-			expected =
-				typeof (runtime as { resolveJsonSchemaStrictSampling?: unknown })
-					.resolveJsonSchemaStrictSampling === "function";
+			expected = isFunctionValue(
+				(runtime as { resolveJsonSchemaStrictSampling?: unknown }).resolveJsonSchemaStrictSampling,
+			);
 		} catch {
 			// Pi 0.81 does not expose this subpath.
 		}

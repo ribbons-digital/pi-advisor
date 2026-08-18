@@ -15,6 +15,8 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { isRecordValue } from "../../src/value-guards.js";
+
 interface PackResult {
 	name: string;
 	version: string;
@@ -271,8 +273,8 @@ process.stdout.write(JSON.stringify({ mode, constrainedSampling: tool.constraine
 			const commandRecords: unknown[] = Array.isArray(commandList) ? commandList : [];
 			expect(
 				commandRecords.some((command) => {
-					if (typeof command !== "object" || command === null) return false;
-					const record = command as CommandProbe;
+					if (!isRecordValue<CommandProbe>(command)) return false;
+					const record = command;
 					return record.name === "advisor" && record.source === "extension";
 				}),
 			).toBe(true);
@@ -452,9 +454,8 @@ export default function(pi) {
 				.filter((record) => {
 					const entry = record.entry;
 					return (
-						typeof entry === "object" &&
-						entry !== null &&
-						(entry as PersistedEntryProbe).customType === "pi-advisor-runtime-state"
+						isRecordValue<PersistedEntryProbe>(entry) &&
+						entry.customType === "pi-advisor-runtime-state"
 					);
 				});
 			expect(persistedStates.length).toBeGreaterThan(0);
@@ -635,10 +636,7 @@ export default function(pi) {
 			expect(Array.isArray(removedCommands)).toBe(true);
 			expect(
 				removedCommands?.some(
-					(command) =>
-						typeof command === "object" &&
-						command !== null &&
-						(command as CommandProbe).name === "advisor",
+					(command) => isRecordValue<CommandProbe>(command) && command.name === "advisor",
 				),
 			).toBe(false);
 		} finally {

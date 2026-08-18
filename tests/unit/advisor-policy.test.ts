@@ -45,6 +45,7 @@ import {
 	type AdviceSeverity,
 	type DedupePolicy,
 } from "../../src/index.js";
+import { isStringValue } from "../../src/value-guards.js";
 
 function dedupeIdentity(
 	note: string,
@@ -686,7 +687,7 @@ describe("Usage estimation and bounded transcript serialization through Slice 4B
 		const originalByteLength = Buffer.byteLength.bind(Buffer);
 		const byteLengthSpy = vi.spyOn(Buffer, "byteLength").mockImplementation((value, encoding) => {
 			const bytes = originalByteLength(value, encoding);
-			if (typeof value === "string" && bytes > 10_000) {
+			if (isStringValue(value) && bytes > 10_000) {
 				throw new Error("rendering assembled an unbounded intermediate string");
 			}
 			return bytes;

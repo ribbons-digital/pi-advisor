@@ -8,6 +8,7 @@ import type {
 import { normalizeMemoryTextForDedupe } from "./advice.js";
 import { HARD_LIMITS, READ_ONLY_TOOL_NAMES } from "./config.js";
 import { redactSecrets, truncateUtf8Bytes, truncateUtf8TailBytes } from "./redaction.js";
+import { isRecordValue, isStringValue } from "./value-guards.js";
 
 export const ADVISOR_CUSTOM_TYPE = "pi-advisor-note";
 const UPDATE_TRUNCATION_MARKER = "[Older Advisor update content truncated to configured limit]\n";
@@ -119,7 +120,7 @@ export function branchHasMateriallyNewerExecutorActivity(
 }
 
 function stringValue(value: unknown, fallback = ""): string {
-	return typeof value === "string" ? value : fallback;
+	return isStringValue(value) ? value : fallback;
 }
 
 interface UnvalidatedMessageContentPart {
@@ -135,12 +136,12 @@ interface UnvalidatedMemoryToolArguments {
 }
 
 function contentText(content: unknown, includeReasoning: boolean): string {
-	if (typeof content === "string") return content;
+	if (isStringValue(content)) return content;
 	if (!Array.isArray(content)) return "";
 	return (content as unknown[])
 		.map((part) => {
-			if (!part || typeof part !== "object") return "";
-			const record = part as UnvalidatedMessageContentPart;
+			if (!isRecordValue<UnvalidatedMessageContentPart>(part)) return "";
+			const record = part;
 			if (record.type === "text") return stringValue(record.text);
 			if (record.type === "thinking") {
 				return includeReasoning ? `[reasoning]\n${stringValue(record.thinking)}` : "";
@@ -375,7 +376,7 @@ export function successfulMemoryToolTexts(
 			}
 			const text = (content.arguments as UnvalidatedMemoryToolArguments).text;
 			if (
-				typeof text !== "string" ||
+				!isStringValue(text) ||
 				text.length > MAX_MEMORY_TOOL_TEXT_INPUT_UTF16_UNITS ||
 				text.trim().length === 0
 			) {

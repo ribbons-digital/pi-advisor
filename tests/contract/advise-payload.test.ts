@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createStrictAdviseTool } from "../../src/advice.js";
 import { probeConstrainedSamplingSupport } from "../../src/compatibility/constrained-sampling.js";
 import { DEFAULT_ADVISOR_CONFIG } from "../../src/config.js";
+import { isStringValue } from "../../src/value-guards.js";
 
 interface CapturedToolPayload {
 	type?: unknown;
@@ -62,7 +63,7 @@ async function startCaptureServer(): Promise<{
 		server.listen(0, "127.0.0.1", resolve);
 	});
 	const address = server.address();
-	if (address === null || typeof address === "string") throw new Error("Expected TCP address");
+	if (address === null || isStringValue(address)) throw new Error("Expected TCP address");
 	return { baseUrl: `http://127.0.0.1:${String(address.port)}`, captured };
 }
 

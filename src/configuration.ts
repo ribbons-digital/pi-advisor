@@ -17,6 +17,7 @@ import {
 	type ReadOnlyToolName,
 } from "./config.js";
 import { redactSecrets, truncateUtf8Bytes } from "./redaction.js";
+import { isRecordValue } from "./value-guards.js";
 
 export const WATCHDOG_YAML_NAME = "WATCHDOG.yml";
 export const WATCHDOG_MARKDOWN_NAME = "WATCHDOG.md";
@@ -285,7 +286,7 @@ export function advisorConfigurationPaths(agentDir: string, cwd: string) {
 }
 
 function isRecord<T>(value: T): value is T & UnvalidatedConfigRecord {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+	return isRecordValue<UnvalidatedConfigRecord, T>(value);
 }
 
 function collectUnknownWarnings(

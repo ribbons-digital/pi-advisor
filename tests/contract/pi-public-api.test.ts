@@ -73,7 +73,7 @@ export function compileCheckedExtensionSurface(
 }
 
 function expectMethod<T extends object>(target: T, name: keyof T & string): void {
-	expect(typeof target[name]).toBe("function");
+	expect(target[name]).toBeTypeOf("function");
 }
 
 describe("supported Pi public API contract", () => {
