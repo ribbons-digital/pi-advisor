@@ -350,6 +350,7 @@ async function registerUserProviderExtensions(
 			registerCommand(): void;
 			on(): void;
 		}
+		// SAFETY: dynamic provider modules are validated for a callable default before execution.
 		const module = (await import(pathToFileURL(entryPath).href)) as {
 			default?: (pi: ProviderRegistrationApi) => Promise<void> | void;
 		};
@@ -361,6 +362,7 @@ async function registerUserProviderExtensions(
 			registerProvider: (registeredProviderId: string, config: unknown) => {
 				modelRuntime.registerProvider(
 					registeredProviderId,
+					// SAFETY: the provider registration adapter forwards the upstream registration config unchanged.
 					config as Parameters<ModelRuntime["registerProvider"]>[1],
 				);
 			},
