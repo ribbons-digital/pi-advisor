@@ -49,14 +49,14 @@ async function createHost(provider: ScriptedProvider): Promise<{
 	return { runtime, registry: new ModelRegistry(runtime) };
 }
 
-function expectFieldFailure(error: unknown, field: string): void {
-	expect(error).toBeInstanceOf(ModelRuntimeCompatibilityError);
+function expectFieldFailure(cause: unknown, field: string): void {
+	expect(cause).toBeInstanceOf(ModelRuntimeCompatibilityError);
 	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
-	expect((error as Error).message).toContain(field);
+	expect((cause as Error).message).toContain(field);
 	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
-	expect((error as Error).message).not.toContain("runtime-secret");
+	expect((cause as Error).message).not.toContain("runtime-secret");
 	// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
-	expect((error as Error).message.length).toBeLessThan(200);
+	expect((cause as Error).message.length).toBeLessThan(200);
 }
 
 describe("Advisor ModelRuntime compatibility resolver", () => {

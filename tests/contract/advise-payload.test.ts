@@ -44,7 +44,7 @@ async function startCaptureServer(): Promise<{
 	captured: Promise<CapturedRequest>;
 }> {
 	let resolveCapture: (request: CapturedRequest) => void = () => undefined;
-	let rejectCapture: (error: unknown) => void = () => undefined;
+	let rejectCapture: (cause: unknown) => void = () => undefined;
 	const captured = new Promise<CapturedRequest>((resolve, reject) => {
 		resolveCapture = resolve;
 		rejectCapture = reject;
@@ -80,7 +80,7 @@ function createTool() {
 	});
 }
 
-function expectStrictAdviseSchema(schema: unknown): void {
+function expectStrictAdviseSchema(schema: Parameters<typeof JSON.stringify>[0]): void {
 	expect(schema).toMatchObject({
 		type: "object",
 		additionalProperties: false,

@@ -10,7 +10,7 @@ import { defineTool, SessionManager, type InlineExtension } from "@earendil-work
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import { createPrimaryProvider } from "../fixtures/scripted-provider.js";
 
-function contextText(value: unknown): string {
+function contextText(value: Parameters<typeof JSON.stringify>[0]): string {
 	return JSON.stringify(value);
 }
 

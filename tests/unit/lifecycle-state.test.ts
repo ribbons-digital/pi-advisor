@@ -410,7 +410,15 @@ describe("Quality Slice Q5 dedupe metadata persistence", () => {
 			withMetadata,
 		);
 
-		const entry = (hash: string, metadata: unknown) => ({ hash, metadata });
+		const entry = (
+			hash: string,
+			metadata: {
+				severity?: string;
+				signature?: string;
+				lastDeliveryTurn?: number;
+				extra?: boolean;
+			},
+		) => ({ hash, metadata });
 		const badSeverity = {
 			...stateFor(manager),
 			dedupeHashes: [entry("a".repeat(64), { severity: "urgent", signature, lastDeliveryTurn: 1 })],
