@@ -2,8 +2,6 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_ADVISOR_CONFIG, PROPOSED_ADVISOR_CONFIG } from "../../src/index.js";
-
 // SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
 	name: string;
@@ -29,10 +27,10 @@ const publicDocs = [
 ].map((path) => ({ path, content: readFileSync(path, "utf8") }));
 
 describe("public release surface", () => {
-	it("declares discoverable publishable 0.3.0 metadata", () => {
+	it("declares discoverable publishable 0.4.0 metadata", () => {
 		expect(manifest).toMatchObject({
 			name: "@ribbons-digital/pi-advisor",
-			version: "0.3.0",
+			version: "0.4.0",
 			publishConfig: { access: "public", provenance: true },
 			pi: {
 				extensions: ["./src/index.ts"],
@@ -74,7 +72,7 @@ describe("public release surface", () => {
 				"compatibility coverage retained for Pi 0.81.1, Pi 0.83.0, and Pi 0.84.1",
 			);
 		}
-		expect(readme).toContain("Pi Advisor 0.3.0 requires Pi");
+		expect(readme).toContain("Pi Advisor 0.4.0 requires Pi");
 		expect(readme).toContain("Declared compatibility range: >=0.81.1 <0.85.0");
 		expect(readme).toContain("Primary tested Pi release: 0.82.0");
 		expect(readme).toContain("Compatibility-tested Pi releases: 0.81.1, 0.83.0, and 0.84.1");
@@ -111,12 +109,5 @@ describe("public release surface", () => {
 			expect(document.content, document.path).not.toMatch(/^## Development$/m);
 			expect(document.content, document.path).not.toContain("docs/internal");
 		}
-	});
-
-	describe("deprecated PROPOSED_ADVISOR_CONFIG", () => {
-		it("stays deep-equal to DEFAULT_ADVISOR_CONFIG while the deprecated export remains public", () => {
-			// eslint-disable-next-line @typescript-eslint/no-deprecated
-			expect(PROPOSED_ADVISOR_CONFIG).toEqual(DEFAULT_ADVISOR_CONFIG);
-		});
 	});
 });
