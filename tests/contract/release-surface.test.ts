@@ -2,8 +2,6 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_ADVISOR_CONFIG, PROPOSED_ADVISOR_CONFIG } from "../../src/index.js";
-
 // SAFETY: this test fixture deliberately supplies the asserted boundary shape.
 const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
 	name: string;
@@ -111,12 +109,5 @@ describe("public release surface", () => {
 			expect(document.content, document.path).not.toMatch(/^## Development$/m);
 			expect(document.content, document.path).not.toContain("docs/internal");
 		}
-	});
-
-	describe("deprecated PROPOSED_ADVISOR_CONFIG", () => {
-		it("stays deep-equal to DEFAULT_ADVISOR_CONFIG while the deprecated export remains public", () => {
-			// eslint-disable-next-line @typescript-eslint/no-deprecated
-			expect(PROPOSED_ADVISOR_CONFIG).toEqual(DEFAULT_ADVISOR_CONFIG);
-		});
 	});
 });

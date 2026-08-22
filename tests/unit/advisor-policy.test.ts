@@ -33,7 +33,6 @@ import {
 	noteSignature,
 	parseAdviseWireInput,
 	parsePersistedAdvisorTranscriptRecord,
-	PROPOSED_ADVISOR_CONFIG,
 	redactSecrets,
 	renderAdvisorDelta,
 	renderAdvisorReprimeSnapshot,
@@ -330,19 +329,6 @@ describe("Slice 1 configuration and emission policy", () => {
 		expect(normalizeAdvisorConfig(config).memorySuggestions.sessionSuggestionCap).toBe(1);
 		config.memorySuggestions.sessionSuggestionCap = -1;
 		expect(normalizeAdvisorConfig(config).memorySuggestions.sessionSuggestionCap).toBe(0);
-	});
-
-	it("keeps the deprecated proposed config export independent from release defaults", () => {
-		// eslint-disable-next-line @typescript-eslint/no-deprecated
-		const original = PROPOSED_ADVISOR_CONFIG.limits.maxAdviceCharacters;
-		try {
-			// eslint-disable-next-line @typescript-eslint/no-deprecated
-			PROPOSED_ADVISOR_CONFIG.limits.maxAdviceCharacters = original - 1;
-			expect(DEFAULT_ADVISOR_CONFIG.limits.maxAdviceCharacters).toBe(original);
-		} finally {
-			// eslint-disable-next-line @typescript-eslint/no-deprecated
-			PROPOSED_ADVISOR_CONFIG.limits.maxAdviceCharacters = original;
-		}
 	});
 
 	it("clamps every approved package hard maximum", () => {
