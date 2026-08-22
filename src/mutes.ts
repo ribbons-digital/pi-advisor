@@ -314,7 +314,7 @@ export class MuteStore {
 		const temporary = join(dirname(this.path), `.${MUTES_FILE_NAME}.${randomUUID()}.tmp`);
 		try {
 			await writeFile(temporary, serialized, { encoding: "utf8", mode: 0o600 });
-			const handle = await open(temporary, "r");
+			const handle = await open(temporary, "r+");
 			try {
 				await handle.sync();
 			} finally {

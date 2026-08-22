@@ -937,7 +937,7 @@ export async function saveUserConfigurationAtomic(
 			encoding: "utf8",
 			mode: 0o600,
 		});
-		const handle = await open(temporary, "r");
+		const handle = await open(temporary, "r+");
 		try {
 			await handle.sync();
 		} finally {
