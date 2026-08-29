@@ -3888,12 +3888,17 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.publishStatus();
 	}
 
-	async handleLifecycleHint(ctx: ExtensionContext): Promise<void> {
-		await this.resetForBranchMismatch(ctx.sessionManager.getBranch(), false);
+	handleLifecycleHint(ctx: ExtensionContext): void {
+		this.invalidateAdvisorLifecycleState();
 		this.lifecycleResetEpoch = this.status.epoch;
+		this.cursor = cursorAtTail(ctx.sessionManager.getBranch());
+		this.signalNestedAbort();
+		this.updateBacklogStatus();
+		this.persistState();
+		this.publishStatus();
 	}
 
-	async handleBranchChange(ctx: ExtensionContext): Promise<void> {
+	handleBranchChange(ctx: ExtensionContext): void {
 		const branch = ctx.sessionManager.getBranch();
 		if (this.lifecycleResetEpoch === this.status.epoch) {
 			delete this.lifecycleResetEpoch;
@@ -3903,7 +3908,13 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			this.publishStatus();
 			return;
 		}
-		await this.resetForBranchMismatch(branch);
+		this.invalidateAdvisorLifecycleState();
+		this.cursor = cursorAtTail(branch);
+		this.seedLifecycleReprime(branch, "lifecycle");
+		this.signalNestedAbort();
+		this.updateBacklogStatus();
+		this.persistState();
+		this.publishStatus();
 	}
 
 	private recordDeliveryFailure(cause: unknown): void {
@@ -4024,6 +4035,27 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.refreshDeferredAdviceStatus();
 		this.adviceDedupe.clear();
 		this.nestedContextStale = true;
+	}
+
+	private signalNestedAbort(): void {
+		const session = this.session;
+		if (session === undefined) {
+			this.nestedContextStale = false;
+			return;
+		}
+		session.abortCompaction();
+		if (session.isStreaming) {
+			void session.abort().then(
+				() => undefined,
+				() => undefined,
+			);
+			return;
+		}
+		this.extractStaleNestedQueue(session);
+		session.state.messages = [];
+		session.sessionManager.resetLeaf();
+		this.usageAnchorInvalidated = false;
+		this.nestedContextStale = false;
 	}
 
 	private async prepareNestedSessionForReview(): Promise<void> {

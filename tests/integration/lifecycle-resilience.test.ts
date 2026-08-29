@@ -280,6 +280,103 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 		}
 	});
 
+	it("does not wait forever for a nested abort during compaction", async () => {
+		const reviewBarrier = createBarrier();
+		const abortHang = createBarrier();
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer before compact" }] },
+			{ content: [{ type: "text", text: "bounded compaction summary" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{
+				...acceptedAdvice("Do not block host compaction on this review."),
+				waitFor: reviewBarrier.promise,
+				waitAfterAbort: abortHang.promise,
+			},
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const manager = SessionManager.inMemory();
+		for (let turn = 0; turn < 24; turn++) {
+			manager.appendMessage({
+				role: "user",
+				content: `compaction-history-${String(turn)}-${"x".repeat(5_000)}`,
+				timestamp: turn * 2,
+			});
+			manager.appendMessage(scriptedAssistant(`history-answer-${String(turn)}`));
+		}
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			sessionManager: manager,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxLifecycleAbortMs = 1_500;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("create context before compaction");
+			await waitFor(() => advisor.activeRequests === 1);
+			const started = Date.now();
+			await harness.session.compact("compact without waiting for nested abort hang");
+			expect(Date.now() - started).toBeLessThan(1_000);
+			await waitFor(() => runtime?.getStatus().branchResets === 1);
+		} finally {
+			reviewBarrier.release();
+			abortHang.release();
+			await harness.dispose();
+		}
+	});
+
+	it("does not wait forever for a nested abort during tree navigation", async () => {
+		const reviewBarrier = createBarrier();
+		const abortHang = createBarrier();
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "first answer" }] }]);
+		const advisor = createAdvisorProvider([
+			{
+				...acceptedAdvice("Do not block host tree navigation on this review."),
+				waitFor: reviewBarrier.promise,
+				waitAfterAbort: abortHang.promise,
+			},
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxLifecycleAbortMs = 1_500;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("start a review before tree navigation");
+			await waitFor(() => advisor.activeRequests === 1);
+			const target = harness.sessionManager
+				.getBranch()
+				.find((entry) => entry.type === "message" && entry.message.role === "user");
+			if (target === undefined) throw new Error("Expected tree target");
+			const started = Date.now();
+			await harness.session.navigateTree(target.id, { summarize: false });
+			expect(Date.now() - started).toBeLessThan(1_000);
+			await waitFor(() => runtime?.getStatus().branchResets === 1);
+		} finally {
+			reviewBarrier.release();
+			abortHang.release();
+			await harness.dispose();
+		}
+	});
+
 	it("eager tree navigation reset invalidates an Advisor await", async () => {
 		const barrier = createBarrier();
 		const invalidated = "Tree navigation must invalidate this result.";
