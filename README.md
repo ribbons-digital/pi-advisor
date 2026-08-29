@@ -81,6 +81,7 @@ On Pi 0.82, the reasoning prompt also shows the current Executor reasoning level
 The Pi 0.81 compatibility path omits that supplementary Executor text without changing configuration behavior.
 In the TUI, the model picker is focused immediately and fuzzy-searches provider, model ID, and display name as you type; RPC clients retain their standard selection dialog.
 It shows a summary and asks for confirmation before atomically saving `~/.pi/agent/WATCHDOG.yml`.
+If that path is a symlink, the save writes through to the target file and leaves the link in place.
 
 Then enable Advisor for the current session:
 

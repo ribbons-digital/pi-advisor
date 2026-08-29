@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, mkdir, open, readlink, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { Compile } from "typebox/compile";
 import { Type } from "typebox";
@@ -937,13 +937,44 @@ export function serializeUserConfiguration(
 	return serialized;
 }
 
+const MAX_ATOMIC_WRITE_SYMLINK_HOPS = 32;
+
+/**
+ * Resolve the real file an atomic save should replace.
+ * `rename()` onto a symlink path replaces the link itself, so User WATCHDOG.yml
+ * that is a symlink (for example into a dotfiles repo) must write through to the
+ * final target, including dangling or nested links.
+ */
+export async function resolveAtomicWriteDestination(path: string): Promise<string> {
+	let current = path;
+	const seen = new Set<string>();
+	for (let hop = 0; hop < MAX_ATOMIC_WRITE_SYMLINK_HOPS; hop++) {
+		if (seen.has(current)) return current;
+		seen.add(current);
+		let stats;
+		try {
+			stats = await lstat(current);
+		} catch (error) {
+			// SAFETY: Node filesystem failures expose code through ErrnoException.
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return current;
+			throw error;
+		}
+		if (!stats.isSymbolicLink()) return current;
+		const raw = await readlink(current);
+		current = isAbsolute(raw) ? raw : resolve(dirname(current), raw);
+	}
+	return current;
+}
+
 export async function saveUserConfigurationAtomic(
 	path: string,
 	config: AdvisorConfig,
 	unknownTopLevel?: Record<string, unknown>,
 ): Promise<void> {
+	const destination = await resolveAtomicWriteDestination(path);
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	const temporary = join(dirname(path), `.${WATCHDOG_YAML_NAME}.${randomUUID()}.tmp`);
+	await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+	const temporary = join(dirname(destination), `.${WATCHDOG_YAML_NAME}.${randomUUID()}.tmp`);
 	try {
 		await writeFile(temporary, serializeUserConfiguration(config, unknownTopLevel), {
 			encoding: "utf8",
@@ -955,7 +986,7 @@ export async function saveUserConfigurationAtomic(
 		} finally {
 			await handle.close();
 		}
-		await rename(temporary, path);
+		await rename(temporary, destination);
 	} catch (error) {
 		await rm(temporary, { force: true });
 		throw error;

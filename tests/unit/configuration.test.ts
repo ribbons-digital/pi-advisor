@@ -1,4 +1,15 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	lstat,
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	readlink,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,6 +33,7 @@ import {
 	pickAdvisorModelAndEffort,
 	pickAdvisorTools,
 	publishConfigurationWarnings,
+	resolveAtomicWriteDestination,
 	saveUserConfigurationAtomic,
 	serializeUserConfiguration,
 } from "../../src/index.js";
@@ -1170,6 +1182,77 @@ describe("WATCHDOG configuration", () => {
 		} finally {
 			await chmod(agentDir, 0o700);
 		}
+	});
+
+	it("writes through a User WATCHDOG.yml symlink instead of replacing the link", async () => {
+		const { root, agentDir } = await fixture();
+		const targetDir = join(root, "dotfiles");
+		await mkdir(targetDir, { recursive: true });
+		const target = join(targetDir, "WATCHDOG.yml");
+		const path = join(agentDir, "WATCHDOG.yml");
+		await writeFile(target, "version: 1\nmodel: old/model\n");
+		await symlink(target, path);
+		const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		config.model = "new/model";
+		expect(await resolveAtomicWriteDestination(path)).toBe(target);
+		await saveUserConfigurationAtomic(path, config);
+		expect((await lstat(path)).isSymbolicLink()).toBe(true);
+		expect(await readlink(path)).toBe(target);
+		expect(await readFile(target, "utf8")).toContain("model: new/model");
+		expect(await readFile(path, "utf8")).toContain("model: new/model");
+		expect((await readdir(agentDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		expect((await readdir(targetDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+	});
+
+	it("writes through a relative User WATCHDOG.yml symlink", async () => {
+		const { root, agentDir } = await fixture();
+		const targetDir = join(root, "dotfiles");
+		await mkdir(targetDir, { recursive: true });
+		const target = join(targetDir, "WATCHDOG.yml");
+		const path = join(agentDir, "WATCHDOG.yml");
+		await writeFile(target, "version: 1\nmodel: old/model\n");
+		await symlink("../dotfiles/WATCHDOG.yml", path);
+		const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		config.model = "linked/model";
+		await saveUserConfigurationAtomic(path, config);
+		expect((await lstat(path)).isSymbolicLink()).toBe(true);
+		expect(await readlink(path)).toBe("../dotfiles/WATCHDOG.yml");
+		expect(await readFile(target, "utf8")).toContain("model: linked/model");
+	});
+
+	it("writes through a nested User WATCHDOG.yml symlink chain", async () => {
+		const { root, agentDir } = await fixture();
+		const targetDir = join(root, "dotfiles");
+		await mkdir(targetDir, { recursive: true });
+		const target = join(targetDir, "WATCHDOG.yml");
+		const mid = join(root, "mid-WATCHDOG.yml");
+		const path = join(agentDir, "WATCHDOG.yml");
+		await writeFile(target, "version: 1\nmodel: old/model\n");
+		await symlink(target, mid);
+		await symlink(mid, path);
+		const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		config.model = "nested/model";
+		expect(await resolveAtomicWriteDestination(path)).toBe(target);
+		await saveUserConfigurationAtomic(path, config);
+		expect((await lstat(path)).isSymbolicLink()).toBe(true);
+		expect((await lstat(mid)).isSymbolicLink()).toBe(true);
+		expect(await readFile(target, "utf8")).toContain("model: nested/model");
+	});
+
+	it("creates the dangling User WATCHDOG.yml symlink target instead of replacing the link", async () => {
+		const { root, agentDir } = await fixture();
+		const targetDir = join(root, "dotfiles");
+		await mkdir(targetDir, { recursive: true });
+		const target = join(targetDir, "WATCHDOG.yml");
+		const path = join(agentDir, "WATCHDOG.yml");
+		await symlink(target, path);
+		const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		config.model = "dangling/model";
+		expect(await resolveAtomicWriteDestination(path)).toBe(target);
+		await saveUserConfigurationAtomic(path, config);
+		expect((await lstat(path)).isSymbolicLink()).toBe(true);
+		expect(await readlink(path)).toBe(target);
+		expect(await readFile(target, "utf8")).toContain("model: dangling/model");
 	});
 });
 
