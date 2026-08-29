@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	ADVISOR_ARGUMENT_VALIDATION_FAILURE,
 	ADVISOR_INTERNAL_EXECUTION_FAILURE,
+	ADVISOR_REVIEW_TIMEOUT_FAILURE,
 	ADVISOR_LATE_ENTRY_TYPE,
 	adviceDedupeKey,
 	createPiAdvisorExtension,
@@ -1864,6 +1865,55 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(warnings).toHaveLength(2);
 			expect(advisor.requests).toHaveLength(0);
 		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("skips a review attempt that exceeds maxReviewAttemptMs", async () => {
+		const barrier = createBarrier();
+		const abortHang = createBarrier();
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "first answer" }] },
+			{ content: [{ type: "text", text: "second answer" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{
+				...acceptedAdvice("This review must time out."),
+				waitFor: barrier.promise,
+				waitAfterAbort: abortHang.promise,
+			},
+			{ content: [] },
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxReviewAttemptMs = 50;
+						config.limits.maxLifecycleAbortMs = 50;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("start a review that will time out");
+			await waitFor(() => advisor.activeRequests === 1);
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 1);
+			expect(runtime?.getStatus()).toMatchObject({
+				active: true,
+				paused: false,
+				lastGovernorOutcome: ADVISOR_REVIEW_TIMEOUT_FAILURE,
+			});
+			await harness.session.prompt("continue after timed-out review");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) >= 1);
+		} finally {
+			barrier.release();
+			abortHang.release();
 			await harness.dispose();
 		}
 	});

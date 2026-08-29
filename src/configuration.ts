@@ -65,6 +65,15 @@ const LimitsSchema = Type.Object(
 		sessionCostSoftCapUsd: Type.Optional(
 			Type.Union([Type.Literal("off"), Type.Number({ exclusiveMinimum: 0 })]),
 		),
+		maxReviewAttemptMs: Type.Optional(
+			Type.Number({ minimum: 1, maximum: HARD_LIMITS.maxReviewAttemptMs }),
+		),
+		maxNestedCompactionMs: Type.Optional(
+			Type.Number({ minimum: 1, maximum: HARD_LIMITS.maxNestedCompactionMs }),
+		),
+		maxLifecycleAbortMs: Type.Optional(
+			Type.Number({ minimum: 0, maximum: HARD_LIMITS.maxLifecycleAbortMs }),
+		),
 	},
 	{ additionalProperties: false },
 );
@@ -581,6 +590,9 @@ const PROJECT_LOWER_LIMIT_KEYS = [
 	"maxPendingTranscriptBytes",
 	"maxReprimeTokens",
 	"deferredAdviceRetentionHours",
+	"maxReviewAttemptMs",
+	"maxNestedCompactionMs",
+	"maxLifecycleAbortMs",
 ] as const;
 
 function mergeProjectReviewConfiguration(

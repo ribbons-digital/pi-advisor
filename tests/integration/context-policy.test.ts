@@ -475,6 +475,69 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 		}
 	});
 
+	it("does not wait forever for nested compaction that exceeds maxNestedCompactionMs", async () => {
+		const compactionBarrier = createBarrier();
+		const abortHang = createBarrier();
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "ORIGINAL-BRANCH-CONTEXT" }] },
+			{ content: [{ type: "text", text: "SECOND-PENDING-COMPACTION-UPDATE" }] },
+		]);
+		const advisor = new ScriptedProvider({
+			providerId: "pi-advisor-fixture-advisor",
+			modelId: "advisor-scripted-compaction-timeout",
+			api: ADVISOR_SCRIPTED_API,
+			contextWindow: 4_000,
+			maxTokens: 512,
+			responses: [
+				{
+					content: [{ type: "text", text: `private-before-compaction-${"x".repeat(5_000)}` }],
+					usage: { input: 2_500, output: 500, costUsd: 0.03 },
+				},
+				{
+					content: [{ type: "text", text: "bounded compaction summary" }],
+					waitFor: compactionBarrier.promise,
+					waitAfterAbort: abortHang.promise,
+				},
+				{ content: [] },
+			],
+		});
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.context.maxFraction = 0.65;
+						config.context.reserveTokens = 300;
+						config.limits.maxNestedCompactionMs = 50;
+						config.limits.maxLifecycleAbortMs = 50;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("create original branch context");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			const started = Date.now();
+			await harness.session.prompt("start update that requires compaction");
+			await waitFor(() => (runtime?.getStatus().compactionFailures ?? 0) >= 1);
+			expect(Date.now() - started).toBeLessThan(2_000);
+			expect(runtime?.getStatus()).toMatchObject({
+				active: true,
+				paused: false,
+			});
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) >= 2);
+		} finally {
+			compactionBarrier.release();
+			abortHang.release();
+			await harness.dispose();
+		}
+	});
+
 	it("compacts through AgentSession and preserves a planted requirement for later review", async () => {
 		const violationAdvice = "The Executor violated MUST-RUN-LONG-CONTEXT-CHECK.";
 		const primary = createPrimaryProvider([

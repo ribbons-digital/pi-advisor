@@ -130,19 +130,28 @@ tools: [read, grep]
 
 ### Review, delivery, and session limits
 
-| YAML path                             | Type                             | Release default | Hard maximum | Scope and Project merge         | Effect                                                                                                  |
-| ------------------------------------- | -------------------------------- | --------------- | ------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `limits.maxAdviceCharacters`          | Number at least `1`              | `2000`          | `8000`       | User sets; Project may lower    | Bounds accepted note characters and visibly truncates oversized ordinary rationale.                     |
-| `limits.maxAdviceTokens`              | Number at least `1`              | `512`           | `2048`       | User sets; Project may lower    | Adds an estimated-token bound to accepted notes.                                                        |
-| `limits.maxAdvisorTurnsPerUpdate`     | Number at least `1`              | `4`             | `12`         | User sets; Project may lower    | Stops long private Advisor tool loops.                                                                  |
-| `limits.maxToolCallsPerUpdate`        | Number at least `0`              | `8`             | `32`         | User sets; Project may lower    | Caps read-only calls in one update. `0` disables read-only calls while preserving `advise`.             |
-| `limits.maxPendingTranscriptBytes`    | Number at least `1`              | `200000`        | `1000000`    | User sets; Project may lower    | Bounds coalesced Executor backlog and associated bounded metadata.                                      |
-| `limits.maxReprimeTokens`             | Number at least `1`              | `32000`         | `128000`     | User sets; Project may lower    | Bounds a redacted current-branch re-prime snapshot.                                                     |
-| `limits.minTurnsBetweenReviews`       | Number at least `1`              | `1`             | None         | User sets; Project may increase | Reduces review frequency by requiring more meaningful Executor turns.                                   |
-| `limits.minIntervalMs`                | Number at least `0`              | `0`             | None         | User sets; Project may increase | Reduces review frequency by requiring elapsed time while retaining one bounded coalesced update.        |
-| `limits.deferredAdviceRetentionHours` | Number at least `0`              | `24`            | None         | User sets; Project may lower    | Controls cross-exit retention for accepted deferred advice. `0` disables new cross-exit note retention. |
-| `limits.sessionTokenSoftCap`          | `off` or number at least `1`     | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when exact reported lifetime review tokens reach the configured cap.     |
-| `limits.sessionCostSoftCapUsd`        | `off` or number greater than `0` | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when provider-reported lifetime review cost reaches the configured cap.  |
+| YAML path                             | Type                             | Release default | Hard maximum | Scope and Project merge         | Effect                                                                                                         |
+| ------------------------------------- | -------------------------------- | --------------- | ------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `limits.maxAdviceCharacters`          | Number at least `1`              | `2000`          | `8000`       | User sets; Project may lower    | Bounds accepted note characters and visibly truncates oversized ordinary rationale.                            |
+| `limits.maxAdviceTokens`              | Number at least `1`              | `512`           | `2048`       | User sets; Project may lower    | Adds an estimated-token bound to accepted notes.                                                               |
+| `limits.maxAdvisorTurnsPerUpdate`     | Number at least `1`              | `4`             | `12`         | User sets; Project may lower    | Stops long private Advisor tool loops.                                                                         |
+| `limits.maxToolCallsPerUpdate`        | Number at least `0`              | `8`             | `32`         | User sets; Project may lower    | Caps read-only calls in one update. `0` disables read-only calls while preserving `advise`.                    |
+| `limits.maxPendingTranscriptBytes`    | Number at least `1`              | `200000`        | `1000000`    | User sets; Project may lower    | Bounds coalesced Executor backlog and associated bounded metadata.                                             |
+| `limits.maxReprimeTokens`             | Number at least `1`              | `32000`         | `128000`     | User sets; Project may lower    | Bounds a redacted current-branch re-prime snapshot.                                                            |
+| `limits.minTurnsBetweenReviews`       | Number at least `1`              | `1`             | None         | User sets; Project may increase | Reduces review frequency by requiring more meaningful Executor turns.                                          |
+| `limits.minIntervalMs`                | Number at least `0`              | `0`             | None         | User sets; Project may increase | Reduces review frequency by requiring elapsed time while retaining one bounded coalesced update.               |
+| `limits.deferredAdviceRetentionHours` | Number at least `0`              | `24`            | None         | User sets; Project may lower    | Controls cross-exit retention for accepted deferred advice. `0` disables new cross-exit note retention.        |
+| `limits.sessionTokenSoftCap`          | `off` or number at least `1`     | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when exact reported lifetime review tokens reach the configured cap.            |
+| `limits.sessionCostSoftCapUsd`        | `off` or number greater than `0` | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when provider-reported lifetime review cost reaches the configured cap.         |
+| `limits.maxReviewAttemptMs`           | Number from `1` through `600000` | `120000`        | `600000`     | User sets; Project may lower    | Wall-clock bound for one nested review prompt. Exceeding it aborts that attempt and skips the review.          |
+| `limits.maxNestedCompactionMs`        | Number from `1` through `300000` | `60000`         | `300000`     | User sets; Project may lower    | Wall-clock bound for Advisor's private nested `AgentSession.compact()`.                                        |
+| `limits.maxLifecycleAbortMs`          | Number from `0` through `30000`  | `2000`          | `30000`      | User sets; Project may lower    | Max wait for nested abort during disable, shutdown, and the next review after compact/tree. `0` does not wait. |
+
+Host `/compact` and tree navigation signal nested abort and return immediately. They never wait for the nested Advisor request to finish.
+Disable, shutdown, and the next Advisor review still bound nested abort waits with `maxLifecycleAbortMs` so those paths cannot hang unbounded on a provider that ignores abort.
+Host `retry.provider.timeoutMs` and `httpIdleTimeoutMs` do not apply to the nested Advisor session; these fields are the nested bounds.
+`maxLifecycleAbortMs: 0` returns immediately after signalling abort and lets the nested request finish in the background.
+A timed-out review is a governor skip, not a consecutive ordinary failure.
 
 Both cumulative caps are opt-in and are disabled by default so normal Advisor review continues across long cache-heavy sessions.
 Input, output, cache-read, cache-write, total-token, and provider-reported cost accounting remains visible when a cap is `off`.
@@ -415,6 +424,9 @@ limits:
   minIntervalMs: 60000
   sessionTokenSoftCap: 100000
   sessionCostSoftCapUsd: 1
+  maxReviewAttemptMs: 90000
+  maxNestedCompactionMs: 30000
+  maxLifecycleAbortMs: 1500
 review:
   skipNonMaterialTurns: true
   adaptiveCadence:

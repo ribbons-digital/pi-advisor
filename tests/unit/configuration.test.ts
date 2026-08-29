@@ -1417,6 +1417,9 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		expect(normalized.memorySuggestions.enabled).toBe(true);
 		expect(normalized.persistence.transcript).toBe(true);
 		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
+		expect(normalized.limits.maxReviewAttemptMs).toBe(120_000);
+		expect(normalized.limits.maxNestedCompactionMs).toBe(60_000);
+		expect(normalized.limits.maxLifecycleAbortMs).toBe(2_000);
 		expect(normalized.tools).toEqual(["read", "grep", "find", "ls"]);
 	});
 
@@ -1442,7 +1445,50 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		expect(normalized.review.skipNonMaterialTurns).toBe(false);
 		expect(normalized.context.maxFraction).toBe(0.65);
 		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
+		expect(normalized.limits.maxReviewAttemptMs).toBe(120_000);
+		expect(normalized.limits.maxNestedCompactionMs).toBe(60_000);
+		expect(normalized.limits.maxLifecycleAbortMs).toBe(2_000);
 		expect(normalized.memorySuggestions.enabled).toBe(true);
 		expect(normalized.persistence.transcript).toBe(true);
+	});
+
+	it("loads timeout limits, clamps them, and lets Project only lower them", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"limits:",
+				"  maxReviewAttemptMs: 90000",
+				"  maxNestedCompactionMs: 45000",
+				"  maxLifecycleAbortMs: 1500",
+			].join("\n"),
+		);
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"limits:",
+				"  maxReviewAttemptMs: 30000",
+				"  maxNestedCompactionMs: 80000",
+				"  maxLifecycleAbortMs: 0",
+			].join("\n"),
+		);
+		const loaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(loaded.userConfig.limits).toMatchObject({
+			maxReviewAttemptMs: 90_000,
+			maxNestedCompactionMs: 45_000,
+			maxLifecycleAbortMs: 1_500,
+		});
+		expect(loaded.effectiveConfig.limits).toMatchObject({
+			maxReviewAttemptMs: 30_000,
+			maxNestedCompactionMs: 45_000,
+			maxLifecycleAbortMs: 0,
+		});
+		const oversized = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		oversized.limits.maxReviewAttemptMs = HARD_LIMITS.maxReviewAttemptMs + 1;
+		expect(normalizeAdvisorConfig(oversized).limits.maxReviewAttemptMs).toBe(
+			HARD_LIMITS.maxReviewAttemptMs,
+		);
 	});
 });

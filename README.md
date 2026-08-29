@@ -227,7 +227,8 @@ Provider usage or pricing can be missing or incomplete, so explicitly enabled to
 Advisor estimates its private context before each bounded update and asks Pi's public nested `AgentSession.compact()` API to compact when needed.
 If compaction fails or remains unsafe, Advisor clears only its private nested history and retries the same current bounded update once without replaying the full Executor branch.
 If that update still cannot fit fresh context, Advisor drops only that update, warns, and remains active for later updates.
-Reaching the hard per-update tool-call or turn limit skips only that review without retrying it, and automatic review continues with later eligible Executor updates.
+Reaching the hard per-update tool-call, turn, or review-attempt time limit skips only that review without retrying it, and automatic review continues with later eligible Executor updates.
+Nested review and nested compaction are bounded by `limits.maxReviewAttemptMs` and `limits.maxNestedCompactionMs`. Host compact and tree navigation signal Advisor abort and return immediately. Disable, shutdown, and the next review bound nested abort waits with `limits.maxLifecycleAbortMs` so those paths cannot hang on a provider that ignores abort.
 Accepted review advice retains its existing bounded delivery behavior, while provisional Memory suggestions from the rolled-back attempt remain discarded.
 `/advisor status` reports the cumulative governor-skipped review count and latest bounded outcome.
 Three consecutive ordinary updates that each exhaust their retry path pause Advisor with one warning that includes the final bounded, secret-redacted failure reason; handled per-update governor exhaustion clears rather than advances that streak.
