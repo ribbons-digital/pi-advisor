@@ -274,6 +274,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		memorySuggestionNextEligibleAt: 0,
 		redactions: 0,
 		consecutiveFailures: 0,
+		consecutiveReviewTimeouts: 0,
 		branchResets: 0,
 		staleQueuedMessagesDiscarded: 0,
 		warnings: 0,

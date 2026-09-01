@@ -25,6 +25,8 @@ import {
 	loadAdvisorConfiguration,
 	MAX_WATCHDOG_MARKDOWN_BYTES,
 	MAX_WATCHDOG_YAML_BYTES,
+	ATOMIC_WRITE_SYMLINK_CYCLE_ERROR,
+	ATOMIC_WRITE_SYMLINK_HOPS_ERROR,
 	mergeProjectConfiguration,
 	normalizeAdvisorConfig,
 	type AdvisorConfig,
@@ -1253,6 +1255,67 @@ describe("WATCHDOG configuration", () => {
 		expect((await lstat(path)).isSymbolicLink()).toBe(true);
 		expect(await readlink(path)).toBe(target);
 		expect(await readFile(target, "utf8")).toContain("model: dangling/model");
+	});
+
+	it("fails closed without writing when the User WATCHDOG.yml symlink chain contains a cycle", async () => {
+		if (process.platform === "win32") return;
+		const { root, agentDir } = await fixture();
+		const first = join(root, "cycle-a");
+		const second = join(root, "cycle-b");
+		const path = join(agentDir, "WATCHDOG.yml");
+		await symlink(second, first);
+		await symlink(first, second);
+		await symlink(first, path);
+		const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		config.model = "cyclic/model";
+		await expect(resolveAtomicWriteDestination(path)).rejects.toThrow(
+			ATOMIC_WRITE_SYMLINK_CYCLE_ERROR,
+		);
+		await expect(saveUserConfigurationAtomic(path, config)).rejects.toThrow(
+			ATOMIC_WRITE_SYMLINK_CYCLE_ERROR,
+		);
+		expect((await lstat(path)).isSymbolicLink()).toBe(true);
+		expect((await lstat(first)).isSymbolicLink()).toBe(true);
+		expect((await lstat(second)).isSymbolicLink()).toBe(true);
+		expect(await readlink(path)).toBe(first);
+		expect(await readlink(first)).toBe(second);
+		expect(await readlink(second)).toBe(first);
+		expect((await readdir(agentDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+	});
+
+	it("fails closed without writing when the User WATCHDOG.yml symlink chain exceeds the hop limit", async () => {
+		if (process.platform === "win32") return;
+		const { root, agentDir } = await fixture();
+		const links: string[] = [];
+		const path = join(agentDir, "WATCHDOG.yml");
+		// Build a chain that exceeds MAX_ATOMIC_WRITE_SYMLINK_HOPS without cycling:
+		// each link points at a *different* file, and the first link points at a
+		// plain file that itself is never a symlink. 32 hops is the exact allowed
+		// limit (path -> hop-31 -> ... -> hop-0 -> target); 33 links forces the
+		// limit to be exceeded before a plain target is ever reached.
+		const terminalTarget = join(root, "hop-target.yml");
+		await writeFile(terminalTarget, "version: 1\nmodel: old/model\n");
+		let previous: string = terminalTarget;
+		for (let index = 0; index < 33; index++) {
+			const link = join(root, `hop-${String(index)}`);
+			await symlink(previous, link);
+			links.push(link);
+			previous = link;
+		}
+		await symlink(previous, path);
+		const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		config.model = "hops/model";
+		await expect(resolveAtomicWriteDestination(path)).rejects.toThrow(
+			ATOMIC_WRITE_SYMLINK_HOPS_ERROR,
+		);
+		await expect(saveUserConfigurationAtomic(path, config)).rejects.toThrow(
+			ATOMIC_WRITE_SYMLINK_HOPS_ERROR,
+		);
+		expect((await lstat(path)).isSymbolicLink()).toBe(true);
+		for (const link of links) expect((await lstat(link)).isSymbolicLink()).toBe(true);
+		expect((await readdir(agentDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 	});
 });
 

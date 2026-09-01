@@ -576,7 +576,7 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			const ctx = internals.hostContext;
 			if (ctx === undefined) throw new Error("Expected Advisor host context");
 
-			await runtime.handleBranchChange(ctx);
+			runtime.handleBranchChange(ctx);
 			await new Promise((resolve) => setTimeout(resolve, 350));
 
 			expect(advisor.requests).toHaveLength(1);

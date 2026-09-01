@@ -939,17 +939,27 @@ export function serializeUserConfiguration(
 
 const MAX_ATOMIC_WRITE_SYMLINK_HOPS = 32;
 
+export const ATOMIC_WRITE_SYMLINK_CYCLE_ERROR =
+	"Refusing to save configuration: the WATCHDOG.yml symlink chain contains a cycle.";
+export const ATOMIC_WRITE_SYMLINK_HOPS_ERROR =
+	"Refusing to save configuration: the WATCHDOG.yml symlink chain exceeds the hop limit.";
+
 /**
  * Resolve the real file an atomic save should replace.
  * `rename()` onto a symlink path replaces the link itself, so User WATCHDOG.yml
  * that is a symlink (for example into a dotfiles repo) must write through to the
  * final target, including dangling or nested links.
+ *
+ * Fails closed instead of writing: a cyclic chain or a chain longer than
+ * MAX_ATOMIC_WRITE_SYMLINK_HOPS throws rather than returning an intermediate
+ * symlink path, because renaming over that path would silently replace the link
+ * and leave the intended target unchanged.
  */
 export async function resolveAtomicWriteDestination(path: string): Promise<string> {
 	let current = path;
 	const seen = new Set<string>();
 	for (let hop = 0; hop < MAX_ATOMIC_WRITE_SYMLINK_HOPS; hop++) {
-		if (seen.has(current)) return current;
+		if (seen.has(current)) throw new Error(ATOMIC_WRITE_SYMLINK_CYCLE_ERROR);
 		seen.add(current);
 		let stats;
 		try {
@@ -963,6 +973,18 @@ export async function resolveAtomicWriteDestination(path: string): Promise<strin
 		const raw = await readlink(current);
 		current = isAbsolute(raw) ? raw : resolve(dirname(current), raw);
 	}
+	// After the last allowed hop the destination may still be a symlink when the
+	// chain exceeds the hop limit. Confirm it terminates at a regular target;
+	// otherwise fail closed rather than renaming over an intermediate link.
+	let stats;
+	try {
+		stats = await lstat(current);
+	} catch (error) {
+		// SAFETY: Node filesystem failures expose code through ErrnoException.
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return current;
+		throw error;
+	}
+	if (stats.isSymbolicLink()) throw new Error(ATOMIC_WRITE_SYMLINK_HOPS_ERROR);
 	return current;
 }
 

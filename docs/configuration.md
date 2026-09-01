@@ -152,6 +152,7 @@ Disable, shutdown, and the next Advisor review still bound nested abort waits wi
 Host `retry.provider.timeoutMs` and `httpIdleTimeoutMs` do not apply to the nested Advisor session; these fields are the nested bounds.
 `maxLifecycleAbortMs: 0` returns immediately after signalling abort and lets the nested request finish in the background.
 A timed-out review is a governor skip, not a consecutive ordinary failure.
+Three consecutive review attempts that each time out pause Advisor with one privacy-safe warning; the timeout streak resets only after a successful review, so Advisor fails closed when a provider keeps ignoring cancellation instead of accumulating replacement sessions and new review requests.
 
 Both cumulative caps are opt-in and are disabled by default so normal Advisor review continues across long cache-heavy sessions.
 Input, output, cache-read, cache-write, total-token, and provider-reported cost accounting remains visible when a cap is `off`.

@@ -158,6 +158,8 @@ function isRuntimeNumber<T>(value: T): value is T & number {
 }
 
 export const MAX_ADVISOR_RETRIES_PER_UPDATE = 1;
+
+export const REVIEW_TIMEOUT_PAUSE_COUNT = 3;
 export const ADVISOR_RETRY_DELAY_MS = 250;
 export const ADVISOR_REVIEW_TIMEOUT_FAILURE = "Advisor review attempt timed out";
 export const ADVISOR_COMPACTION_TIMEOUT_FAILURE = "Advisor context compaction timed out";
@@ -473,6 +475,7 @@ export interface AdvisorRuntimeStatus {
 	memorySuggestionNextEligibleAt: number;
 	redactions: number;
 	consecutiveFailures: number;
+	consecutiveReviewTimeouts: number;
 	branchResets: number;
 	staleQueuedMessagesDiscarded: number;
 	warnings: number;
@@ -896,6 +899,7 @@ export function formatAdvisorDiagnosticsDump(
 		memorySuggestionNextEligibleAt: status.memorySuggestionNextEligibleAt,
 		redactions: status.redactions,
 		consecutiveFailures: status.consecutiveFailures,
+		consecutiveReviewTimeouts: status.consecutiveReviewTimeouts,
 		branchResets: status.branchResets,
 		staleQueuedMessagesDiscarded: status.staleQueuedMessagesDiscarded,
 		warnings: status.warnings,
@@ -1195,6 +1199,7 @@ export class AdvisorRuntime {
 			memorySuggestionNextEligibleAt: 0,
 			redactions: 0,
 			consecutiveFailures: 0,
+			consecutiveReviewTimeouts: 0,
 			branchResets: 0,
 			staleQueuedMessagesDiscarded: 0,
 			warnings: 0,
@@ -2094,6 +2099,7 @@ export class AdvisorRuntime {
 			this.status.paused = false;
 			delete this.status.pauseReason;
 			this.status.consecutiveFailures = 0;
+			this.status.consecutiveReviewTimeouts = 0;
 		}
 		if (this.status.paused) {
 			this.publishStatus();
@@ -3233,6 +3239,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				}
 				this.status.reviewsCompleted++;
 				this.status.consecutiveFailures = 0;
+				this.status.consecutiveReviewTimeouts = 0;
 				this.status.notesSuppressed += this.collector.suppressedCalls;
 				this.status.memorySuggestionsPolicySuppressed += this.collector.memoryPolicySuppressedCalls;
 				this.status.memorySuggestionsLimitSuppressed += this.collector.memoryLimitSuppressedCalls;
@@ -3931,6 +3938,12 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.status.governorSkippedReviews++;
 		this.status.lastGovernorOutcome = outcome;
 		this.status.consecutiveFailures = 0;
+		if (outcome === ADVISOR_REVIEW_TIMEOUT_FAILURE) {
+			this.status.consecutiveReviewTimeouts++;
+			if (this.status.consecutiveReviewTimeouts >= REVIEW_TIMEOUT_PAUSE_COUNT) {
+				this.pause(`Three consecutive Advisor review attempts timed out. Last timeout: ${outcome}`);
+			}
+		}
 	}
 
 	private recordFailedUpdate(reason: string): void {
@@ -4322,7 +4335,7 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Reviews: ${String(status.reviewRequests)} requests, ${String(status.reviewsCompleted)} completed, ${String(status.silentReviews)} silent, ${String(status.reviewsSuperseded)} superseded, ${String(status.failedReviews)} failed`,
 		`Review cadence: every ${String(status.effectiveMinTurnsBetweenReviews)} meaningful turn${status.effectiveMinTurnsBetweenReviews === 1 ? "" : "s"}`,
 		`Governor skips: ${String(status.governorSkippedReviews)}, latest ${status.lastGovernorOutcome ?? "none"}`,
-		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.retryAttempts)} retry attempts`,
+		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.consecutiveReviewTimeouts)} consecutive review timeouts, ${String(status.retryAttempts)} retry attempts`,
 		`Delivery failures: ${String(status.deliveryFailures)}`,
 		`Lifecycle: ${String(status.branchResets)} resets, ${String(status.staleQueuedMessagesDiscarded)} stale queued messages discarded`,
 		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.mutedSuppressions)} muted-suppressed, ${status.mutesUnavailable === undefined ? `${String(status.mutedFindings)} muted findings` : "muted findings unavailable"}, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,
