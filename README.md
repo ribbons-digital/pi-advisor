@@ -81,6 +81,7 @@ On Pi 0.82, the reasoning prompt also shows the current Executor reasoning level
 The Pi 0.81 compatibility path omits that supplementary Executor text without changing configuration behavior.
 In the TUI, the model picker is focused immediately and fuzzy-searches provider, model ID, and display name as you type; RPC clients retain their standard selection dialog.
 It shows a summary and asks for confirmation before atomically saving `~/.pi/agent/WATCHDOG.yml`.
+If that path is a symlink, the save writes through to the target file and leaves the link in place.
 
 Then enable Advisor for the current session:
 
@@ -227,10 +228,12 @@ Provider usage or pricing can be missing or incomplete, so explicitly enabled to
 Advisor estimates its private context before each bounded update and asks Pi's public nested `AgentSession.compact()` API to compact when needed.
 If compaction fails or remains unsafe, Advisor clears only its private nested history and retries the same current bounded update once without replaying the full Executor branch.
 If that update still cannot fit fresh context, Advisor drops only that update, warns, and remains active for later updates.
-Reaching the hard per-update tool-call or turn limit skips only that review without retrying it, and automatic review continues with later eligible Executor updates.
+Reaching the hard per-update tool-call, turn, or review-attempt time limit skips only that review without retrying it, and automatic review continues with later eligible Executor updates.
+Nested review and nested compaction are bounded by `limits.maxReviewAttemptMs` and `limits.maxNestedCompactionMs`. Host compact and tree navigation signal Advisor abort and return immediately. Disable, shutdown, and the next review bound nested abort waits with `limits.maxLifecycleAbortMs` so those paths cannot hang on a provider that ignores abort.
 Accepted review advice retains its existing bounded delivery behavior, while provisional Memory suggestions from the rolled-back attempt remain discarded.
 `/advisor status` reports the cumulative governor-skipped review count and latest bounded outcome.
 Three consecutive ordinary updates that each exhaust their retry path pause Advisor with one warning that includes the final bounded, secret-redacted failure reason; handled per-update governor exhaustion clears rather than advances that streak.
+Three consecutive review attempts that each time out pause Advisor with one warning; the timeout streak is tracked separately from the ordinary failure streak and resets only after a successful review, so repeated timeouts fail closed instead of starting later reviews while earlier provider requests remain in flight.
 Branch, session, and confirmed configuration resynchronization may use one bounded branch snapshot, but an unsafe lifecycle snapshot degrades to the current bounded update instead of pausing Advisor.
 
 Pi Advisor writes bounded lifecycle state as Pi custom entries outside model context when required for correct compatible resume and delivery.

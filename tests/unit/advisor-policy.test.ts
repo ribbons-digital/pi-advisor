@@ -243,6 +243,9 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		contextReprimeFailures: 0,
 		sessionTokenSoftCap: "off",
 		sessionCostSoftCapUsd: "off",
+		maxReviewAttemptMs: 120_000,
+		maxNestedCompactionMs: 60_000,
+		maxLifecycleAbortMs: 2_000,
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, costUsd: 0 },
 		reviewRequests: 0,
 		reviewsCompleted: 0,
@@ -271,6 +274,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		memorySuggestionNextEligibleAt: 0,
 		redactions: 0,
 		consecutiveFailures: 0,
+		consecutiveReviewTimeouts: 0,
 		branchResets: 0,
 		staleQueuedMessagesDiscarded: 0,
 		warnings: 0,
@@ -339,6 +343,9 @@ describe("Slice 1 configuration and emission policy", () => {
 		config.limits.maxToolCallsPerUpdate = Number.MAX_SAFE_INTEGER;
 		config.limits.maxPendingTranscriptBytes = Number.MAX_SAFE_INTEGER;
 		config.limits.maxReprimeTokens = Number.MAX_SAFE_INTEGER;
+		config.limits.maxReviewAttemptMs = Number.MAX_SAFE_INTEGER;
+		config.limits.maxNestedCompactionMs = Number.MAX_SAFE_INTEGER;
+		config.limits.maxLifecycleAbortMs = Number.MAX_SAFE_INTEGER;
 		config.memorySuggestions.maxProposedMemoryCharacters = Number.MAX_SAFE_INTEGER;
 		config.memorySuggestions.maxProposedMemoryTokens = Number.MAX_SAFE_INTEGER;
 		const normalized = normalizeAdvisorConfig(config);
@@ -349,6 +356,9 @@ describe("Slice 1 configuration and emission policy", () => {
 			maxToolCallsPerUpdate: HARD_LIMITS.maxToolCallsPerUpdate,
 			maxPendingTranscriptBytes: HARD_LIMITS.maxPendingTranscriptBytes,
 			maxReprimeTokens: HARD_LIMITS.maxReprimeTokens,
+			maxReviewAttemptMs: HARD_LIMITS.maxReviewAttemptMs,
+			maxNestedCompactionMs: HARD_LIMITS.maxNestedCompactionMs,
+			maxLifecycleAbortMs: HARD_LIMITS.maxLifecycleAbortMs,
 		});
 		expect(normalized.memorySuggestions).toMatchObject({
 			maxProposedMemoryCharacters: HARD_LIMITS.maxProposedMemoryCharacters,
@@ -399,6 +409,9 @@ describe("Slice 1 configuration and emission policy", () => {
 		);
 		expect(output).toContain("Session tokens: 155 total");
 		expect(output).toContain("cap off");
+		expect(output).toContain(
+			"Timeouts: review 120000 ms, nested compaction 60000 ms, lifecycle abort 2000 ms",
+		);
 		expect(output).toContain("Reviewing: no");
 		expect(output).toContain("Reviews: 4 requests, 3 completed");
 		expect(output).toContain("0 superseded");

@@ -158,7 +158,31 @@ function isRuntimeNumber<T>(value: T): value is T & number {
 }
 
 export const MAX_ADVISOR_RETRIES_PER_UPDATE = 1;
+
+export const REVIEW_TIMEOUT_PAUSE_COUNT = 3;
 export const ADVISOR_RETRY_DELAY_MS = 250;
+export const ADVISOR_REVIEW_TIMEOUT_FAILURE = "Advisor review attempt timed out";
+export const ADVISOR_COMPACTION_TIMEOUT_FAILURE = "Advisor context compaction timed out";
+
+async function raceTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+): Promise<{ status: "completed"; value: T } | { status: "timeout" }> {
+	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+		return { status: "completed", value: await promise };
+	}
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise.then((value) => ({ status: "completed" as const, value })),
+			new Promise<{ status: "timeout" }>((resolve) => {
+				timer = setTimeout(() => resolve({ status: "timeout" }), timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+	}
+}
 export const MAX_ADVISOR_DUMP_BYTES = 16 * 1_024;
 export const ADVISOR_ARGUMENT_VALIDATION_FAILURE =
 	'The selected Advisor model returned "advise" arguments that did not match the internal schema. Run /advisor configure to select another model. Run /advisor on to retry after correcting configuration or after a transient model failure.';
@@ -381,7 +405,8 @@ export function estimateAdvisorContext(
 
 export type AdvisorGovernorOutcome =
 	| "Advisor tool-call limit reached"
-	| "Advisor turn limit reached";
+	| "Advisor turn limit reached"
+	| "Advisor review attempt timed out";
 
 export interface AdvisorRuntimeStatus {
 	enabled: boolean;
@@ -414,6 +439,9 @@ export interface AdvisorRuntimeStatus {
 	contextReprimeFailures: number;
 	sessionTokenSoftCap: AdvisorConfig["limits"]["sessionTokenSoftCap"];
 	sessionCostSoftCapUsd: AdvisorConfig["limits"]["sessionCostSoftCapUsd"];
+	maxReviewAttemptMs: number;
+	maxNestedCompactionMs: number;
+	maxLifecycleAbortMs: number;
 	usage: AdvisorUsageTotals;
 	reviewRequests: number;
 	reviewsCompleted: number;
@@ -447,6 +475,7 @@ export interface AdvisorRuntimeStatus {
 	memorySuggestionNextEligibleAt: number;
 	redactions: number;
 	consecutiveFailures: number;
+	consecutiveReviewTimeouts: number;
 	branchResets: number;
 	staleQueuedMessagesDiscarded: number;
 	warnings: number;
@@ -841,6 +870,9 @@ export function formatAdvisorDiagnosticsDump(
 		contextReprimeFailures: status.contextReprimeFailures,
 		sessionTokenSoftCap: status.sessionTokenSoftCap,
 		sessionCostSoftCapUsd: status.sessionCostSoftCapUsd,
+		maxReviewAttemptMs: status.maxReviewAttemptMs,
+		maxNestedCompactionMs: status.maxNestedCompactionMs,
+		maxLifecycleAbortMs: status.maxLifecycleAbortMs,
 		usage: status.usage,
 		reviewRequests: status.reviewRequests,
 		reviewsCompleted: status.reviewsCompleted,
@@ -867,6 +899,7 @@ export function formatAdvisorDiagnosticsDump(
 		memorySuggestionNextEligibleAt: status.memorySuggestionNextEligibleAt,
 		redactions: status.redactions,
 		consecutiveFailures: status.consecutiveFailures,
+		consecutiveReviewTimeouts: status.consecutiveReviewTimeouts,
 		branchResets: status.branchResets,
 		staleQueuedMessagesDiscarded: status.staleQueuedMessagesDiscarded,
 		warnings: status.warnings,
@@ -1039,6 +1072,8 @@ export class AdvisorRuntime {
 	private sessionUnsubscribe?: () => void;
 	private hostContext?: ExtensionContext;
 	private model?: Model<Api>;
+	private nestedModelRuntime?: ResolvedAdvisorModelRuntime["modelRuntime"];
+	private nestedAdviseSchemaMode?: AdviseSchemaMode;
 	private sessionId?: string;
 	private sessionInitialized = false;
 	private cursor: AdvisorCursor = { expectedIndex: 0 };
@@ -1048,6 +1083,7 @@ export class AdvisorRuntime {
 	private restoredRecoveryPending = false;
 	private cadenceTimer?: ReturnType<typeof setTimeout>;
 	private lifecycleResetEpoch?: number;
+	private nestedContextStale = false;
 	private meaningfulTurnCount = 0;
 	private lastReviewSubmittedTurn?: number;
 	private lastReviewSubmittedAt?: number;
@@ -1129,6 +1165,9 @@ export class AdvisorRuntime {
 			contextReprimeFailures: 0,
 			sessionTokenSoftCap: this.config.limits.sessionTokenSoftCap,
 			sessionCostSoftCapUsd: this.config.limits.sessionCostSoftCapUsd,
+			maxReviewAttemptMs: this.config.limits.maxReviewAttemptMs,
+			maxNestedCompactionMs: this.config.limits.maxNestedCompactionMs,
+			maxLifecycleAbortMs: this.config.limits.maxLifecycleAbortMs,
 			usage: emptyUsage(),
 			reviewRequests: 0,
 			reviewsCompleted: 0,
@@ -1160,6 +1199,7 @@ export class AdvisorRuntime {
 			memorySuggestionNextEligibleAt: 0,
 			redactions: 0,
 			consecutiveFailures: 0,
+			consecutiveReviewTimeouts: 0,
 			branchResets: 0,
 			staleQueuedMessagesDiscarded: 0,
 			warnings: 0,
@@ -1404,6 +1444,9 @@ export class AdvisorRuntime {
 		this.status.effort = this.config.effort;
 		this.status.sessionTokenSoftCap = this.config.limits.sessionTokenSoftCap;
 		this.status.sessionCostSoftCapUsd = this.config.limits.sessionCostSoftCapUsd;
+		this.status.maxReviewAttemptMs = this.config.limits.maxReviewAttemptMs;
+		this.status.maxNestedCompactionMs = this.config.limits.maxNestedCompactionMs;
+		this.status.maxLifecycleAbortMs = this.config.limits.maxLifecycleAbortMs;
 		if (this.config.model === undefined) delete this.status.model;
 		else this.status.model = this.config.model;
 		delete this.status.modelName;
@@ -1466,6 +1509,9 @@ export class AdvisorRuntime {
 		this.status.effort = this.config.effort;
 		this.status.sessionTokenSoftCap = this.config.limits.sessionTokenSoftCap;
 		this.status.sessionCostSoftCapUsd = this.config.limits.sessionCostSoftCapUsd;
+		this.status.maxReviewAttemptMs = this.config.limits.maxReviewAttemptMs;
+		this.status.maxNestedCompactionMs = this.config.limits.maxNestedCompactionMs;
+		this.status.maxLifecycleAbortMs = this.config.limits.maxLifecycleAbortMs;
 		this.status.transcriptPersistenceEnabled = this.config.persistence.transcript;
 		this.status.memorySuggestionsRemaining = Math.max(
 			0,
@@ -2053,6 +2099,7 @@ export class AdvisorRuntime {
 			this.status.paused = false;
 			delete this.status.pauseReason;
 			this.status.consecutiveFailures = 0;
+			this.status.consecutiveReviewTimeouts = 0;
 		}
 		if (this.status.paused) {
 			this.publishStatus();
@@ -2153,6 +2200,8 @@ export class AdvisorRuntime {
 				model.maxTokens > 0 ? model.maxTokens : this.config.context.reserveTokens || 1,
 			),
 		);
+		this.nestedModelRuntime = modelRuntime;
+		this.nestedAdviseSchemaMode = adviseSchemaMode;
 		const settingsManager = SettingsManager.inMemory({
 			compaction: {
 				enabled: false,
@@ -2161,7 +2210,9 @@ export class AdvisorRuntime {
 			},
 			retry: {
 				enabled: false,
-				provider: { maxRetries: 0 },
+				provider: {
+					maxRetries: 0,
+				},
 			},
 		});
 		const resourceLoader = new DefaultResourceLoader({
@@ -2675,7 +2726,7 @@ export class AdvisorRuntime {
 				!this.disposed
 			) {
 				await this.runUpdate(update);
-				if (this.activeReview !== undefined) {
+				if (this.activeReview !== undefined || this.session?.isStreaming === true) {
 					update = undefined;
 					break;
 				}
@@ -2771,6 +2822,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 	}
 
 	private rollbackNestedAttempt(session: AgentSession, messages: AgentMessage[]): void {
+		if (this.session !== session) return;
 		session.state.messages = messages;
 		this.extractStaleNestedQueue(session);
 	}
@@ -2850,13 +2902,34 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		const epoch = this.status.epoch;
 		let compactionFailure: string | undefined;
 		try {
-			await session.compact(
+			const compacting = session.compact(
 				"Preserve current task goals, explicit constraints, unresolved risks, key decisions, and planted requirements needed to review the next Executor update.",
 			);
+			const raced = await raceTimeout(compacting, this.config.limits.maxNestedCompactionMs);
+			if (raced.status === "timeout") {
+				session.abortCompaction();
+				await this.abortNestedWork();
+				const settled = await this.settleBackground(
+					compacting,
+					this.config.limits.maxLifecycleAbortMs,
+				);
+				if (!settled) {
+					void compacting.catch(() => undefined);
+					await this.replaceStuckNestedSession();
+				}
+				compactionFailure = ADVISOR_COMPACTION_TIMEOUT_FAILURE;
+			}
 		} catch (error) {
 			compactionFailure = `Advisor context compaction failed: ${boundedReason(error)}`;
 		}
-		if (epoch !== this.status.epoch || this.session !== session || this.disposed) return undefined;
+		if (epoch !== this.status.epoch || this.disposed) return undefined;
+		if (this.session !== session) {
+			const next = this.session;
+			if (next === undefined || !this.updateCanContinue(next)) return undefined;
+			this.status.compactionUsageUnavailable++;
+			this.status.compactionFailures++;
+			return { prompt: submittedPrompt, epoch: this.status.epoch, freshContext: true };
+		}
 		const branchAfterCompaction = this.hostContext?.sessionManager.getBranch();
 		if (branchAfterCompaction === undefined) return undefined;
 		if (!cursorMatches(branchAfterCompaction, branchWindow)) {
@@ -2934,9 +3007,14 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 	}
 
 	private async runUpdate(update: QueuedAdvisorUpdate): Promise<void> {
-		const session = this.session;
+		let session = this.session;
 		const ctx = this.hostContext;
 		if (session === undefined || ctx === undefined || this.model === undefined) return;
+		if (this.nestedContextStale) {
+			await this.prepareNestedSessionForReview();
+			session = this.session;
+			if (session === undefined || !this.updateCanContinue(session)) return;
+		}
 		if (this.activeReview !== undefined && this.activeReview.reviewId !== update.reviewId) {
 			const pending = this.pendingUpdate;
 			this.pendingUpdate =
@@ -3010,7 +3088,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		};
 
 		const maintenance = await this.maintainContextPolicy(session, submittedPrompt, update.window);
-		if (maintenance === undefined || !this.updateCanContinue(session)) return;
+		session = this.session;
+		if (session === undefined || maintenance === undefined || !this.updateCanContinue(session))
+			return;
 		if ("freshContextFailure" in maintenance) {
 			persistOutcome(
 				{ outcome: "failed", reason: maintenance.freshContextFailure },
@@ -3057,10 +3137,17 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			try {
 				this.status.reviewRequests++;
 				this.experimentUpdateText = update.text;
-				await session.prompt(promptForAttempt, {
+				const prompting = session.prompt(promptForAttempt, {
 					expandPromptTemplates: false,
 					source: "extension",
 				});
+				const raced = await raceTimeout(prompting, this.config.limits.maxReviewAttemptMs);
+				if (raced.status === "timeout") {
+					run.governorFailure = ADVISOR_REVIEW_TIMEOUT_FAILURE;
+					await this.abortNestedWork();
+					void prompting.catch(() => undefined);
+					if (session.isStreaming) await this.replaceStuckNestedSession();
+				}
 			} catch (error) {
 				thrownFailure = boundedReason(error);
 			} finally {
@@ -3152,6 +3239,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				}
 				this.status.reviewsCompleted++;
 				this.status.consecutiveFailures = 0;
+				this.status.consecutiveReviewTimeouts = 0;
 				this.status.notesSuppressed += this.collector.suppressedCalls;
 				this.status.memorySuggestionsPolicySuppressed += this.collector.memoryPolicySuppressedCalls;
 				this.status.memorySuggestionsLimitSuppressed += this.collector.memoryLimitSuppressedCalls;
@@ -3227,7 +3315,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 						{ outcome: "governor-skipped", reason: run.governorFailure },
 						run.governorFailure === "Advisor tool-call limit reached"
 							? "tool-call-limit"
-							: "turn-limit",
+							: run.governorFailure === ADVISOR_REVIEW_TIMEOUT_FAILURE
+								? "review-timeout"
+								: "turn-limit",
 					);
 				}
 				break;
@@ -3805,12 +3895,17 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.publishStatus();
 	}
 
-	async handleLifecycleHint(ctx: ExtensionContext): Promise<void> {
-		await this.resetForBranchMismatch(ctx.sessionManager.getBranch(), false);
+	handleLifecycleHint(ctx: ExtensionContext): void {
+		this.invalidateAdvisorLifecycleState();
 		this.lifecycleResetEpoch = this.status.epoch;
+		this.cursor = cursorAtTail(ctx.sessionManager.getBranch());
+		this.signalNestedAbort();
+		this.updateBacklogStatus();
+		this.persistState();
+		this.publishStatus();
 	}
 
-	async handleBranchChange(ctx: ExtensionContext): Promise<void> {
+	handleBranchChange(ctx: ExtensionContext): void {
 		const branch = ctx.sessionManager.getBranch();
 		if (this.lifecycleResetEpoch === this.status.epoch) {
 			delete this.lifecycleResetEpoch;
@@ -3820,7 +3915,13 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			this.publishStatus();
 			return;
 		}
-		await this.resetForBranchMismatch(branch);
+		this.invalidateAdvisorLifecycleState();
+		this.cursor = cursorAtTail(branch);
+		this.seedLifecycleReprime(branch, "lifecycle");
+		this.signalNestedAbort();
+		this.updateBacklogStatus();
+		this.persistState();
+		this.publishStatus();
 	}
 
 	private recordDeliveryFailure(cause: unknown): void {
@@ -3837,6 +3938,12 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.status.governorSkippedReviews++;
 		this.status.lastGovernorOutcome = outcome;
 		this.status.consecutiveFailures = 0;
+		if (outcome === ADVISOR_REVIEW_TIMEOUT_FAILURE) {
+			this.status.consecutiveReviewTimeouts++;
+			if (this.status.consecutiveReviewTimeouts >= REVIEW_TIMEOUT_PAUSE_COUNT) {
+				this.pause(`Three consecutive Advisor review attempts timed out. Last timeout: ${outcome}`);
+			}
+		}
 	}
 
 	private recordFailedUpdate(reason: string): void {
@@ -3887,10 +3994,36 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		}
 	}
 
-	private async resetForBranchMismatch(
-		branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>,
-		prepareReprime = true,
-	): Promise<void> {
+	private async settleBackground(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+		const ignored = promise.then(
+			() => undefined,
+			() => undefined,
+		);
+		if (timeoutMs <= 0) return false;
+		return (await raceTimeout(ignored, timeoutMs)).status === "completed";
+	}
+
+	private async abortNestedWork(timeoutMs = this.config.limits.maxLifecycleAbortMs): Promise<void> {
+		const session = this.session;
+		if (session === undefined) return;
+		await this.waitForNestedAbort(session, timeoutMs);
+	}
+
+	private async waitForNestedAbort(session: AgentSession, timeoutMs: number): Promise<void> {
+		session.abortCompaction();
+		if (!session.isStreaming) return;
+		const aborting = session.abort().then(
+			() => undefined,
+			() => undefined,
+		);
+		if (timeoutMs <= 0) {
+			void aborting;
+			return;
+		}
+		await raceTimeout(aborting, timeoutMs);
+	}
+
+	private invalidateAdvisorLifecycleState(): void {
 		this.clearAdviseExecutionMarkers();
 		this.status.epoch++;
 		this.status.branchResets++;
@@ -3914,21 +4047,77 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.status.restoredActiveDeliveriesPending = 0;
 		this.refreshDeferredAdviceStatus();
 		this.adviceDedupe.clear();
+		this.nestedContextStale = true;
+	}
+
+	private signalNestedAbort(): void {
 		const session = this.session;
-		if (session !== undefined) {
-			session.abortCompaction();
-			if (session.isStreaming) {
-				try {
-					await session.abort();
-				} catch {
-					// Disposal and invalidation remain authoritative.
-				}
-			}
-			this.extractStaleNestedQueue(session);
-			session.state.messages = [];
-			session.sessionManager.resetLeaf();
-			this.usageAnchorInvalidated = false;
+		if (session === undefined) {
+			this.nestedContextStale = false;
+			return;
 		}
+		session.abortCompaction();
+		if (session.isStreaming) {
+			void session.abort().then(
+				() => undefined,
+				() => undefined,
+			);
+			return;
+		}
+		this.extractStaleNestedQueue(session);
+		session.state.messages = [];
+		session.sessionManager.resetLeaf();
+		this.usageAnchorInvalidated = false;
+		this.nestedContextStale = false;
+	}
+
+	private async prepareNestedSessionForReview(): Promise<void> {
+		this.nestedContextStale = false;
+		const session = this.session;
+		if (session === undefined) return;
+		await this.abortNestedWork();
+		if (this.session !== session) return;
+		if (session.isStreaming) {
+			await this.replaceStuckNestedSession();
+			return;
+		}
+		this.extractStaleNestedQueue(session);
+		session.state.messages = [];
+		session.sessionManager.resetLeaf();
+		this.usageAnchorInvalidated = false;
+	}
+
+	private async replaceStuckNestedSession(): Promise<void> {
+		const ctx = this.hostContext;
+		const model = this.model;
+		const modelRuntime = this.nestedModelRuntime;
+		const adviseSchemaMode = this.nestedAdviseSchemaMode;
+		if (
+			ctx === undefined ||
+			model === undefined ||
+			modelRuntime === undefined ||
+			adviseSchemaMode === undefined
+		) {
+			await this.disposeNestedSession();
+			this.status.active = false;
+			this.status.inactiveReason =
+				"Advisor nested session could not be recovered after an abort timeout.";
+			return;
+		}
+		try {
+			await this.createNestedSession(ctx, model, modelRuntime, adviseSchemaMode);
+		} catch (error) {
+			this.status.active = false;
+			this.status.inactiveReason = `Advisor nested session could not be recovered after an abort timeout: ${boundedReason(error)}`;
+		}
+	}
+
+	private async resetForBranchMismatch(
+		branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>,
+		prepareReprime = true,
+	): Promise<void> {
+		this.invalidateAdvisorLifecycleState();
+		await this.prepareNestedSessionForReview();
 		this.cursor = cursorAtTail(branch);
 		if (prepareReprime) this.seedLifecycleReprime(branch, "lifecycle");
 		this.updateBacklogStatus();
@@ -3999,14 +4188,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		const session = this.session;
 		delete this.session;
 		if (session === undefined) return;
-		session.abortCompaction();
-		if (session.isStreaming) {
-			try {
-				await session.abort();
-			} catch {
-				// Dispose still releases all nested resources.
-			}
-		}
+		await this.waitForNestedAbort(session, this.config.limits.maxLifecycleAbortMs);
 		session.dispose();
 	}
 
@@ -4149,10 +4331,11 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Context re-prime: ${String(status.contextReprimesCompleted)} completed, ${String(status.contextReprimeFailures)} failed`,
 		`Session tokens: ${String(status.usage.total)} total (${String(status.usage.input)} input, ${String(status.usage.output)} output, ${String(status.usage.cacheRead)} cache read, ${String(status.usage.cacheWrite)} cache write), cap ${String(status.sessionTokenSoftCap)}`,
 		`Session cost: $${status.usage.costUsd.toFixed(4)}, cap ${String(status.sessionCostSoftCapUsd)}`,
+		`Timeouts: review ${String(status.maxReviewAttemptMs)} ms, nested compaction ${String(status.maxNestedCompactionMs)} ms, lifecycle abort ${String(status.maxLifecycleAbortMs)} ms`,
 		`Reviews: ${String(status.reviewRequests)} requests, ${String(status.reviewsCompleted)} completed, ${String(status.silentReviews)} silent, ${String(status.reviewsSuperseded)} superseded, ${String(status.failedReviews)} failed`,
 		`Review cadence: every ${String(status.effectiveMinTurnsBetweenReviews)} meaningful turn${status.effectiveMinTurnsBetweenReviews === 1 ? "" : "s"}`,
 		`Governor skips: ${String(status.governorSkippedReviews)}, latest ${status.lastGovernorOutcome ?? "none"}`,
-		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.retryAttempts)} retry attempts`,
+		`Failures: ${String(status.consecutiveFailures)} consecutive failed updates, ${String(status.consecutiveReviewTimeouts)} consecutive review timeouts, ${String(status.retryAttempts)} retry attempts`,
 		`Delivery failures: ${String(status.deliveryFailures)}`,
 		`Lifecycle: ${String(status.branchResets)} resets, ${String(status.staleQueuedMessagesDiscarded)} stale queued messages discarded`,
 		`Notes: ${String(status.notesDelivered)} delivered, ${String(status.activeNotesPending)} active pending, ${String(status.deferredNotesPending)} deferred (${String(status.restoredDeferredNotesPending)} restored), oldest deferred age ${String(status.oldestDeferredAdviceAgeMs)} ms, ${String(status.notesSuppressed)} suppressed, ${String(status.mutedSuppressions)} muted-suppressed, ${status.mutesUnavailable === undefined ? `${String(status.mutedFindings)} muted findings` : "muted findings unavailable"}, ${String(status.reviewFollowUpsTriggered)} automatic review follow-ups`,

@@ -53,6 +53,9 @@ export interface AdvisorLimitConfig {
 	deferredAdviceRetentionHours: number;
 	sessionTokenSoftCap: AdvisorSessionCap;
 	sessionCostSoftCapUsd: AdvisorSessionCap;
+	maxReviewAttemptMs: number;
+	maxNestedCompactionMs: number;
+	maxLifecycleAbortMs: number;
 }
 
 export interface MemorySuggestionConfig {
@@ -142,6 +145,9 @@ const CANONICAL_DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze({
 		deferredAdviceRetentionHours: 24,
 		sessionTokenSoftCap: "off",
 		sessionCostSoftCapUsd: "off",
+		maxReviewAttemptMs: 120_000,
+		maxNestedCompactionMs: 60_000,
+		maxLifecycleAbortMs: 2_000,
 	},
 	security: {
 		additionalProtectedPaths: [],
@@ -193,6 +199,9 @@ export const HARD_LIMITS = {
 	backOffTurnStep: 8,
 	maxMinTurnsBetweenReviews: 64,
 	reRaiseMinTurns: 64,
+	maxReviewAttemptMs: 600_000,
+	maxNestedCompactionMs: 300_000,
+	maxLifecycleAbortMs: 30_000,
 } as const;
 
 function finiteAtLeast(value: number, minimum: number, fallback: number): number {
@@ -335,6 +344,24 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 			sessionCostSoftCapUsd: positiveSessionCap(
 				merged.limits.sessionCostSoftCapUsd,
 				defaults.limits.sessionCostSoftCapUsd,
+			),
+			maxReviewAttemptMs: finiteClamped(
+				merged.limits.maxReviewAttemptMs,
+				1,
+				HARD_LIMITS.maxReviewAttemptMs,
+				defaults.limits.maxReviewAttemptMs,
+			),
+			maxNestedCompactionMs: finiteClamped(
+				merged.limits.maxNestedCompactionMs,
+				1,
+				HARD_LIMITS.maxNestedCompactionMs,
+				defaults.limits.maxNestedCompactionMs,
+			),
+			maxLifecycleAbortMs: finiteClamped(
+				merged.limits.maxLifecycleAbortMs,
+				0,
+				HARD_LIMITS.maxLifecycleAbortMs,
+				defaults.limits.maxLifecycleAbortMs,
 			),
 		},
 		security: {

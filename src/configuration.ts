@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, mkdir, open, readlink, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { Compile } from "typebox/compile";
 import { Type } from "typebox";
@@ -64,6 +64,15 @@ const LimitsSchema = Type.Object(
 		),
 		sessionCostSoftCapUsd: Type.Optional(
 			Type.Union([Type.Literal("off"), Type.Number({ exclusiveMinimum: 0 })]),
+		),
+		maxReviewAttemptMs: Type.Optional(
+			Type.Number({ minimum: 1, maximum: HARD_LIMITS.maxReviewAttemptMs }),
+		),
+		maxNestedCompactionMs: Type.Optional(
+			Type.Number({ minimum: 1, maximum: HARD_LIMITS.maxNestedCompactionMs }),
+		),
+		maxLifecycleAbortMs: Type.Optional(
+			Type.Number({ minimum: 0, maximum: HARD_LIMITS.maxLifecycleAbortMs }),
 		),
 	},
 	{ additionalProperties: false },
@@ -581,6 +590,9 @@ const PROJECT_LOWER_LIMIT_KEYS = [
 	"maxPendingTranscriptBytes",
 	"maxReprimeTokens",
 	"deferredAdviceRetentionHours",
+	"maxReviewAttemptMs",
+	"maxNestedCompactionMs",
+	"maxLifecycleAbortMs",
 ] as const;
 
 function mergeProjectReviewConfiguration(
@@ -925,13 +937,66 @@ export function serializeUserConfiguration(
 	return serialized;
 }
 
+const MAX_ATOMIC_WRITE_SYMLINK_HOPS = 32;
+
+export const ATOMIC_WRITE_SYMLINK_CYCLE_ERROR =
+	"Refusing to save configuration: the WATCHDOG.yml symlink chain contains a cycle.";
+export const ATOMIC_WRITE_SYMLINK_HOPS_ERROR =
+	"Refusing to save configuration: the WATCHDOG.yml symlink chain exceeds the hop limit.";
+
+/**
+ * Resolve the real file an atomic save should replace.
+ * `rename()` onto a symlink path replaces the link itself, so User WATCHDOG.yml
+ * that is a symlink (for example into a dotfiles repo) must write through to the
+ * final target, including dangling or nested links.
+ *
+ * Fails closed instead of writing: a cyclic chain or a chain longer than
+ * MAX_ATOMIC_WRITE_SYMLINK_HOPS throws rather than returning an intermediate
+ * symlink path, because renaming over that path would silently replace the link
+ * and leave the intended target unchanged.
+ */
+export async function resolveAtomicWriteDestination(path: string): Promise<string> {
+	let current = path;
+	const seen = new Set<string>();
+	for (let hop = 0; hop < MAX_ATOMIC_WRITE_SYMLINK_HOPS; hop++) {
+		if (seen.has(current)) throw new Error(ATOMIC_WRITE_SYMLINK_CYCLE_ERROR);
+		seen.add(current);
+		let stats;
+		try {
+			stats = await lstat(current);
+		} catch (error) {
+			// SAFETY: Node filesystem failures expose code through ErrnoException.
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return current;
+			throw error;
+		}
+		if (!stats.isSymbolicLink()) return current;
+		const raw = await readlink(current);
+		current = isAbsolute(raw) ? raw : resolve(dirname(current), raw);
+	}
+	// After the last allowed hop the destination may still be a symlink when the
+	// chain exceeds the hop limit. Confirm it terminates at a regular target;
+	// otherwise fail closed rather than renaming over an intermediate link.
+	let stats;
+	try {
+		stats = await lstat(current);
+	} catch (error) {
+		// SAFETY: Node filesystem failures expose code through ErrnoException.
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return current;
+		throw error;
+	}
+	if (stats.isSymbolicLink()) throw new Error(ATOMIC_WRITE_SYMLINK_HOPS_ERROR);
+	return current;
+}
+
 export async function saveUserConfigurationAtomic(
 	path: string,
 	config: AdvisorConfig,
 	unknownTopLevel?: Record<string, unknown>,
 ): Promise<void> {
+	const destination = await resolveAtomicWriteDestination(path);
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	const temporary = join(dirname(path), `.${WATCHDOG_YAML_NAME}.${randomUUID()}.tmp`);
+	await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+	const temporary = join(dirname(destination), `.${WATCHDOG_YAML_NAME}.${randomUUID()}.tmp`);
 	try {
 		await writeFile(temporary, serializeUserConfiguration(config, unknownTopLevel), {
 			encoding: "utf8",
@@ -943,7 +1008,7 @@ export async function saveUserConfigurationAtomic(
 		} finally {
 			await handle.close();
 		}
-		await rename(temporary, path);
+		await rename(temporary, destination);
 	} catch (error) {
 		await rm(temporary, { force: true });
 		throw error;

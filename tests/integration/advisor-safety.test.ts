@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	ADVISOR_ARGUMENT_VALIDATION_FAILURE,
 	ADVISOR_INTERNAL_EXECUTION_FAILURE,
+	ADVISOR_REVIEW_TIMEOUT_FAILURE,
 	ADVISOR_LATE_ENTRY_TYPE,
 	adviceDedupeKey,
 	createPiAdvisorExtension,
@@ -467,9 +468,8 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			if (hostContext === undefined) throw new Error("Expected Advisor host context");
 
 			harness.session.clearQueue();
-			const branchChange = activeRuntime.handleBranchChange(hostContext);
+			activeRuntime.handleBranchChange(hostContext);
 			executorBarrier.release();
-			await branchChange;
 			await activeTurn;
 
 			expect(activeRuntime.getStatus()).toMatchObject({
@@ -1293,6 +1293,149 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
+	it("pauses after three consecutive review timeouts, warns once, and resumes only after a successful review", async () => {
+		const timeoutBarriers: (() => void)[] = [];
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer 1" }] },
+			{ content: [{ type: "text", text: "answer 2" }] },
+			{ content: [{ type: "text", text: "answer 3" }] },
+			{ content: [{ type: "text", text: "answer 4" }] },
+			{ content: [{ type: "text", text: "answer 5" }] },
+			{ content: [{ type: "text", text: "answer 6" }] },
+			{ content: [{ type: "text", text: "answer 7" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{ waitFor: barrierPromise(), content: [] },
+			{ waitFor: barrierPromise(), content: [] },
+			{ waitFor: barrierPromise(), content: [] },
+			{ content: [] },
+		]);
+		function barrierPromise(): Promise<void> {
+			return new Promise((resolve) => timeoutBarriers.push(resolve));
+		}
+		const warnings: string[] = [];
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxReviewAttemptMs = 50;
+					}),
+					(value) => (runtime = value),
+					(warning) => warnings.push(warning),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("first timeout turn");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 1);
+			await harness.session.prompt("second timeout turn");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 2);
+			expect(runtime?.getStatus()).toMatchObject({
+				paused: false,
+				governorSkippedReviews: 2,
+				warnings: 0,
+			});
+
+			await harness.session.prompt("third timeout turn");
+			await waitFor(() => runtime?.getStatus().paused === true);
+			expect(runtime?.getStatus()).toMatchObject({
+				consecutiveReviewTimeouts: 3,
+				pauseReason:
+					"Three consecutive Advisor review attempts timed out. Last timeout: Advisor review attempt timed out",
+				governorSkippedReviews: 3,
+				warnings: 1,
+			});
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain("Three consecutive Advisor review attempts timed out");
+			expect(warnings[0]).toContain("Automatic Advisor review is paused");
+
+			// The pause is a one-shot warning; subsequent eligible updates stay paused without new warnings.
+			await harness.session.prompt("turn after pause");
+			expect(advisor.requests).toHaveLength(3);
+			expect(warnings).toHaveLength(1);
+			expect(runtime?.getStatus()).toMatchObject({
+				paused: true,
+				consecutiveReviewTimeouts: 3,
+			});
+
+			// Re-activating with budget reset clears the timeout streak.
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const hostContext = runtimeInternals(runtime).hostContext;
+			if (hostContext === undefined) throw new Error("Expected Advisor host context");
+			await runtime.enable(hostContext, "session-command", true);
+			expect(runtime.getStatus()).toMatchObject({
+				paused: false,
+				consecutiveReviewTimeouts: 0,
+			});
+		} finally {
+			for (const release of timeoutBarriers) release();
+			await harness.dispose();
+		}
+	});
+
+	it("resets the review-timeout streak after a successful review", async () => {
+		const timeoutBarriers: (() => void)[] = [];
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer 1" }] },
+			{ content: [{ type: "text", text: "answer 2" }] },
+			{ content: [{ type: "text", text: "answer 3" }] },
+			{ content: [{ type: "text", text: "answer 4" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{ waitFor: barrierPromise(), content: [] },
+			{ waitFor: barrierPromise(), content: [] },
+			{ content: [] },
+			{ waitFor: barrierPromise(), content: [] },
+		]);
+		function barrierPromise(): Promise<void> {
+			return new Promise((resolve) => timeoutBarriers.push(resolve));
+		}
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxReviewAttemptMs = 50;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("timeout one");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 1);
+			await harness.session.prompt("timeout two");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 2);
+			expect(runtime?.getStatus().paused).toBe(false);
+
+			// A successful review resets the streak before it reaches the pause threshold.
+			await harness.session.prompt("successful review turn");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) >= 1);
+			expect(runtime?.getStatus()).toMatchObject({
+				consecutiveReviewTimeouts: 0,
+				paused: false,
+				governorSkippedReviews: 2,
+			});
+
+			// A later isolated timeout restarts the streak at one and stays a handled skip, not a pause.
+			await harness.session.prompt("timeout three");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 1);
+			expect(runtime?.getStatus().paused).toBe(false);
+		} finally {
+			for (const release of timeoutBarriers) release();
+			await harness.dispose();
+		}
+	});
+
 	it("pauses after three consecutive failed updates and warns once", async () => {
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "answer 1" }] },
@@ -1864,6 +2007,55 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expect(warnings).toHaveLength(2);
 			expect(advisor.requests).toHaveLength(0);
 		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("skips a review attempt that exceeds maxReviewAttemptMs", async () => {
+		const barrier = createBarrier();
+		const abortHang = createBarrier();
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "first answer" }] },
+			{ content: [{ type: "text", text: "second answer" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{
+				...acceptedAdvice("This review must time out."),
+				waitFor: barrier.promise,
+				waitAfterAbort: abortHang.promise,
+			},
+			{ content: [] },
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxReviewAttemptMs = 50;
+						config.limits.maxLifecycleAbortMs = 50;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("start a review that will time out");
+			await waitFor(() => advisor.activeRequests === 1);
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 1);
+			expect(runtime?.getStatus()).toMatchObject({
+				active: true,
+				paused: false,
+				lastGovernorOutcome: ADVISOR_REVIEW_TIMEOUT_FAILURE,
+			});
+			await harness.session.prompt("continue after timed-out review");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) >= 1);
+		} finally {
+			barrier.release();
+			abortHang.release();
 			await harness.dispose();
 		}
 	});
