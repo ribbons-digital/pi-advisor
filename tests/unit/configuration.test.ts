@@ -978,6 +978,30 @@ describe("WATCHDOG configuration", () => {
 		expect(reloaded.userConfig.defaultEnabled).toBe(true);
 	});
 
+	it("omits unknown User fields that cannot be safely preserved", async () => {
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			[
+				"version: 1",
+				"futureKept: [safe, 2]",
+				"futureSet: !!set",
+				"  unsafe:",
+				"futureCycle: &futureCycle",
+				"  self: *futureCycle",
+			].join("\n"),
+		);
+		const loaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(loaded.userUnknownTopLevel).toEqual({ futureKept: ["safe", 2] });
+		expect(
+			loaded.warnings.filter(({ message }) => message.includes("could not be safely preserved")),
+		).toHaveLength(2);
+		const serialized = serializeUserConfiguration(loaded.userConfig, loaded.userUnknownTopLevel);
+		expect(serialized).toContain("futureKept:");
+		expect(serialized).not.toContain("futureSet:");
+		expect(serialized).not.toContain("futureCycle:");
+	});
+
 	it("drops unknown top-level User fields that exceed the preservation byte limit", async () => {
 		const { agentDir, cwd } = await fixture();
 		await writeFile(

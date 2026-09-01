@@ -233,7 +233,7 @@ Nested review and nested compaction are bounded by `limits.maxReviewAttemptMs` a
 Accepted review advice retains its existing bounded delivery behavior, while provisional Memory suggestions from the rolled-back attempt remain discarded.
 `/advisor status` reports the cumulative governor-skipped review count and latest bounded outcome.
 Three consecutive ordinary updates that each exhaust their retry path pause Advisor with one warning that includes the final bounded, secret-redacted failure reason; handled per-update governor exhaustion clears rather than advances that streak.
-Three consecutive review attempts that each time out pause Advisor with one warning; the timeout streak is tracked separately from the ordinary failure streak and resets only after a successful review, so repeated timeouts fail closed instead of starting later reviews while earlier provider requests remain in flight.
+Three consecutive review attempts that each time out pause Advisor with one warning; the timeout streak is tracked separately from the ordinary failure streak and resets after a successful review or an explicit budget reset, so repeated timeouts fail closed instead of starting later reviews while earlier provider requests remain in flight.
 Branch, session, and confirmed configuration resynchronization may use one bounded branch snapshot, but an unsafe lifecycle snapshot degrades to the current bounded update instead of pausing Advisor.
 
 Pi Advisor writes bounded lifecycle state as Pi custom entries outside model context when required for correct compatible resume and delivery.

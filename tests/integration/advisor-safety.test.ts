@@ -1293,7 +1293,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
-	it("pauses after three consecutive review timeouts, warns once, and resumes only after a successful review", async () => {
+	it("pauses after three consecutive review timeouts, warns once, and clears the streak on budget reset", async () => {
 		const timeoutBarriers: (() => void)[] = [];
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "answer 1" }] },
