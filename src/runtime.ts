@@ -2865,6 +2865,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.status.contextReprimeFailures++;
 		this.status.failedReviews++;
 		this.status.lastFailure = reason;
+		// A dropped update is a terminal non-timeout outcome, so it breaks any pending
+		// review-timeout streak just like an ordinary recorded failure.
+		this.status.consecutiveReviewTimeouts = 0;
 		this.warn(
 			"Advisor update could not fit fresh private context and was dropped. Advisor remains active for later updates.",
 		);
@@ -3233,6 +3236,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					this.rollbackNestedAttempt(session, messagesBeforeAttempt);
 					const reason = boundedReason(error);
 					this.recordAttemptFailure(reason);
+					// The attempt itself succeeded (no governor outcome), so a delivery failure is a
+					// terminal non-timeout outcome that breaks any pending review-timeout streak.
+					this.status.consecutiveReviewTimeouts = 0;
 					persistOutcome({ outcome: "failed", reason }, "delivery-failure");
 					abandonedFailure = reason;
 					break;
@@ -3327,6 +3333,11 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				thrownFailure !== undefined ||
 				(run.toolFailure === undefined && run.providerFailure !== undefined);
 			if (!retryable || attempt >= MAX_ADVISOR_RETRIES_PER_UPDATE) {
+				// No governor outcome reaches this branch (the governor branch breaks above), so a
+				// terminal non-timeout failure breaks any pending review-timeout streak. The reset
+				// intentionally lives inside this terminal branch: a retryable failure that retries
+				// is not terminal, so it must not erase an adjacent timeout before the retry runs.
+				this.status.consecutiveReviewTimeouts = 0;
 				persistOutcome({ outcome: "failed", reason: failure }, run.stopReason);
 				abandonedFailure = failure;
 				break;
@@ -3943,6 +3954,11 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			if (this.status.consecutiveReviewTimeouts >= REVIEW_TIMEOUT_PAUSE_COUNT) {
 				this.pause(`Three consecutive Advisor review attempts timed out. Last timeout: ${outcome}`);
 			}
+		} else {
+			// A handled turn-limit or tool-call-limit governor skip is not a timeout, so it must
+			// reset the timeout streak: timeout, turn-limit, timeout, timeout is only two adjacent
+			// timeouts, not three, and must not pause.
+			this.status.consecutiveReviewTimeouts = 0;
 		}
 	}
 
