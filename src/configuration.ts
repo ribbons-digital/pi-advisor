@@ -17,7 +17,7 @@ import {
 	type ReadOnlyToolName,
 } from "./config.js";
 import { redactSecrets, truncateUtf8Bytes } from "./redaction.js";
-import { isRecordValue } from "./value-guards.js";
+import { isBooleanValue, isNumberValue, isRecordValue, isStringValue } from "./value-guards.js";
 
 export const WATCHDOG_YAML_NAME = "WATCHDOG.yml";
 export const WATCHDOG_MARKDOWN_NAME = "WATCHDOG.md";
@@ -276,13 +276,52 @@ export interface ConfigurationWarning {
 	message: string;
 }
 
+export interface PreservedYamlMapping {
+	[key: string]: PreservedYamlValue;
+}
+
+export type PreservedYamlValue =
+	| null
+	| boolean
+	| number
+	| string
+	| PreservedYamlValue[]
+	| PreservedYamlMapping;
+
+export type PreservedUnknownConfig = PreservedYamlMapping;
+
 export interface LoadedAdvisorConfiguration {
 	userConfig: AdvisorConfig;
 	effectiveConfig: AdvisorConfig;
 	projectInstructions: string;
 	warnings: ConfigurationWarning[];
 	paths: ReturnType<typeof advisorConfigurationPaths>;
-	userUnknownTopLevel?: Record<string, unknown>;
+	userUnknownTopLevel?: PreservedUnknownConfig;
+}
+
+function isPreservedYamlValue<T>(
+	value: T,
+	ancestors: Set<PreservedYamlValue[] | PreservedYamlMapping> = new Set<
+		PreservedYamlValue[] | PreservedYamlMapping
+	>(),
+): value is T & PreservedYamlValue {
+	if (value === null || isStringValue(value) || isNumberValue(value) || isBooleanValue(value)) {
+		return true;
+	}
+	if (Array.isArray(value)) {
+		if (ancestors.has(value)) return false;
+		ancestors.add(value);
+		const valid = value.every((item) => isPreservedYamlValue(item, ancestors));
+		ancestors.delete(value);
+		return valid;
+	}
+	if (!isRecordValue<PreservedYamlMapping, T>(value)) return false;
+	if (Object.prototype.toString.call(value) !== "[object Object]") return false;
+	if (ancestors.has(value)) return false;
+	ancestors.add(value);
+	const valid = Object.values(value).every((item) => isPreservedYamlValue(item, ancestors));
+	ancestors.delete(value);
+	return valid;
 }
 
 export function advisorConfigurationPaths(agentDir: string, cwd: string) {
@@ -497,7 +536,7 @@ function parseYamlDocument(
 	source: "user" | "project",
 	path: string,
 	warnings: ConfigurationWarning[],
-): { known: ValidatedUserDocument; unknownTopLevel: Record<string, unknown> } | undefined {
+): { known: ValidatedUserDocument; unknownTopLevel: PreservedUnknownConfig } | undefined {
 	if (Buffer.byteLength(text, "utf8") > MAX_WATCHDOG_YAML_BYTES) {
 		warnings.push({ source, path, message: `${path} exceeds the 1 MiB configuration limit.` });
 		return undefined;
@@ -528,9 +567,23 @@ function parseYamlDocument(
 		return undefined;
 	}
 	const topKeys = source === "user" ? USER_KEYS : PROJECT_KEYS;
-	const unknownTopLevel = Object.fromEntries(
-		Object.entries(parsed).filter(([key]) => !topKeys.has(key)),
-	);
+	const preservedEntries: [string, PreservedYamlValue][] = [];
+	const parsedEntries: [string, unknown][] = Object.entries(parsed);
+	for (const [key, value] of parsedEntries) {
+		if (topKeys.has(key)) continue;
+		if (isPreservedYamlValue(value)) {
+			preservedEntries.push([key, value]);
+			continue;
+		}
+		if (source === "user") {
+			warnings.push({
+				source,
+				path: key,
+				message: `Unknown User field ${key} contained a value that could not be safely preserved and will be omitted on the next save.`,
+			});
+		}
+	}
+	const unknownTopLevel = Object.fromEntries(preservedEntries);
 	// SAFETY: validator.Check(known) accepted only schema-valid user or project fields.
 	return { known: known as ValidatedUserDocument, unknownTopLevel };
 }
@@ -822,7 +875,7 @@ export async function loadAdvisorConfiguration(options: {
 		structuredClone(options.fallbackUserConfig ?? DEFAULT_ADVISOR_CONFIG),
 	);
 	let userConfig = base;
-	let userUnknownTopLevel: Record<string, unknown> | undefined;
+	let userUnknownTopLevel: PreservedUnknownConfig | undefined;
 	try {
 		const text = await readBounded(paths.userYaml, MAX_WATCHDOG_YAML_BYTES + 1);
 		if (text !== undefined) {
@@ -918,11 +971,11 @@ export async function loadAdvisorConfiguration(options: {
 
 export function serializeUserConfiguration(
 	config: AdvisorConfig,
-	unknownTopLevel?: Record<string, unknown>,
+	unknownTopLevel?: PreservedUnknownConfig,
 ): string {
 	const normalized = normalizeAdvisorConfig(structuredClone(config));
 	const merged = {
-		...(unknownTopLevel ?? {}),
+		...unknownTopLevel,
 		...normalized,
 	};
 	const serialized = stringify(merged, { lineWidth: 0 });
@@ -991,7 +1044,7 @@ export async function resolveAtomicWriteDestination(path: string): Promise<strin
 export async function saveUserConfigurationAtomic(
 	path: string,
 	config: AdvisorConfig,
-	unknownTopLevel?: Record<string, unknown>,
+	unknownTopLevel?: PreservedUnknownConfig,
 ): Promise<void> {
 	const destination = await resolveAtomicWriteDestination(path);
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });

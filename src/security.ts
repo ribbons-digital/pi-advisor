@@ -267,7 +267,7 @@ function createReadTool(cwd: string, policy: ProtectedPathPolicy) {
 		async execute(id, params, signal, onUpdate, ctx) {
 			if (!(await policy.allows(params.path))) return blockedResult();
 			const result = await base.execute(id, params, signal, onUpdate, ctx);
-			return { ...result, details: { blocked: false, ...(result.details ?? {}) } };
+			return { ...result, details: { blocked: false, ...result.details } };
 		},
 	});
 }
