@@ -189,6 +189,14 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expectedConsecutiveFailures: 1,
 			expectedGovernorSkips: 1,
 		},
+		{
+			label: "timeout-governed review",
+			governorOutcome: "Advisor review attempt timed out" as const,
+			expectedFailedReviews: 1,
+			expectedConsecutiveFailures: 1,
+			expectedGovernorSkips: 1,
+			expectedTimeoutStreak: 1,
+		},
 	])(
 		"processes the pending update in order after a thrown active delivery for a $label",
 		async ({
@@ -196,6 +204,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			expectedFailedReviews,
 			expectedConsecutiveFailures,
 			expectedGovernorSkips,
+			expectedTimeoutStreak,
 		}) => {
 			const executorBarrier = createBarrier();
 			const adviseStarted = createBarrier();
@@ -285,6 +294,11 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 					expect(failedDeliveryStatus.lastFailure).toBe("scripted active delivery failure");
 					if (governorOutcome !== undefined) {
 						expect(failedDeliveryStatus.lastGovernorOutcome).toBe(governorOutcome);
+					}
+					// A delivery failure after a timeout-governed attempt must not erase the timeout from
+					// the streak; only genuinely non-timeout outcomes reset it.
+					if (expectedTimeoutStreak !== undefined) {
+						expect(failedDeliveryStatus.consecutiveReviewTimeouts).toBe(expectedTimeoutStreak);
 					}
 					expect(sendMessage).toHaveBeenCalledTimes(1);
 					expect(JSON.stringify(advisor.requests[0]?.context)).not.toContain(
@@ -1430,6 +1444,147 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await harness.session.prompt("timeout three");
 			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 1);
 			expect(runtime?.getStatus().paused).toBe(false);
+		} finally {
+			for (const release of timeoutBarriers) release();
+			await harness.dispose();
+		}
+	});
+
+	it("clears the review-timeout streak when a non-timeout governor skip intervenes", async () => {
+		const timeoutBarriers: (() => void)[] = [];
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer 1" }] },
+			{ content: [{ type: "text", text: "answer 2" }] },
+			{ content: [{ type: "text", text: "answer 3" }] },
+			{ content: [{ type: "text", text: "answer 4" }] },
+			{ content: [{ type: "text", text: "answer 5" }] },
+		]);
+		const governedList = (id: string) => ({
+			content: [{ type: "toolCall" as const, id, name: "ls", arguments: { path: "." } }],
+			stopReason: "toolUse" as const,
+		});
+		const advisor = createAdvisorProvider([
+			{ waitFor: barrierPromise(), content: [] },
+			governedList("ls-between-timeouts"),
+			{ waitFor: barrierPromise(), content: [] },
+			{ waitFor: barrierPromise(), content: [] },
+		]);
+		function barrierPromise(): Promise<void> {
+			return new Promise((resolve) => timeoutBarriers.push(resolve));
+		}
+		const warnings: string[] = [];
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxReviewAttemptMs = 50;
+						config.limits.maxAdvisorTurnsPerUpdate = 1;
+					}),
+					(value) => (runtime = value),
+					(warning) => warnings.push(warning),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("timeout one");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 1);
+
+			// A handled turn-limit governor skip is a non-timeout outcome and must break the streak.
+			await harness.session.prompt("turn-governed skip");
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 2);
+			expect(runtime?.getStatus()).toMatchObject({
+				consecutiveReviewTimeouts: 0,
+				paused: false,
+				lastGovernorOutcome: "Advisor turn limit reached",
+			});
+
+			// Two adjacent timeouts after the skip restart the streak at one then two.
+			await harness.session.prompt("timeout two");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 1);
+			await harness.session.prompt("timeout three");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 2);
+
+			// Three timeouts with an intervening non-timeout skip are only two adjacent timeouts:
+			// they must remain a handled skip, not trigger the pause.
+			expect(runtime?.getStatus()).toMatchObject({
+				paused: false,
+				governorSkippedReviews: 4,
+				consecutiveReviewTimeouts: 2,
+				warnings: 0,
+			});
+			expect(warnings).toHaveLength(0);
+		} finally {
+			for (const release of timeoutBarriers) release();
+			await harness.dispose();
+		}
+	});
+
+	it("keeps the timeout streak across a retried provider failure so three adjacent timeouts still pause", async () => {
+		const timeoutBarriers: (() => void)[] = [];
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer 1" }] },
+			{ content: [{ type: "text", text: "answer 2" }] },
+			{ content: [{ type: "text", text: "answer 3" }] },
+			{ content: [{ type: "text", text: "answer 4" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			{ waitFor: barrierPromise(), content: [] },
+			{ errorMessage: "transient provider failure" },
+			{ waitFor: barrierPromise(), content: [] },
+			{ waitFor: barrierPromise(), content: [] },
+		]);
+		function barrierPromise(): Promise<void> {
+			return new Promise((resolve) => timeoutBarriers.push(resolve));
+		}
+		const warnings: string[] = [];
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxReviewAttemptMs = 50;
+					}),
+					(value) => (runtime = value),
+					(warning) => warnings.push(warning),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("timeout one");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 1);
+
+			// A retryable provider failure retries without erasing the timeout streak; the retry
+			// then times out, so the streak advances to two.
+			await harness.session.prompt("retry then timeout");
+			await waitFor(() => runtime?.getStatus().consecutiveReviewTimeouts === 2);
+			expect(runtime?.getStatus()).toMatchObject({
+				consecutiveReviewTimeouts: 2,
+				paused: false,
+				failedReviews: 1,
+				retryAttempts: 1,
+			});
+
+			// The third adjacent timeout reaches the pause threshold.
+			await harness.session.prompt("third timeout");
+			await waitFor(() => runtime?.getStatus().paused === true);
+			expect(runtime?.getStatus()).toMatchObject({
+				consecutiveReviewTimeouts: 3,
+				pauseReason:
+					"Three consecutive Advisor review attempts timed out. Last timeout: Advisor review attempt timed out",
+				governorSkippedReviews: 3,
+				warnings: 1,
+			});
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain("Three consecutive Advisor review attempts timed out");
 		} finally {
 			for (const release of timeoutBarriers) release();
 			await harness.dispose();
