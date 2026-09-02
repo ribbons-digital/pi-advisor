@@ -31,6 +31,13 @@ export interface RenderedAdvisorDelta {
 	redactions: number;
 	entryCount: number;
 	truncated: boolean;
+	/**
+	 * Number of session entries whose serialized content survived into the
+	 * bounded window (the newest-first retained tail). Lets callers observe
+	 * how much Executor history a render setting retains without duplicating
+	 * the budgeting logic.
+	 */
+	retainedEntryCount: number;
 }
 
 export function cursorAtTail(branch: SessionEntry[]): AdvisorCursor {
@@ -261,7 +268,7 @@ function addTailTruncationMarker(text: string, maximumBytes: number, marker: str
 }
 
 function renderBoundedEntries(
-	entries: SessionEntry[],
+	entries: readonly SessionEntry[],
 	maximumTokens: number,
 	truncationMarker: string,
 	includeReasoning = true,
@@ -273,6 +280,7 @@ function renderBoundedEntries(
 	let hasRetainedEntry = false;
 	let overallTruncated = false;
 	let toolResultTruncated = false;
+	let retainedEntryCount = 0;
 
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
@@ -300,6 +308,7 @@ function renderBoundedEntries(
 			retained = candidate;
 		}
 		hasRetainedEntry = true;
+		retainedEntryCount++;
 	}
 
 	return {
@@ -309,6 +318,7 @@ function renderBoundedEntries(
 		redactions,
 		entryCount: entries.length,
 		truncated: overallTruncated || toolResultTruncated,
+		retainedEntryCount,
 	};
 }
 
@@ -455,19 +465,41 @@ export function successfulMemoryToolTexts(
 	return new Set(newestFirst.reverse());
 }
 
+export interface RenderAdvisorDeltaOptions {
+	/**
+	 * Include Executor reasoning ("thinking") blocks in the rendered window.
+	 * Defaults to true (production behavior). When false, the freed budget
+	 * admits more Executor history under the same token ceiling; this is the
+	 * no-reasoning experience behind the `PI_ADVISOR_NO_REASONING` flag.
+	 */
+	includeReasoning?: boolean;
+}
+
 export function renderAdvisorDelta(
-	entries: SessionEntry[],
+	entries: readonly SessionEntry[],
 	maxUpdateTokens: number,
+	options: RenderAdvisorDeltaOptions = {},
 ): RenderedAdvisorDelta {
-	return renderBoundedEntries(entries, maxUpdateTokens, UPDATE_TRUNCATION_MARKER);
+	return renderBoundedEntries(
+		entries,
+		maxUpdateTokens,
+		UPDATE_TRUNCATION_MARKER,
+		options.includeReasoning ?? true,
+	);
 }
 
 /**
  * Serialize a redacted, bounded current-branch snapshot for lifecycle and configuration Re-prime.
  */
 export function renderAdvisorReprimeSnapshot(
-	entries: SessionEntry[],
+	entries: readonly SessionEntry[],
 	maxReprimeTokens: number,
+	options: RenderAdvisorDeltaOptions = {},
 ): RenderedAdvisorDelta {
-	return renderBoundedEntries(entries, maxReprimeTokens, REPRIME_TRUNCATION_MARKER);
+	return renderBoundedEntries(
+		entries,
+		maxReprimeTokens,
+		REPRIME_TRUNCATION_MARKER,
+		options.includeReasoning ?? true,
+	);
 }

@@ -7,6 +7,7 @@ import {
 	branchHasMateriallyNewerExecutorActivity,
 	branchHasNewerInstructionInput,
 	cursorAtTail,
+	renderAdvisorDelta,
 } from "../../src/index.js";
 
 function assistant(content: AssistantMessage["content"]): AssistantMessage {
@@ -341,5 +342,28 @@ describe("post-window materially newer Executor activity classification", () => 
 				`material staleness after ${entry.label}`,
 			).toBe(entry.material);
 		}
+	});
+});
+
+describe("renderAdvisorDelta includeReasoning option", () => {
+	it("keeps reasoning blocks by default and strips them with includeReasoning: false", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage(
+			assistant([
+				{ type: "thinking", thinking: "PRIVATE-REASONING-CONTENT" },
+				{ type: "text", text: "visible answer" },
+			]),
+		);
+		const entries = manager.getBranch();
+
+		const withReasoning = renderAdvisorDelta(entries, 4_096);
+		expect(withReasoning.text).toContain("[reasoning]");
+		expect(withReasoning.text).toContain("PRIVATE-REASONING-CONTENT");
+		expect(withReasoning.text).toContain("visible answer");
+
+		const noReasoning = renderAdvisorDelta(entries, 4_096, { includeReasoning: false });
+		expect(noReasoning.text).not.toContain("[reasoning]");
+		expect(noReasoning.text).not.toContain("PRIVATE-REASONING-CONTENT");
+		expect(noReasoning.text).toContain("visible answer");
 	});
 });
