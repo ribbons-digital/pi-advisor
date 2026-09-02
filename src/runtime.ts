@@ -52,6 +52,7 @@ import {
 	type AdviseSchemaMode,
 } from "./compatibility/constrained-sampling.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
+import { isNoReasoningRenderEnabled } from "./feature-flags.js";
 import { buildTieredAdvisorSystemPrompt, isTieredPromptExperimentEnabled } from "./experiment.js";
 import {
 	findingMuteId,
@@ -1554,7 +1555,9 @@ export class AdvisorRuntime {
 			Math.min(this.config.limits.maxReprimeTokens, this.status.contextLimitTokens),
 		);
 		while (tokenBudget >= 1) {
-			const snapshot = renderAdvisorReprimeSnapshot(contextEntries, tokenBudget);
+			const snapshot = renderAdvisorReprimeSnapshot(contextEntries, tokenBudget, {
+				includeReasoning: !isNoReasoningRenderEnabled(),
+			});
 			if (snapshot.text.trim().length === 0) break;
 			const prompt = `<advisor-reprime reason="${reason}">\n${snapshot.text}\n</advisor-reprime>`;
 			const estimate = estimateAdvisorContext(
@@ -2552,7 +2555,9 @@ export class AdvisorRuntime {
 			this.persistState();
 			return;
 		}
-		const rendered = renderAdvisorDelta(entries, this.config.context.maxUpdateTokens);
+		const rendered = renderAdvisorDelta(entries, this.config.context.maxUpdateTokens, {
+			includeReasoning: !isNoReasoningRenderEnabled(),
+		});
 		this.status.redactions += rendered.redactions;
 		if (rendered.text.trim().length === 0) {
 			this.cursor = nextCursor;
