@@ -61,6 +61,7 @@
 		"test:e2e": "vitest run tests/e2e",
 		"verify": "pnpm typecheck && pnpm lint && pnpm lint:oxlint && pnpm format:check && pnpm test",
 		"experiment:f9": "tsx scripts/f9-experiment/run.ts",
+		"experiment:context": "tsx scripts/f9-experiment/run-context.ts",
 		"compat:0.81.1": "bash scripts/verify-pi-compat.sh 0.81.1",
 		"compat:0.83.0": "bash scripts/verify-pi-compat.sh 0.83.0",
 		"compat:0.84.1": "bash scripts/verify-pi-compat.sh 0.84.1",

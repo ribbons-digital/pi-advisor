@@ -277,6 +277,27 @@ describe("strict advise wire contract", () => {
 		).toBe(true);
 	});
 
+	it.each([
+		"placeholder",
+		"placeholder2",
+		"_placeholder_",
+		"y",
+		"probe (will not be emitted)",
+		"占位（不应被采纳，用于对照观察）。",
+	])("suppresses measured junk note %j through the shared execute path", async (note) => {
+		const state = collector();
+		await executeStrict(createStrictAdviseTool(DEFAULT_ADVISOR_CONFIG, state), {
+			note,
+			intent: "review",
+			severity: "nit",
+			findingKey: "placeholder-finding",
+			memory: null,
+		});
+		expect(state.validCalls).toBe(1);
+		expect(state.accepted).toBeUndefined();
+		expect(state.suppressedCalls).toBe(1);
+	});
+
 	it("normalizes nulls and omissions to existing review defaults through the shared path", async () => {
 		for (const raw of [
 			{ note: "Verify the rollback path." },

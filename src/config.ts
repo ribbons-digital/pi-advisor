@@ -145,7 +145,7 @@ const CANONICAL_DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze({
 		deferredAdviceRetentionHours: 24,
 		sessionTokenSoftCap: "off",
 		sessionCostSoftCapUsd: "off",
-		maxReviewAttemptMs: 120_000,
+		maxReviewAttemptMs: 180_000,
 		maxNestedCompactionMs: 60_000,
 		maxLifecycleAbortMs: 2_000,
 	},

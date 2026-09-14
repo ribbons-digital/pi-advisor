@@ -1,0 +1,90 @@
+{
+	"protocol": "accuracy-experiment-v1",
+	"date": "2026-09-14",
+	"issue": "https://github.com/ribbons-digital/pi-advisor/issues/141#issuecomment-5518416233",
+	"datasetHash": "9e7b6a8a7a1fd06c",
+	"budgetTokens": 20000,
+	"modelConfigured": "commandcode-goat/deepseek/deepseek-v4-flash",
+	"responseModel": "deepseek/deepseek-v4.1-flash",
+	"reps": 3,
+	"corpusItems": 36,
+	"sourceCuts": 9,
+	"gate": "insufficient-evidence",
+	"historyOnlyRecall": "not-measured",
+	"note": "Do not pool finding-expected recall across arms. Pair only toolresult recall and clean FP. Tail/reasoning are arm-fair visibility diagnostics, not #141 history-only recall (that gate needs both arms labeled finding so truncation is a miss).",
+	"head": {
+		"file": "docs/internal/accuracy-ab-head-prod-full.jsonl",
+		"sha256": "580d3c5076f0dfc26af0b45dface7abb2a97c414815f014dab19464e1303b2cc",
+		"sourceCommit": "3917c5f016c629a3d4bb0b5eb42961b366d0cd86",
+		"promptHash": "e672f18480c03c20",
+		"harnessHash": "ba9eca120752df4d",
+		"promptChars": 5266,
+		"arm": "new",
+		"n": 108,
+		"usable": 107,
+		"unusable": ["ctx-02-clean new rep2 run-error"],
+		"junkNotes": 16,
+		"cleaned": {
+			"toolresultRecall": [26, 27],
+			"cleanFp": [19, 26],
+			"tailRecall": [17, 27],
+			"reasoningSpokeFp": [16, 27]
+		},
+		"tokensSum": 3629164,
+		"meanTokens": 33917,
+		"uncachedInputTokens": 496540,
+		"cachedTokens": 2215128,
+		"outputTokens": 917496,
+		"cacheShare": 0.61,
+		"providerCostUsd": 0,
+		"estimatedUsdOllamaV41Flash": 1.2632,
+		"priceBasis": {
+			"source": "ollama-cloud deepseek-v4.1-flash list",
+			"usdPerMillion": { "input": 0.3, "cacheRead": 0.006, "output": 1.2 }
+		}
+	},
+	"v041": {
+		"file": "docs/internal/accuracy-ab-v041-prod-full.jsonl",
+		"sha256": "04069da1aff5da2b56b26e23612bc0b6a94ac64336f102db04654e8ef170f951",
+		"sourceCommit": "362e2125274635ba6dadfcfb298b93132849fa43",
+		"promptHash": "a9706d4769deb99e",
+		"harnessHash": "bb1f392471716012",
+		"promptChars": 3744,
+		"arm": "old",
+		"n": 108,
+		"usable": 108,
+		"junkNotes": 5,
+		"cleaned": {
+			"toolresultRecall": [10, 27],
+			"cleanFp": [20, 26],
+			"tailSpokeFp": [15, 27],
+			"reasoningRecall": [1, 27]
+		},
+		"tokensSum": 3627551,
+		"meanTokens": 33588,
+		"uncachedInputTokens": 572346,
+		"cachedTokens": 1964276,
+		"outputTokens": 1090929,
+		"cacheShare": 0.541,
+		"providerCostUsd": 0,
+		"estimatedUsdOllamaV41Flash": 1.4926,
+		"priceBasis": {
+			"source": "ollama-cloud deepseek-v4.1-flash list",
+			"usdPerMillion": { "input": 0.3, "cacheRead": 0.006, "output": 1.2 }
+		}
+	},
+	"pairedCleaned": {
+		"keys": 107,
+		"bootstrap": {
+			"seed": 20260914,
+			"iterations": 4000,
+			"unit": "source-cut",
+			"nCuts": 9
+		},
+		"toolresultRecallDeltaPp": 59.3,
+		"toolresultRecallCi95Pp": [29.6, 85.2],
+		"cleanFpDeltaPp": -3.8,
+		"cleanFpCi95Pp": [-28.0, 18.5],
+		"meanTokenDeltaPct": 0.8
+	}
+}

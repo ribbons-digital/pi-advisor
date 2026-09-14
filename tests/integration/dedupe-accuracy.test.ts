@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 	ADVISOR_RUNTIME_STATE_VERSION,
+	ADVISOR_TRANSCRIPT_ENTRY_TYPE,
 	adviceDedupeKey,
 	createPiAdvisorExtension,
 	cursorAtTail,
@@ -171,6 +172,62 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 			expect(afterEmail).not.toContain('tag=\\"re-raised\\"');
 			expect(runtime?.getStatus()).toMatchObject({
 				notesDelivered: 3,
+				notesSuppressed: 1,
+			});
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("persists delivery-time suppression reasons on the silent review-outcome record", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "first" }] },
+			{ content: [{ type: "text", text: "second" }] },
+		]);
+		const advisor = createAdvisorProvider([
+			reviewAdvice(ROLLBACK_NOTE, ROLLBACK_KEY),
+			reviewAdvice(ROLLBACK_PARAPHRASE, ROLLBACK_KEY),
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.persistence.transcript = true;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("review first window");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			await harness.session.prompt("review second window");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
+
+			const outcomes = harness.sessionManager
+				.getBranch()
+				.filter(
+					(entry): entry is Extract<typeof entry, { type: "custom" }> =>
+						entry.type === "custom" &&
+						entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
+						// SAFETY: this test fixture deliberately asserts the recorded boundary shape.
+						(entry.data as { kind?: unknown }).kind === "review-outcome",
+				)
+				.map((entry) => entry.data);
+			expect(outcomes).toHaveLength(2);
+			expect(outcomes[0]).toMatchObject({ outcome: "accepted" });
+			expect(outcomes[0]).not.toHaveProperty("suppressed");
+			expect(outcomes[1]).toMatchObject({
+				outcome: "silent",
+				suppressed: [{ reason: "dedupe", findingKey: ROLLBACK_KEY }],
+			});
+			expect(runtime?.getStatus()).toMatchObject({
+				reviewsCompleted: 2,
 				notesSuppressed: 1,
 			});
 		} finally {

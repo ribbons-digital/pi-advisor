@@ -11,6 +11,11 @@ export default defineConfig({
 	test: {
 		env: {
 			PI_CODING_AGENT_DIR: testAgentDir,
+			// Legacy timing tests script mid-burst (toolUse) Executor turns and assert
+			// immediate review starts; 0 disables quiescence holding for them. The
+			// hold itself is covered by quiescence-trigger.test.ts, which overrides
+			// this per test.
+			PI_ADVISOR_QUIESCENCE_HOLD_MAX_MS: "0",
 		},
 		globalSetup: ["./tests/global-setup.ts"],
 		coverage: {

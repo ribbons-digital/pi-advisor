@@ -292,7 +292,12 @@ const CONTENT_FREE = new Set([
 	"nothing to report",
 	"continue",
 	"on track",
+	"y",
+	"probe will not be emitted",
+	"占位 不应被采纳 用于对照观察",
 ]);
+/** Whole-note placeholder tokens measured from weak models (commandcode-goat). */
+const PLACEHOLDER_ONLY_NOTE = /^placeholder\d*$/u;
 const TRUNCATION_MARKER = "\n[Advisory note truncated to configured limit]";
 
 export function normalizeContentFreeAdvice(input: string): string {
@@ -657,7 +662,11 @@ export class BoundedAdviceDedupe {
 
 export function isContentFreeAdvice(note: string): boolean {
 	const normalized = normalizeContentFreeAdvice(note);
-	return normalized.length === 0 || CONTENT_FREE.has(normalized);
+	return (
+		normalized.length === 0 ||
+		CONTENT_FREE.has(normalized) ||
+		PLACEHOLDER_ONLY_NOTE.test(normalized)
+	);
 }
 
 function truncateCharacters(

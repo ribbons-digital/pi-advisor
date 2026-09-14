@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
 	ADVISOR_RUNTIME_STATE_VERSION,
+	ADVISOR_TRANSCRIPT_ENTRY_TYPE,
 	createPiAdvisorExtension,
 	cursorAtTail,
 	DEFAULT_ADVISOR_CONFIG,
@@ -131,6 +132,7 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 				extensionFor(
 					configFor(advisor, (config) => {
 						config.dedupe.reRaiseMinTurns = 2;
+						config.persistence.transcript = true;
 					}),
 					(value) => (runtime = value),
 				),
@@ -201,6 +203,31 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			expect(context).not.toContain(NOTE_A_PARAPHRASE);
 			expect(context).not.toContain('tag=\\"possible-duplicate\\"');
 			expect(context).not.toContain('tag=\\"re-raised\\"');
+
+			// The muted delivery-time suppression is surfaced on the silent
+			// review-outcome record with the bounded findingKey display label.
+			const outcomeRecords = harness.sessionManager
+				.getBranch()
+				.filter(
+					(entry): entry is Extract<typeof entry, { type: "custom" }> =>
+						entry.type === "custom" &&
+						entry.customType === ADVISOR_TRANSCRIPT_ENTRY_TYPE &&
+						// SAFETY: this test fixture deliberately asserts the recorded boundary shape.
+						(entry.data as { kind?: unknown }).kind === "review-outcome",
+				)
+				.map((entry) => entry.data);
+			expect(outcomeRecords).toHaveLength(3);
+			// SAFETY: the find predicate asserts the outcome/suppressed shape before
+			// this fixture reads them from the boundary record.
+			const mutedOutcome = outcomeRecords.find(
+				(record) =>
+					(record as { outcome?: unknown }).outcome === "silent" &&
+					Array.isArray((record as { suppressed?: unknown }).suppressed),
+			);
+			expect(mutedOutcome).toMatchObject({
+				outcome: "silent",
+				suppressed: [{ reason: "muted", findingKey: KEY_A }],
+			});
 
 			// The v5 runtime state persists the recent-findings entry.
 			const state = latestRuntimeState(harness.sessionManager);

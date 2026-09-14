@@ -855,4 +855,120 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 			await harness.dispose();
 		}
 	});
+
+	it("slims older thinking-bearing history instead of full-clearing on provider overflow", async () => {
+		// Build advisor-side accumulated history with large thinking blocks from
+		// multiple prior silent reviews. Each thinking reply reports a SMALL usage
+		// input so the usage anchor makes the local estimate say "fits" while the
+		// actual (scripted) provider overflows — the estimate-drift scenario that
+		// the slim-before-clear retry branch exists for.
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "SEED-ONE" }] },
+			{ content: [{ type: "text", text: "SEED-TWO" }] },
+			{ content: [{ type: "text", text: "SEED-THREE" }] },
+			{ content: [{ type: "text", text: "SEED-FOUR" }] },
+			{ content: [{ type: "text", text: "SEED-FIVE" }] },
+			{ content: [{ type: "text", text: "OVERFLOW-TURN" }] },
+		]);
+		const bigThinking = "reasoning-block ".repeat(400); // ~6KB thinking per turn
+		const advisor = new ScriptedProvider({
+			providerId: "pi-advisor-fixture-advisor",
+			modelId: "advisor-scripted-slim-overflow",
+			api: ADVISOR_SCRIPTED_API,
+			responses: [
+				// five silent reviews, each with a large thinking block and a small
+				// usage anchor (the anchor is what keeps the local estimate low)
+				...Array.from(
+					{ length: 5 },
+					() =>
+						// SAFETY: scripted-provider fixture responses deliberately carry
+						// a thinking+text assistant reply with a small usage anchor to
+						// reproduce the estimate-drift scenario under test.
+						({
+							content: [
+								{ type: "thinking", thinking: bigThinking },
+								{ type: "text", text: "ok" },
+							],
+							usage: { input: 80, output: 20, costUsd: 0 },
+						}) as ScriptedResponse,
+				),
+				// overflow on the accumulated (slimmable) history
+				{
+					errorMessage: "context_length_exceeded: scripted accumulated overflow",
+				},
+				// the retry succeeds after the history was slimmed (thinking stripped)
+				{ content: [], usage: { input: 60, output: 10, costUsd: 0 } },
+			],
+		});
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.context.maxFraction = 0.65;
+						config.context.reserveTokens = 300;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("seed turn 1");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) === 1);
+			await harness.session.prompt("seed turn 2");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) === 2);
+			await harness.session.prompt("seed turn 3");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) === 3);
+			await harness.session.prompt("seed turn 4");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) === 4);
+			await harness.session.prompt("seed turn 5");
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) === 5);
+
+			await harness.session.prompt("overflow turn");
+			// Overflow triggers the slim-retry (not a full clear). The review
+			// completes after the retry, so failedReviews stays 0 and the
+			// lossy-slim counter advances.
+			await waitFor(() => (runtime?.getStatus().reviewsCompleted ?? 0) === 6);
+
+			expect(runtime?.getStatus()).toMatchObject({
+				active: true,
+				paused: false,
+				failedReviews: 0,
+				retryAttempts: 1,
+			});
+			expect(runtime?.getStatus().nestedLossyCompressions ?? 0).toBeGreaterThanOrEqual(1);
+			// The retried request (last one) kept ALL the older seed frames verbatim —
+			// the decisive difference from a full clear, which would have left only
+			// the OVERFLOW-TURN frame behind.
+			const last = advisor.requests.at(-1);
+			const retried = JSON.stringify(last?.context.messages ?? []);
+			expect(retried).toContain("OVERFLOW-TURN");
+			expect(retried).toContain("SEED-ONE");
+			expect(retried).toContain("SEED-FIVE");
+			// The history is a full slim, not a clear: thinking blocks are stripped
+			// from the OLDEST seed assistants (beyond the keep-recent window of 4)
+			// while the newest messages keep them verbatim. Walk the assistant
+			// messages: the first one must be thinking-free, a later one carries
+			// thinking (proving only the old portion was degraded).
+			const parsed = last?.context.messages ?? [];
+			const assistantWithThinking = parsed.findIndex(
+				(message) =>
+					message.role === "assistant" &&
+					JSON.stringify(message.content).includes("reasoning-block"),
+			);
+			// at least one old assistant message lies BEFORE the first thinking-
+			// carrying one, and that early assistant must be thinking-free
+			expect(assistantWithThinking).toBeGreaterThan(0);
+			const earlyAssistant = parsed
+				.slice(0, assistantWithThinking)
+				.find((message) => message.role === "assistant" && message.content.length > 0);
+			expect(JSON.stringify(earlyAssistant?.content ?? [])).not.toContain("reasoning-block");
+		} finally {
+			await harness.dispose();
+		}
+	});
 });

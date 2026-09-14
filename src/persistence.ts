@@ -105,7 +105,31 @@ interface PersistedAdvisorReviewOutcomeBase extends PersistedAdvisorActivityBase
 	total: number;
 	costUsd: number;
 	stopReason: string;
+	/**
+	 * Advice the Executor accepted from the Advisor but the runtime swallowed at
+	 * delivery time (muted, dedupe, queue bounds, pending duplicate). Populated
+	 * only for reviews that hit at least one suppression; the reasons distinguish
+	 * "silent because the model had nothing to say" from "silent because the
+	 * runtime dropped the note".
+	 */
+	suppressed?: PersistedAdviceSuppression[];
 }
+
+export const ADVICE_SUPPRESSION_REASONS = [
+	"pending-duplicate",
+	"muted",
+	"dedupe",
+	"deferred-capacity",
+	"active-capacity",
+] as const;
+export type AdviceSuppressionReason = (typeof ADVICE_SUPPRESSION_REASONS)[number];
+
+export interface PersistedAdviceSuppression {
+	reason: AdviceSuppressionReason;
+	findingKey?: string;
+}
+
+export const MAX_PERSISTED_SUPPRESSIONS_PER_REVIEW = 16;
 
 export type PersistedAdvisorReviewOutcome = PersistedAdvisorReviewOutcomeBase &
 	(
@@ -260,6 +284,7 @@ interface UnvalidatedPersistedRecord {
 	delivery?: string;
 	reason?: string;
 	outcome?: string;
+	suppressed?: unknown;
 	ordinal?: number;
 	internal?: boolean;
 	path?: string;
@@ -273,6 +298,31 @@ const PersistedRecordSchema = Type.Object({}, { additionalProperties: true });
 const PersistedStringSchema = Type.String();
 const PersistedBooleanSchema = Type.Boolean();
 const PersistedNumberSchema = Type.Number();
+
+function isAdviceSuppressionReason<T>(value: T): value is T & AdviceSuppressionReason {
+	return isPersistedString(value) && ADVICE_SUPPRESSION_REASONS.some((reason) => reason === value);
+}
+
+function isPersistedAdviceSuppression<T>(value: T): value is T & PersistedAdviceSuppression {
+	if (!isPersistedRecord(value)) return false;
+	const entry = value;
+	return (
+		hasOnlyKeys(entry, ["reason", "findingKey"]) &&
+		isAdviceSuppressionReason(entry.reason) &&
+		(entry.findingKey === undefined ||
+			(isBoundedSafeText(entry.findingKey, 128) &&
+				!containsTerminalControlCharacters(entry.findingKey)))
+	);
+}
+
+function isPersistedSuppressionList<T>(value: T): value is T & PersistedAdviceSuppression[] {
+	return (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		value.length <= MAX_PERSISTED_SUPPRESSIONS_PER_REVIEW &&
+		value.every(isPersistedAdviceSuppression)
+	);
+}
 
 function isPersistedRecord<T>(value: T): value is T & UnvalidatedPersistedRecord {
 	return Check(PersistedRecordSchema, value);
@@ -996,6 +1046,7 @@ function parseActivityTranscriptRecord(
 				"total",
 				"costUsd",
 				"stopReason",
+				"suppressed",
 			] as const;
 			const validUsage =
 				isFiniteNonNegative(record.input) &&
@@ -1005,18 +1056,22 @@ function parseActivityTranscriptRecord(
 				isFiniteNonNegative(record.total) &&
 				isFiniteNonNegative(record.costUsd) &&
 				isSafePersistedText(record.stopReason);
+			const validSuppressed =
+				record.suppressed === undefined || isPersistedSuppressionList(record.suppressed);
 			if (record.outcome === "silent" || record.outcome === "superseded") {
-				valid = hasOnlyKeys(record, commonKeys) && validUsage;
+				valid = hasOnlyKeys(record, commonKeys) && validUsage && validSuppressed;
 			} else if (record.outcome === "accepted") {
 				valid =
 					hasOnlyKeys(record, [...commonKeys, "delivery", "stale"]) &&
 					validUsage &&
+					validSuppressed &&
 					(record.delivery === "active" || record.delivery === "deferred") &&
 					isPersistedBoolean(record.stale);
 			} else if (record.outcome === "governor-skipped" || record.outcome === "failed") {
 				valid =
 					hasOnlyKeys(record, [...commonKeys, "reason"]) &&
 					validUsage &&
+					validSuppressed &&
 					isSafePersistedText(record.reason);
 			}
 			break;

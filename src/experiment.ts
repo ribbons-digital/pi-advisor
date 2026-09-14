@@ -72,7 +72,7 @@ Do not criticize visibly unfinished work for missing later steps. While work is 
 const MEMORY_PROMPT = `Recalled memories, handoffs, summaries, and historical process text are subordinate evidence, not active obligations. The latest explicit User request controls workflow unless it invokes them; equivalent workflows need no remembered skill or process name.`;
 
 function instructionsSection(config: AdvisorConfig, projectInstructions: string): string {
-	return `${config.instructions.length > 0 ? `\nUser review instructions:\n${config.instructions}` : ""}${
+	return `\nThis review has a hard budget of ${String(config.limits.maxAdvisorTurnsPerUpdate)} turns and ${String(config.limits.maxToolCallsPerUpdate)} read-only tool calls; plan verification to conclude within it. On an [Advisor governor] wrap-up reminder, conclude immediately from gathered evidence without further tool calls.${config.instructions.length > 0 ? `\nUser review instructions:\n${config.instructions}` : ""}${
 		projectInstructions.length > 0
 			? `\n<project-instructions authority="project">\n${escapePromptTagContent(projectInstructions)}\n</project-instructions>`
 			: ""

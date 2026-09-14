@@ -88,6 +88,8 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		compactionsCompleted: 1,
 		compactionFailures: 0,
 		compactionUsageUnavailable: 1,
+		historyCompressionsCompleted: 2,
+		nestedLossyCompressions: 0,
 		contextReprimesCompleted: 0,
 		contextReprimeFailures: 0,
 		sessionTokenSoftCap: "off",
@@ -95,6 +97,8 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		maxReviewAttemptMs: 120_000,
 		maxNestedCompactionMs: 60_000,
 		maxLifecycleAbortMs: 2_000,
+		maxAdvisorTurnsPerUpdate: 8,
+		maxToolCallsPerUpdate: 24,
 		usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10, costUsd: 0.01 },
 		reviewRequests: 1,
 		reviewsCompleted: 1,
@@ -124,6 +128,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		redactions: 0,
 		consecutiveFailures: 0,
 		consecutiveReviewTimeouts: 0,
+		consecutiveGovernorSkips: 0,
 		branchResets: 0,
 		staleQueuedMessagesDiscarded: 0,
 		warnings: 0,
@@ -616,6 +621,11 @@ describe("Quality Slice Q6 short status and card mute IDs", () => {
 		expect(notes).toContain("muted findings unavailable");
 		expect(notes).not.toContain("0 muted findings");
 		expect(lines).toContain("Mutes: unavailable - EACCES: permission denied");
+	});
+
+	it("renders governor turn and tool-call limits in status full", () => {
+		const lines = formatAdvisorStatus(runtimeStatus()).split("\n");
+		expect(lines).toContain("Governor limits: 8 turns, 24 tool calls per review");
 	});
 
 	it("shows queued count, last note age and severity, and cap and pause state", () => {

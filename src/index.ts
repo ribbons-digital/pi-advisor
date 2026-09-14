@@ -552,6 +552,7 @@ export * from "./delivery.js";
 export * from "./model-picker.js";
 export * from "./mutes.js";
 export * from "./persistence.js";
+export * from "./history-compaction.js";
 export * from "./presentation.js";
 export * from "./redaction.js";
 export * from "./runtime.js";

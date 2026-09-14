@@ -247,7 +247,11 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				advisorProvider: advisor,
 				extensions: [
 					extensionFor(
-						configFor(advisor),
+						configFor(advisor, (config) => {
+							// Neutralize governor cadence backoff: this test asserts pending-update
+							// ordering on the immediately following turn, not cadence behavior.
+							config.review.adaptiveCadence.maxMinTurnsBetweenReviews = 1;
+						}),
 						(value) => (runtime = value),
 						undefined,
 						undefined,
@@ -1465,7 +1469,8 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		});
 		const advisor = createAdvisorProvider([
 			{ waitFor: barrierPromise(), content: [] },
-			governedList("ls-between-timeouts"),
+			governedList("ls-between-timeouts-1"),
+			governedList("ls-between-timeouts-2"),
 			{ waitFor: barrierPromise(), content: [] },
 			{ waitFor: barrierPromise(), content: [] },
 		]);
@@ -1482,6 +1487,9 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 					configFor(advisor, (config) => {
 						config.limits.maxReviewAttemptMs = 50;
 						config.limits.maxAdvisorTurnsPerUpdate = 1;
+						// Neutralize governor cadence backoff so the follow-up timeouts stay eligible
+						// on the immediately following turns.
+						config.review.adaptiveCadence.maxMinTurnsBetweenReviews = 1;
 					}),
 					(value) => (runtime = value),
 					(warning) => warnings.push(warning),
@@ -1773,7 +1781,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
-	it("skips repeated tool-governed reviews without pausing or retrying later updates", async () => {
+	it("widens cadence, then pauses after three consecutive tool-governed reviews", async () => {
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "first answer" }] },
 			{ content: [{ type: "text", text: "second answer" }] },
@@ -1787,6 +1795,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		const advisor = createAdvisorProvider(
 			Array.from({ length: 12 }, (_, index) => governedRead(`read-over-limit-${String(index)}`)),
 		);
+		const warnings: string[] = [];
 		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({
 			provider: primary,
@@ -1795,19 +1804,19 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				extensionFor(
 					configFor(advisor, (config) => {
 						config.limits.maxToolCallsPerUpdate = 0;
+						// Keep the cadence ceiling at the floor so governor widening cannot delay the
+						// next review: this isolates the streak-pause backstop.
+						config.review.adaptiveCadence.maxMinTurnsBetweenReviews = 1;
 					}),
 					(value) => (runtime = value),
+					(message) => warnings.push(message),
 				),
 			],
 			tools: [],
 			mode: "rpc",
 		});
 		try {
-			for (const [index, prompt] of [
-				"first governed review",
-				"second governed review",
-				"third governed review",
-			].entries()) {
+			for (const [index, prompt] of ["first governed review", "second governed review"].entries()) {
 				const requestsBeforeUpdate = advisor.requests.length;
 				await harness.session.prompt(prompt);
 				await waitFor(() => (runtime?.getStatus().governorSkippedReviews ?? 0) >= index + 1);
@@ -1819,22 +1828,33 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				paused: false,
 				failedReviews: 0,
 				consecutiveFailures: 0,
-				governorSkippedReviews: 3,
+				consecutiveGovernorSkips: 2,
+				governorSkippedReviews: 2,
 				lastGovernorOutcome: "Advisor tool-call limit reached",
 				retryAttempts: 0,
 			});
-			const requestsBeforeLaterUpdate = advisor.requests.length;
-			await harness.session.prompt("review after repeated tool exhaustion");
-			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 4);
-			expect(advisor.requests.length).toBeGreaterThan(requestsBeforeLaterUpdate);
-			expect(advisor.requests.length - requestsBeforeLaterUpdate).toBeLessThanOrEqual(2);
+
+			await harness.session.prompt("third governed review");
+			await waitFor(() => runtime?.getStatus().paused === true);
 			expect(runtime?.getStatus()).toMatchObject({
-				active: true,
-				paused: false,
+				consecutiveGovernorSkips: 3,
+				pauseReason:
+					"Three consecutive Advisor reviews hit the turn or tool-call limit. Last limit: Advisor tool-call limit reached",
+				governorSkippedReviews: 3,
 				failedReviews: 0,
 				consecutiveFailures: 0,
 				retryAttempts: 0,
 			});
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain(
+				"Three consecutive Advisor reviews hit the turn or tool-call limit",
+			);
+			expect(warnings[0]).toContain("Automatic Advisor review is paused");
+
+			// Paused: no further advisor reviews are submitted.
+			const requestsBeforeLaterUpdate = advisor.requests.length;
+			await harness.session.prompt("review after repeated tool exhaustion");
+			expect(advisor.requests.length).toBe(requestsBeforeLaterUpdate);
 		} finally {
 			await harness.dispose();
 		}
@@ -2052,7 +2072,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
-	it("skips repeated turn-governed reviews without pausing or retrying later updates", async () => {
+	it("widens cadence, then pauses after three consecutive turn-governed reviews", async () => {
 		const primary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "first answer" }] },
 			{ content: [{ type: "text", text: "second answer" }] },
@@ -2064,9 +2084,151 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			stopReason: "toolUse" as const,
 		});
 		const advisor = createAdvisorProvider([
-			governedList("ls-at-turn-limit-1"),
-			governedList("ls-at-turn-limit-2"),
-			governedList("ls-at-turn-limit-3"),
+			governedList("ls-at-turn-limit-1a"),
+			governedList("ls-at-turn-limit-1b"),
+			governedList("ls-at-turn-limit-2a"),
+			governedList("ls-at-turn-limit-2b"),
+			governedList("ls-at-turn-limit-3a"),
+			governedList("ls-at-turn-limit-3b"),
+		]);
+		const warnings: string[] = [];
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxAdvisorTurnsPerUpdate = 1;
+						// Keep the cadence ceiling at the floor so governor widening cannot delay the
+						// next review: this isolates the streak-pause backstop.
+						config.review.adaptiveCadence.maxMinTurnsBetweenReviews = 1;
+					}),
+					(value) => (runtime = value),
+					(message) => warnings.push(message),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			for (const [index, prompt] of [
+				"first turn-governed review",
+				"second turn-governed review",
+			].entries()) {
+				await harness.session.prompt(prompt);
+				await waitFor(() => (runtime?.getStatus().governorSkippedReviews ?? 0) >= index + 1);
+			}
+			expect(runtime?.getStatus()).toMatchObject({
+				active: true,
+				paused: false,
+				consecutiveGovernorSkips: 2,
+				governorSkippedReviews: 2,
+				lastGovernorOutcome: "Advisor turn limit reached",
+			});
+
+			await harness.session.prompt("third turn-governed review");
+			await waitFor(() => runtime?.getStatus().paused === true);
+			expect(runtime?.getStatus()).toMatchObject({
+				consecutiveGovernorSkips: 3,
+				pauseReason:
+					"Three consecutive Advisor reviews hit the turn or tool-call limit. Last limit: Advisor turn limit reached",
+				governorSkippedReviews: 3,
+				failedReviews: 0,
+				consecutiveFailures: 0,
+			});
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain(
+				"Three consecutive Advisor reviews hit the turn or tool-call limit",
+			);
+			expect(warnings[0]).toContain("Automatic Advisor review is paused");
+
+			// The pause is a one-shot warning; subsequent eligible updates stay paused without new warnings.
+			await harness.session.prompt("turn after pause");
+			expect(advisor.requests).toHaveLength(6);
+			expect(warnings).toHaveLength(1);
+
+			// Re-activating clears the limit-skip streak.
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const hostContext = runtimeInternals(runtime).hostContext;
+			if (hostContext === undefined) throw new Error("Expected Advisor host context");
+			await runtime.enable(hostContext, "session-command", true);
+			expect(runtime.getStatus()).toMatchObject({
+				paused: false,
+				consecutiveGovernorSkips: 0,
+			});
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("widens the review cadence to the adaptive ceiling after a turn-governed review, even with adaptive cadence disabled", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer 1" }] },
+			{ content: [{ type: "text", text: "answer 2" }] },
+			{ content: [{ type: "text", text: "answer 3" }] },
+			{ content: [{ type: "text", text: "answer 4" }] },
+			{ content: [{ type: "text", text: "answer 5" }] },
+		]);
+		const governedList = (id: string) => ({
+			content: [{ type: "toolCall" as const, id, name: "ls", arguments: { path: "." } }],
+			stopReason: "toolUse" as const,
+		});
+		const advisor = createAdvisorProvider([
+			governedList("ls-widen-1a"),
+			governedList("ls-widen-1b"),
+			governedList("ls-widen-2a"),
+			governedList("ls-widen-2b"),
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxAdvisorTurnsPerUpdate = 1;
+						// adaptiveCadence stays disabled: governor backoff must apply regardless.
+						config.review.adaptiveCadence.maxMinTurnsBetweenReviews = 4;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("first governed review");
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 1);
+			expect(runtime?.getStatus()).toMatchObject({
+				consecutiveGovernorSkips: 1,
+				effectiveMinTurnsBetweenReviews: 4,
+			});
+
+			// The widened cadence suppresses reviews on the immediately following turns.
+			await harness.session.prompt("second turn");
+			await harness.session.prompt("third turn");
+			expect(advisor.requests).toHaveLength(2);
+
+			// Turn 5 is eligible again (5 - 1 >= 4) and hits the limit once more.
+			await harness.session.prompt("fourth turn");
+			await harness.session.prompt("fifth turn");
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 2);
+			expect(advisor.requests).toHaveLength(4);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("concludes silently after a wrap-up reminder instead of a governor skip", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "answer 1" }] }]);
+		const advisor = createAdvisorProvider([
+			{
+				content: [
+					{ type: "toolCall" as const, id: "ls-wrap-up", name: "ls", arguments: { path: "." } },
+				],
+				stopReason: "toolUse" as const,
+			},
 			{ content: [] },
 		]);
 		let runtime: AdvisorRuntime | undefined;
@@ -2085,27 +2247,145 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			mode: "rpc",
 		});
 		try {
+			await harness.session.prompt("wrap-up reminder turn");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			expect(runtime?.getStatus()).toMatchObject({
+				paused: false,
+				governorSkippedReviews: 0,
+				consecutiveGovernorSkips: 0,
+				silentReviews: 1,
+			});
+			// The second advisor request is the wrap-up reminder steering turn.
+			expect(advisor.requests).toHaveLength(2);
+			expect(JSON.stringify(advisor.requests[1])).toContain("Review turn budget reached");
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("resets the limit-skip streak after a successful review", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer 1" }] },
+			{ content: [{ type: "text", text: "answer 2" }] },
+			{ content: [{ type: "text", text: "answer 3" }] },
+			{ content: [{ type: "text", text: "answer 4" }] },
+		]);
+		const governedList = (id: string) => ({
+			content: [{ type: "toolCall" as const, id, name: "ls", arguments: { path: "." } }],
+			stopReason: "toolUse" as const,
+		});
+		const advisor = createAdvisorProvider([
+			governedList("ls-reset-1a"),
+			governedList("ls-reset-1b"),
+			{ content: [] },
+			governedList("ls-reset-2a"),
+			governedList("ls-reset-2b"),
+			governedList("ls-reset-3a"),
+			governedList("ls-reset-3b"),
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxAdvisorTurnsPerUpdate = 1;
+						config.review.adaptiveCadence.maxMinTurnsBetweenReviews = 1;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			await harness.session.prompt("first governed review");
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 1);
+			expect(runtime?.getStatus().consecutiveGovernorSkips).toBe(1);
+
+			await harness.session.prompt("silent review");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			expect(runtime?.getStatus().consecutiveGovernorSkips).toBe(0);
+
+			await harness.session.prompt("second governed review");
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 2);
+			await harness.session.prompt("third governed review");
+			await waitFor(() => runtime?.getStatus().governorSkippedReviews === 3);
+
+			// Without the reset the streak would be 3 and the Advisor would have paused.
+			expect(runtime?.getStatus()).toMatchObject({
+				paused: false,
+				consecutiveGovernorSkips: 2,
+				governorSkippedReviews: 3,
+			});
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("treats a review timeout as breaking the adjacency of the limit-skip streak", async () => {
+		const timeoutBarriers: (() => void)[] = [];
+		function barrierPromise(): Promise<void> {
+			return new Promise((resolve) => timeoutBarriers.push(resolve));
+		}
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "answer 1" }] },
+			{ content: [{ type: "text", text: "answer 2" }] },
+			{ content: [{ type: "text", text: "answer 3" }] },
+			{ content: [{ type: "text", text: "answer 4" }] },
+		]);
+		const governedList = (id: string) => ({
+			content: [{ type: "toolCall" as const, id, name: "ls", arguments: { path: "." } }],
+			stopReason: "toolUse" as const,
+		});
+		const advisor = createAdvisorProvider([
+			governedList("ls-adjacent-1a"),
+			governedList("ls-adjacent-1b"),
+			{ waitFor: barrierPromise(), content: [] },
+			governedList("ls-adjacent-2a"),
+			governedList("ls-adjacent-2b"),
+			governedList("ls-adjacent-3a"),
+			governedList("ls-adjacent-3b"),
+		]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				extensionFor(
+					configFor(advisor, (config) => {
+						config.limits.maxAdvisorTurnsPerUpdate = 1;
+						config.limits.maxReviewAttemptMs = 50;
+						config.review.adaptiveCadence.maxMinTurnsBetweenReviews = 1;
+					}),
+					(value) => (runtime = value),
+				),
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
 			for (const [index, prompt] of [
-				"first turn-governed review",
-				"second turn-governed review",
-				"third turn-governed review",
+				"first governed review",
+				"timing out review",
+				"second governed review",
+				"third governed review",
 			].entries()) {
 				await harness.session.prompt(prompt);
 				await waitFor(() => (runtime?.getStatus().governorSkippedReviews ?? 0) >= index + 1);
 			}
 
+			// turn-limit, timeout, turn-limit, turn-limit is only two adjacent limit skips.
+			// The later turn-limit skips also reset the timeout streak (existing semantics).
 			expect(runtime?.getStatus()).toMatchObject({
-				active: true,
 				paused: false,
-				failedReviews: 0,
-				consecutiveFailures: 0,
-				governorSkippedReviews: 3,
-				lastGovernorOutcome: "Advisor turn limit reached",
+				consecutiveGovernorSkips: 2,
+				consecutiveReviewTimeouts: 0,
+				governorSkippedReviews: 4,
 			});
-			await harness.session.prompt("review after repeated turn exhaustion");
-			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
-			expect(advisor.requests).toHaveLength(4);
 		} finally {
+			for (const release of timeoutBarriers) release();
 			await harness.dispose();
 		}
 	});

@@ -3,6 +3,10 @@
 Status: completed.
 This experiment never ships as default behavior without measurement review and separate user approval.
 
+Later accuracy/cost measurements (HEAD vs v0.4.1, injection corpus, 2026-09-14): tracked index [accuracy-cost-index.md](accuracy-cost-index.md), paste-ready [issue-141-followup-head-vs-v041.md](issue-141-followup-head-vs-v041.md). Raw jsonl stays gitignored under `docs/internal/`. That later run is **directional / insufficient** for the issue #141 merge gate. Whole-note placeholder junk (`placeholder`, `y`, …) is now dropped at advise-execution time; see the junk section of the accuracy index (live 12-review probe vs historical 16/107 replay).
+
+Prompt-path divergence from that adoption: the scope-discipline and coverage rules were appended to the normal `buildAdvisorSystemPrompt` result only. With `PI_ADVISOR_TIERED_PROMPT_EXPERIMENT=1` the runtime returns `buildTieredAdvisorSystemPrompt` ([experiment.ts](../src/experiment.ts) `CORE_PROMPT`), which predates the adoption and therefore does **not** carry them. The flag is off by default and its 2026-08 measurement must not be silently invalidated, so the block is not copied into `CORE_PROMPT` here; if the tiered path ships, add the shared block there and re-measure before changing the recorded result.
+
 ## Protocol (approved 2026-08-16)
 
 - Fixed dataset: 26 representative updates in `scripts/f9-experiment/dataset.ts`.

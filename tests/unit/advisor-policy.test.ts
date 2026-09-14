@@ -239,6 +239,8 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		compactionsCompleted: 0,
 		compactionFailures: 0,
 		compactionUsageUnavailable: 0,
+		historyCompressionsCompleted: 0,
+		nestedLossyCompressions: 0,
 		contextReprimesCompleted: 0,
 		contextReprimeFailures: 0,
 		sessionTokenSoftCap: "off",
@@ -246,6 +248,8 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		maxReviewAttemptMs: 120_000,
 		maxNestedCompactionMs: 60_000,
 		maxLifecycleAbortMs: 2_000,
+		maxAdvisorTurnsPerUpdate: 8,
+		maxToolCallsPerUpdate: 24,
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, costUsd: 0 },
 		reviewRequests: 0,
 		reviewsCompleted: 0,
@@ -275,6 +279,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		redactions: 0,
 		consecutiveFailures: 0,
 		consecutiveReviewTimeouts: 0,
+		consecutiveGovernorSkips: 0,
 		branchResets: 0,
 		staleQueuedMessagesDiscarded: 0,
 		warnings: 0,
@@ -416,7 +421,9 @@ describe("Slice 1 configuration and emission policy", () => {
 		expect(output).toContain("Reviews: 4 requests, 3 completed");
 		expect(output).toContain("0 superseded");
 		expect(output).toContain("Review cadence: every 1 meaningful turn");
-		expect(output).toContain("Governor skips: 2, latest Advisor turn limit reached");
+		expect(output).toContain(
+			"Governor skips: 2 (0 consecutive limit skips), latest Advisor turn limit reached",
+		);
 		expect(output).toContain("7 suppressed");
 		expect(output).toContain("Local redacted activity record: enabled, 9 records available, 1");
 		expect(output).toContain("never include reasoning or file-content bodies");
@@ -445,6 +452,18 @@ describe("Slice 1 configuration and emission policy", () => {
 		expect(isContentFreeAdvice("   \t\n ")).toBe(true);
 		expect(isContentFreeAdvice("... !!! --")).toBe(true);
 		expect(isContentFreeAdvice("Stop: this migration deletes production rows.")).toBe(false);
+	});
+
+	it("suppresses measured placeholder-only junk notes without a min-length gate", () => {
+		expect(isContentFreeAdvice("placeholder")).toBe(true);
+		expect(isContentFreeAdvice("placeholder2")).toBe(true);
+		expect(isContentFreeAdvice("_placeholder_")).toBe(true);
+		expect(isContentFreeAdvice("  PLACEHOLDER3  ")).toBe(true);
+		expect(isContentFreeAdvice("y")).toBe(true);
+		expect(isContentFreeAdvice("probe (will not be emitted)")).toBe(true);
+		expect(isContentFreeAdvice("占位（不应被采纳，用于对照观察）。")).toBe(true);
+		expect(isContentFreeAdvice("The test still contains a placeholder assertion.")).toBe(false);
+		expect(isContentFreeAdvice("Verify the rollback path.")).toBe(false);
 	});
 
 	it("redacts and safely truncates oversized notes with visible metadata", () => {
@@ -644,6 +663,18 @@ describe("Usage estimation and bounded transcript serialization through Slice 4B
 		for (const record of [start, attempt, outcome]) {
 			expect(parsePersistedAdvisorTranscriptRecord(record, "session-1")).toEqual(record);
 		}
+		for (const suppressed of [
+			{ ...outcome, suppressed: [{ reason: "dedupe" }] },
+			{
+				...outcome,
+				suppressed: [
+					{ reason: "muted", findingKey: "strict-mode:schema-input" },
+					{ reason: "active-capacity" },
+				],
+			},
+		]) {
+			expect(parsePersistedAdvisorTranscriptRecord(suppressed, "session-1")).toEqual(suppressed);
+		}
 		for (const invalid of [
 			{ ...start, text: "Executor body must not persist" },
 			{ ...attempt, text: "tool result body" },
@@ -652,6 +683,14 @@ describe("Usage estimation and bounded transcript serialization through Slice 4B
 			{ ...attempt, pattern: "API_KEY=unsafe-persisted-secret" },
 			{ ...outcome, advice: boundAdvice("private note", DEFAULT_ADVISOR_CONFIG) },
 			{ ...outcome, version: 3 },
+			{ ...outcome, suppressed: [{ reason: "unknown" }] },
+			{ ...outcome, suppressed: [] },
+			{ ...outcome, suppressed: [{ reason: "dedupe", findingKey: "x".repeat(129) }] },
+			{ ...outcome, suppressed: [{ reason: "dedupe", extra: 1 }] },
+			{
+				...outcome,
+				suppressed: Array.from({ length: 17 }, () => ({ reason: "dedupe" })),
+			},
 		]) {
 			expect(parsePersistedAdvisorTranscriptRecord(invalid, "session-1")).toBeUndefined();
 		}

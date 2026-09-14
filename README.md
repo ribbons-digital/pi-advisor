@@ -217,6 +217,7 @@ See [Security](docs/security.md) for the protected targets, tool bounds, control
 
 Automatic review creates additional provider requests, latency, token usage, and cost.
 In-flight reviews that have not started `advise` are superseded when a newer meaningful update arrives, so Advisor spends the remainder of that attempt on the coalesced newer window instead of finishing a stale review.
+Meaningful turns that end mid-burst (`stopReason: toolUse`) are held and coalesced until the Executor pauses or a 90-second hold cap expires, so one review covers the whole burst instead of several aborted in-flight attempts.
 `review.skipNonMaterialTurns` can hold purely conversational turns until later material Executor activity, and `review.adaptiveCadence` can widen the minimum turn distance after consecutive silent reviews.
 Both options default off.
 Held-for-material-turn evidence is not restored across resume.

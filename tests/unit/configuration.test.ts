@@ -769,6 +769,40 @@ describe("WATCHDOG configuration", () => {
 		expect(loaded.warnings[0]?.message).toContain("could not be read");
 	});
 
+	it("warns when a stale context.historyCompressionCooldownTurns key is present", async () => {
+		// The cooldown knob was removed entirely; any residual key in an old User
+		// or Project file must be reported as unknown (and ignored) rather than
+		// silently accepted or applied — while sibling legal context fields keep
+		// loading normally.
+		const { agentDir, cwd } = await fixture();
+		await writeFile(
+			join(agentDir, "WATCHDOG.yml"),
+			["version: 1", "context:", "  maxFraction: 0.5", "  historyCompressionCooldownTurns: 6"].join(
+				"\n",
+			),
+		);
+		const loaded = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: false });
+		expect(
+			loaded.warnings.some(({ path }) => path === "context.historyCompressionCooldownTurns"),
+		).toBe(true);
+		expect(loaded.userConfig.context).not.toHaveProperty("historyCompressionCooldownTurns");
+		expect(loaded.userConfig.context.maxFraction).toBe(0.5);
+
+		await writeFile(join(agentDir, "WATCHDOG.yml"), "version: 1\n");
+		await writeFile(
+			join(cwd, ".pi", "WATCHDOG.yml"),
+			["version: 1", "context:", "  maxFraction: 0.5", "  historyCompressionCooldownTurns: 8"].join(
+				"\n",
+			),
+		);
+		const project = await loadAdvisorConfiguration({ agentDir, cwd, projectTrusted: true });
+		expect(
+			project.warnings.some(({ path }) => path === "context.historyCompressionCooldownTurns"),
+		).toBe(true);
+		expect(project.effectiveConfig.context).not.toHaveProperty("historyCompressionCooldownTurns");
+		expect(project.effectiveConfig.context.maxFraction).toBe(0.5);
+	});
+
 	it("loads delivery.activeIdleSeverities with the approved release default and nit rejection", async () => {
 		const { agentDir, cwd } = await fixture();
 		await writeFile(join(agentDir, "WATCHDOG.yml"), ["version: 1"].join("\n"));
@@ -1587,7 +1621,7 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		expect(normalized.memorySuggestions.enabled).toBe(true);
 		expect(normalized.persistence.transcript).toBe(true);
 		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
-		expect(normalized.limits.maxReviewAttemptMs).toBe(120_000);
+		expect(normalized.limits.maxReviewAttemptMs).toBe(180_000);
 		expect(normalized.limits.maxNestedCompactionMs).toBe(60_000);
 		expect(normalized.limits.maxLifecycleAbortMs).toBe(2_000);
 		expect(normalized.tools).toEqual(["read", "grep", "find", "ls"]);
@@ -1615,7 +1649,7 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 		expect(normalized.review.skipNonMaterialTurns).toBe(false);
 		expect(normalized.context.maxFraction).toBe(0.65);
 		expect(normalized.limits.sessionTokenSoftCap).toBe("off");
-		expect(normalized.limits.maxReviewAttemptMs).toBe(120_000);
+		expect(normalized.limits.maxReviewAttemptMs).toBe(180_000);
 		expect(normalized.limits.maxNestedCompactionMs).toBe(60_000);
 		expect(normalized.limits.maxLifecycleAbortMs).toBe(2_000);
 		expect(normalized.memorySuggestions.enabled).toBe(true);

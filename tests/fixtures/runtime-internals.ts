@@ -58,6 +58,8 @@ export interface QueuedAdvisorUpdate {
 	restoredReplayCount?: number;
 	restoredQueued?: boolean;
 	heldForMaterialTurn?: boolean;
+	heldForQuiescence?: boolean;
+	heldSince?: number;
 }
 
 export interface OutstandingAdvice extends PendingAdvice {
@@ -102,6 +104,15 @@ export interface AdvisorRuntimeTestInternals {
 		reviewId: string,
 	): AdviceDelivery | undefined;
 	updateBacklogStatus(): void;
+}
+
+/**
+ * Clear an environment flag without a dynamically computed `delete` key.
+ * Equivalent to `delete process.env[flag]` but lint-clean under
+ * @typescript-eslint/no-dynamic-delete.
+ */
+export function clearEnvFlag(flag: string): void {
+	Reflect.deleteProperty(process.env, flag);
 }
 
 export function runtimeInternals(runtime: AdvisorRuntime): AdvisorRuntimeTestInternals;

@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import {
 	ADVISOR_CUSTOM_TYPE,
+	MAX_ADVISOR_TOOL_RESULT_LINES,
 	branchHasMateriallyNewerExecutorActivity,
 	branchHasNewerInstructionInput,
 	cursorAtTail,
+	renderAdvisorDelta,
 } from "../../src/index.js";
 
 function assistant(content: AssistantMessage["content"]): AssistantMessage {
@@ -341,5 +343,82 @@ describe("post-window materially newer Executor activity classification", () => 
 				`material staleness after ${entry.label}`,
 			).toBe(entry.material);
 		}
+	});
+});
+
+describe("renderAdvisorDelta includeReasoning option", () => {
+	it("keeps reasoning blocks by default and strips them with includeReasoning: false", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage(
+			assistant([
+				{ type: "thinking", thinking: "PRIVATE-REASONING-CONTENT" },
+				{ type: "text", text: "visible answer" },
+			]),
+		);
+		const entries = manager.getBranch();
+
+		const withReasoning = renderAdvisorDelta(entries, 4_096);
+		expect(withReasoning.text).toContain("[reasoning]");
+		expect(withReasoning.text).toContain("PRIVATE-REASONING-CONTENT");
+		expect(withReasoning.text).toContain("visible answer");
+
+		const noReasoning = renderAdvisorDelta(entries, 4_096, { includeReasoning: false });
+		expect(noReasoning.text).not.toContain("[reasoning]");
+		expect(noReasoning.text).not.toContain("PRIVATE-REASONING-CONTENT");
+		expect(noReasoning.text).toContain("visible answer");
+	});
+});
+
+describe("boundToolResult exact-boundary line cap", () => {
+	function appendToolResult(manager: SessionManager, text: string): void {
+		// boundToolResult operates on the full serialized entry, which prepends
+		// a one-line `[Executor tool result read]` header. The byte budget below
+		// is generous so only the line cap can fire.
+		manager.appendMessage({
+			role: "toolResult",
+			toolCallId: "boundary-result",
+			toolName: "read",
+			content: [{ type: "text", text }],
+			isError: false,
+			timestamp: 1,
+		});
+	}
+
+	it("does not append the truncation marker when the serialized body has exactly the cap lines", () => {
+		// Regression: when the serialized entry (header + content) has exactly
+		// MAX_ADVISOR_TOOL_RESULT_LINES lines and the last ends with a newline,
+		// the scan consumes all cap iterations with lineEnd still set and the
+		// old `lineEnd !== -1` check reported lineTruncated — appending a
+		// spurious truncation marker although every line survived.
+		const manager = SessionManager.inMemory();
+		const contentLines = Array.from(
+			{ length: MAX_ADVISOR_TOOL_RESULT_LINES - 1 }, // header takes one of the cap lines
+			(_, index) => String(index).padStart(6, "0"),
+		);
+		appendToolResult(manager, `${contentLines.join("\n")}\n`);
+		const entries = manager.getBranch();
+		const rendered = renderAdvisorDelta(entries, 2_000_000);
+		expect(rendered.text).not.toContain("[Tool result truncated to per-result limit]");
+		expect(rendered.text).toContain(contentLines[0] ?? "");
+		expect(rendered.text).toContain(contentLines.at(-1) ?? "");
+	});
+
+	it("still truncates at the cap when a further line follows", () => {
+		const manager = SessionManager.inMemory();
+		// header (1) + MAX content lines = MAX+1 serialized lines. The dropped
+		// (cap+1)-th line must be longer than the marker so the line trim
+		// genuinely shrinks (the strict-shrink guard declines net-inflating
+		// trims where the marker exceeds a tiny dropped tail).
+		const contentLines = Array.from({ length: MAX_ADVISOR_TOOL_RESULT_LINES - 1 }, (_, index) =>
+			String(index).padStart(6, "0"),
+		);
+		const oversizedTail = "z".repeat(2_000);
+		appendToolResult(manager, `${contentLines.join("\n")}\n${oversizedTail}`);
+		const entries = manager.getBranch();
+		const rendered = renderAdvisorDelta(entries, 2_000_000);
+		expect(rendered.text).toContain("[Tool result truncated to per-result limit]");
+		// the cap-th content line survives; the long (cap+1)-th line is dropped
+		expect(rendered.text).toContain(contentLines[contentLines.length - 1] ?? "");
+		expect(rendered.text).not.toContain(oversizedTail);
 	});
 });
