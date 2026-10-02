@@ -20,7 +20,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
-import { runtimeInternals } from "../fixtures/runtime-internals.js";
+import { bindFixtureInstructions, runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -534,6 +534,7 @@ describe.sequential("Quality Slice Q6 mutes (F13, Q6-D2, Q6-A1)", () => {
 			setup: (_cwd, agentDir) => {
 				process.env.PI_CODING_AGENT_DIR = agentDir;
 			},
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			await harness.session.prompt("resumed session");

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -294,13 +294,6 @@ function compactPersistedUpdate<T extends PersistedAdvisorReviewUpdate>(
 		update.text !== originalText || update.successfulMemoryTexts.length !== originalMemoryCount;
 	if (changed) update.truncated = true;
 	return { update, changed };
-}
-
-function lifecycleSnapshotEntries(branch: SessionEntry[]): SessionEntry[] {
-	for (let index = branch.length - 1; index >= 0; index--) {
-		if (branch[index]?.type === "compaction") return branch.slice(index);
-	}
-	return branch;
 }
 
 export interface AdvisorUsageTotals {
@@ -1069,6 +1062,10 @@ export class AdvisorRuntime {
 	private sessionId?: string;
 	private sessionInitialized = false;
 	private cursor: AdvisorCursor = { expectedIndex: 0 };
+	private effectiveSystemPrompt?: string;
+	private effectiveSystemPromptHash?: string;
+	private restoredInstructionsPending = false;
+	private deferredDelivery?: { deliveryId: string; epoch: number; pending: PendingAdvice[] };
 	private pendingUpdate?: QueuedAdvisorUpdate;
 	private throttledUpdate?: QueuedAdvisorUpdate;
 	private activeReview?: PersistedAdvisorActiveReview;
@@ -1539,14 +1536,18 @@ export class AdvisorRuntime {
 		reason: "configuration-apply" | "lifecycle",
 	): void {
 		const session = this.session;
-		const contextEntries = lifecycleSnapshotEntries(branch);
+		const contextEntries = branch;
 		if (session === undefined || contextEntries.length === 0) return;
 		let tokenBudget = Math.max(
 			1,
 			Math.min(this.config.limits.maxReprimeTokens, this.status.contextLimitTokens),
 		);
 		while (tokenBudget >= 1) {
-			const snapshot = renderAdvisorReprimeSnapshot(contextEntries, tokenBudget);
+			const snapshot = renderAdvisorReprimeSnapshot(
+				contextEntries,
+				tokenBudget,
+				this.effectiveSystemPrompt,
+			);
 			if (snapshot.text.trim().length === 0) break;
 			const prompt = `<advisor-reprime reason="${reason}">\n${snapshot.text}\n</advisor-reprime>`;
 			const estimate = estimateAdvisorContext(
@@ -1595,6 +1596,9 @@ export class AdvisorRuntime {
 		if (state === undefined) return;
 
 		this.cursor = { ...state.cursor };
+		if (state.effectiveSystemPromptHash !== undefined)
+			this.effectiveSystemPromptHash = state.effectiveSystemPromptHash;
+		else delete this.effectiveSystemPromptHash;
 		this.meaningfulTurnCount = state.memorySuggestions.meaningfulTurnCount;
 		this.memorySuggestionAdmissions = state.memorySuggestions.admittedCount;
 		if (state.memorySuggestions.lastAdmittedTurn === undefined) {
@@ -1687,6 +1691,8 @@ export class AdvisorRuntime {
 		this.adviceDedupe.restoreEntries(
 			state.dedupeHashes.filter((entry) => !discardedIdentities.has(entry.hash)),
 		);
+		this.restoredInstructionsPending =
+			this.restoredRecoveryPending || this.pendingAdvice.length > 0;
 	}
 
 	private appendTranscriptRecord(record: PersistedAdvisorTranscriptRecordV2): void {
@@ -1728,6 +1734,8 @@ export class AdvisorRuntime {
 
 	private refreshDeferredAdviceStatus(now = Date.now()): void {
 		const pending = this.pendingAdvice.values();
+		if (pending.length === 0 || this.deferredDelivery?.epoch !== this.status.epoch)
+			delete this.deferredDelivery;
 		this.status.deferredNotesPending = pending.length;
 		this.status.restoredDeferredNotesPending = pending.filter(
 			(note) => note.restoredAfterResume === true,
@@ -1848,6 +1856,8 @@ export class AdvisorRuntime {
 			reviewFollowUpsTriggered: this.status.reviewFollowUpsTriggered,
 			notesDelivered: this.status.notesDelivered,
 		};
+		if (this.effectiveSystemPromptHash !== undefined)
+			state.effectiveSystemPromptHash = this.effectiveSystemPromptHash;
 		if (activeReview !== undefined) state.activeReview = activeReview;
 		if (queuedReview !== undefined) state.queuedReview = queuedReview;
 		if (this.lastReviewSubmittedTurn !== undefined) {
@@ -1997,6 +2007,15 @@ export class AdvisorRuntime {
 
 	private async recoverRestoredWork(ctx: ExtensionContext): Promise<void> {
 		if (!this.restoredRecoveryPending || this.disposed || !this.status.active) return;
+		if (this.restoredInstructionsPending) {
+			// Enable can precede before_agent_start overrides. Hold unverified work
+			// until the prepared prompt is observed, rather than trusting the base prompt.
+			const prompt = ctx.getSystemPrompt();
+			if (this.effectiveSystemPromptHash !== createHash("sha256").update(prompt).digest("hex"))
+				return;
+			this.restoredInstructionsPending = false;
+			this.effectiveSystemPrompt = prompt;
+		}
 		this.restoredRecoveryPending = false;
 		const restoredReviewId = this.activeReview?.reviewId;
 		const reviewAlreadyOwned =
@@ -2098,7 +2117,8 @@ export class AdvisorRuntime {
 			return;
 		}
 		if (this.session !== undefined && this.status.active) {
-			if (this.activeReview !== undefined && !this.draining) {
+			if (this.restoredRecoveryPending) await this.recoverRestoredWork(ctx);
+			else if (this.activeReview !== undefined && !this.draining) {
 				this.enqueue(queuedUpdateFromPersisted(this.activeReview));
 			} else {
 				this.resumeThrottledUpdate();
@@ -2424,6 +2444,7 @@ export class AdvisorRuntime {
 
 	private resumeThrottledUpdate(): void {
 		if (
+			this.restoredInstructionsPending ||
 			this.throttledUpdate === undefined ||
 			this.session === undefined ||
 			!this.status.enabled ||
@@ -2560,7 +2581,11 @@ export class AdvisorRuntime {
 			this.persistState();
 			return;
 		}
-		const rendered = renderAdvisorDelta(entries, this.config.context.maxUpdateTokens);
+		const rendered = renderAdvisorDelta(
+			entries,
+			this.config.context.maxUpdateTokens,
+			this.effectiveSystemPrompt,
+		);
 		this.status.redactions += rendered.redactions;
 		if (rendered.text.trim().length === 0) {
 			this.cursor = nextCursor;
@@ -2572,11 +2597,12 @@ export class AdvisorRuntime {
 			this.successfulMemoryTextItemBudget(),
 			this.successfulMemoryTextByteBudget(),
 		);
-		this.cursor = nextCursor;
-		this.meaningfulTurnCount++;
 		const material =
 			!this.config.review.skipNonMaterialTurns ||
-			branchHasMateriallyNewerExecutorActivity(entries, { expectedIndex: 0 });
+			this.configurationReprimeSnapshot !== undefined ||
+			branchHasMateriallyNewerExecutorActivity(branch, this.cursor);
+		this.cursor = nextCursor;
+		this.meaningfulTurnCount++;
 		const scheduled: QueuedAdvisorUpdate = {
 			text: rendered.text,
 			entryCount: rendered.entryCount,
@@ -3712,7 +3738,15 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 
 		const isStale = (pending: PendingAdvice): boolean =>
 			pending.stale || branchHasMateriallyNewerExecutorActivity(branch, pending.branchWindow);
-		const batch = takeRenderedPrefix(this.pendingAdvice, MAX_DEFERRED_DELIVERY_BYTES, (pending) =>
+		// Preview only: keep the batch in the persisted queue until final prompt validation.
+		const preview = new BoundedKeyedByteFifo<PendingAdvice>(
+			MAX_PENDING_ADVICE_ITEMS,
+			MAX_PENDING_ADVICE_BYTES,
+		);
+		for (const pending of this.pendingAdvice.values()) {
+			preview.enqueue(adviceDedupeKey(pending.advice), pending, adviceQueueBytes(pending.advice));
+		}
+		const batch = takeRenderedPrefix(preview, MAX_DEFERRED_DELIVERY_BYTES, (pending) =>
 			formatAdviceForDelivery(
 				pending.advice,
 				"deferred",
@@ -3731,7 +3765,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			.filter((entry) => {
 				// A muted finding suppresses delivery here too: the finding may have
 				// been muted after the note was queued (including restored-after-resume
-				// notes). The entry is already dequeued by the rendered prefix, so it
+				// notes). The entry is removed from the persisted queue here, so it
 				// is dropped without entering model context, without dedupe history,
 				// and without the delivered count, exactly like the deliver() gate.
 				const advice = entry.advice;
@@ -3743,33 +3777,27 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					// The note was registered in the dedupe index when it was queued;
 					// drop that history too so a later unmute can deliver it again.
 					this.adviceDedupe.delete(advice);
+					this.pendingAdvice.remove(adviceDedupeKey(advice));
 					this.status.mutedSuppressions++;
 					return false;
 				}
 				return true;
 			});
-		for (const { advice } of pending) {
-			this.adviceDedupe.add(advice, this.meaningfulTurnCount);
-			this.recordDeliveredFinding(advice);
-		}
-
 		this.refreshDeferredAdviceStatus();
 		if (pending.length === 0) {
 			this.persistState();
 			this.publishStatus();
 			return undefined;
 		}
-		this.status.notesDelivered += pending.length;
-		this.status.memorySuggestionsDelivered += pending.filter(
-			({ advice }) => advice.intent === "memory-suggestion",
-		).length;
+		const deliveryId = `deferred:${String(this.status.epoch)}:${String(++this.deliverySequence)}`;
+		this.deferredDelivery = { deliveryId, epoch: this.status.epoch, pending };
 		const notes = pending.map(
 			({ advice, stale, displayedInEntry, restoredAfterResume, reviewId, tag }) =>
 				this.adviceDetails(
 					advice,
 					"deferred",
 					stale,
-					undefined,
+					deliveryId,
 					displayedInEntry,
 					this.memoryQueueState(advice),
 					restoredAfterResume === true,
@@ -3779,7 +3807,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		);
 		const content = pending.map(({ formatted }) => formatted).join("\n\n");
 		const single = notes.length === 1 ? notes[0] : undefined;
-		const details: AdviceMessageDetails = { notes };
+		const details: AdviceMessageDetails = { notes, deliveryId };
 		if (single !== undefined) Object.assign(details, single);
 		this.persistState();
 		this.publishStatus();
@@ -3830,10 +3858,53 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		return true;
 	}
 
-	observeExecutorMessage(message: AgentMessage): AgentMessage | undefined {
+	observePrimaryContext(ctx: ExtensionContext): void {
+		if (!this.status.enabled || this.disposed) return;
+		// Pi applies forced projection after context_with_system; this getter includes the final override.
+		const effectiveSystemPrompt = ctx.getSystemPrompt();
+		const hash = createHash("sha256").update(effectiveSystemPrompt).digest("hex");
+		const changed =
+			this.effectiveSystemPromptHash !== undefined
+				? this.effectiveSystemPromptHash !== hash
+				: this.restoredInstructionsPending;
+		this.effectiveSystemPrompt = effectiveSystemPrompt;
+		this.effectiveSystemPromptHash = hash;
+		this.restoredInstructionsPending = false;
+		if (
+			changed ||
+			validateCursor(ctx.sessionManager.getBranch(), this.cursor) === "context-changed"
+		) {
+			this.handleBranchChange(ctx);
+		} else if (this.restoredRecoveryPending) {
+			void this.recoverRestoredWork(ctx);
+		}
+	}
+
+	observeExecutorMessage(message: AgentMessage, ctx?: ExtensionContext): AgentMessage | undefined {
 		if (message.role !== "custom" || message.customType !== ADVISOR_CUSTOM_TYPE) return;
+		if (ctx !== undefined) this.observePrimaryContext(ctx);
 		const deliveryId = this.deliveryIdFromDetails(message.details);
 		const reviewId = this.reviewIdFromDetails(message.details);
+		const deferred = this.deferredDelivery;
+		if (
+			deliveryId !== undefined &&
+			deferred?.deliveryId === deliveryId &&
+			deferred.epoch === this.status.epoch &&
+			deferred.pending.every(({ advice }) => this.pendingAdvice.has(adviceDedupeKey(advice)))
+		) {
+			delete this.deferredDelivery;
+			for (const { advice } of deferred.pending) {
+				this.pendingAdvice.remove(adviceDedupeKey(advice));
+				this.adviceDedupe.add(advice, this.meaningfulTurnCount);
+				this.recordDeliveredFinding(advice);
+				this.status.notesDelivered++;
+				if (advice.intent === "memory-suggestion") this.status.memorySuggestionsDelivered++;
+			}
+			this.refreshDeferredAdviceStatus();
+			this.persistState();
+			this.publishStatus();
+			return;
+		}
 		if (
 			deliveryId !== undefined &&
 			this.activeAdvice

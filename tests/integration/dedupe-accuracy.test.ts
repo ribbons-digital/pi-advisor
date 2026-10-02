@@ -15,7 +15,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
-import { runtimeInternals } from "../fixtures/runtime-internals.js";
+import { bindFixtureInstructions, runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -457,6 +457,7 @@ describe.sequential("Quality Slice Q5 dedupe accuracy", () => {
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			if (runtime === undefined) throw new Error("Expected Advisor runtime");

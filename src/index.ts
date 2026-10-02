@@ -515,14 +515,16 @@ function installPiAdvisor(pi: ExtensionAPI, options: PiAdvisorExtensionOptions):
 		void runtime.observeTurn(event, ctx);
 	});
 
-	pi.on("message_end", (event) => {
-		const message = runtime.observeExecutorMessage(event.message);
+	pi.on("message_end", (event, ctx) => {
+		const message = runtime.observeExecutorMessage(event.message, ctx);
 		return message === undefined ? undefined : { message };
 	});
 
 	pi.on("context", (event) => ({
 		messages: runtime.filterRevokedExecutorAdvice(event.messages),
 	}));
+
+	pi.on("context_with_system", (_event, ctx) => runtime.observePrimaryContext(ctx));
 
 	pi.on("agent_settled", (_event, ctx) => runtime.settleActiveAdvice(ctx));
 	pi.on("session_before_compact", (_event, ctx) => runtime.handleLifecycleHint(ctx));

@@ -84,6 +84,28 @@ describe("Slice 3A lifecycle state primitives", () => {
 		).toBeUndefined();
 	});
 
+	it("round-trips only a bounded effective-instruction fingerprint, while older snapshots stay unknown", () => {
+		const manager = SessionManager.inMemory();
+		const state = stateFor(manager);
+		const valid = { ...state, effectiveSystemPromptHash: "a".repeat(64) };
+		expect(
+			parsePersistedAdvisorRuntimeState(valid, manager.getSessionId(), manager.getBranch()),
+		).toEqual(valid);
+		expect(
+			parsePersistedAdvisorRuntimeState(state, manager.getSessionId(), manager.getBranch())
+				?.effectiveSystemPromptHash,
+		).toBeUndefined();
+		for (const hash of ["raw instructions", "a".repeat(65), "A".repeat(64), null, 42]) {
+			expect(
+				parsePersistedAdvisorRuntimeState(
+					{ ...state, effectiveSystemPromptHash: hash },
+					manager.getSessionId(),
+					manager.getBranch(),
+				),
+			).toBeUndefined();
+		}
+	});
+
 	it("distinguishes transcript shrink from same-length ancestry mismatch", () => {
 		const manager = SessionManager.inMemory();
 		const root = manager.appendMessage({ role: "user", content: "root", timestamp: 1 });

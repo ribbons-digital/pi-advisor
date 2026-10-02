@@ -3,6 +3,7 @@ import {
 	fuzzyFilter,
 	getKeybindings,
 	Input,
+	Text,
 	truncateToWidth,
 	type Component,
 	type Focusable,
@@ -144,10 +145,11 @@ export class AdvisorModelPicker implements Component, Focusable {
 			}
 		}
 		lines.push(
-			truncateToWidth(
+			...new Text(
 				this.theme.fg("muted", "Type to search · ↑/↓ navigate · Enter select · Esc cancel"),
-				availableWidth,
-			),
+				0,
+				0,
+			).render(availableWidth),
 		);
 		return lines;
 	}
