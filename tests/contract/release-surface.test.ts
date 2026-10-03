@@ -144,6 +144,9 @@ describe("public release surface", () => {
 				"docs/releasing.md",
 				"docs/f9-evaluation.md",
 				"docs/internal/CONTEXT.md",
+				"docs/handoff.md",
+				"docs/slice-3-plan.md",
+				"docs/review-notes.md",
 				"AGENTS.md",
 			].map((path) => ({
 				manifest,
@@ -330,10 +333,14 @@ describe("public release surface", () => {
 			expect(document.content, document.path).not.toMatch(
 				/\b(?:unreleased|unpublished)\b|planned release|not yet available|until release approval/i,
 			);
-			expect(document.content, document.path).not.toMatch(
-				/docs\/(?:development|releasing|f9-evaluation)\.md/,
-			);
+			expect(document.content, document.path).not.toContain("docs/f9-evaluation.md");
 		}
+		expect(readme).toContain(
+			"[Development](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/development.md)",
+		);
+		expect(readme).toContain(
+			"[Release approval](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/releasing.md)",
+		);
 		for (const path of ["docs/development.md", "docs/releasing.md", "docs/f9-evaluation.md"]) {
 			expect(readFileSync(path, "utf8"), path).not.toMatch(/\bunreleased\b/i);
 		}

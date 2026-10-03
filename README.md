@@ -301,6 +301,8 @@ Pi Advisor intentionally:
 - [Security](docs/security.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
+Contributor instructions: [Development](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/development.md) and [Release approval](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/releasing.md).
+
 ## Attribution
 
 Pi Advisor is an independently implemented extension inspired by OMP's automatic Advisor design.
