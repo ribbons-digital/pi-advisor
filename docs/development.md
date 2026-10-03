@@ -2,9 +2,8 @@
 
 ## Current baseline
 
-This unreleased checkout targets Pi 1.0.0.
-Planned release: v0.5.0 (unreleased).
-The package metadata remains 0.4.1 until approval to prepare the versioned release.
+Pi Advisor 0.5.0 targets Pi 1.0.0.
+This contributor document is not included in the npm package.
 Development dependencies pin all four Pi packages to 1.0.0 and TypeBox to 1.3.27.
 The five host-provided packages use wildcard peers so Pi can supply its own modules.
 Wildcard peers are a host-module loading contract, not a compatibility range.
@@ -23,15 +22,15 @@ Host file inspection, editing, Git, and sandbox management are allowed.
 
 The existing sandbox is `pi-advisor-compat-research`.
 Its mounted workspace is `/tmp/pi-advisor-compat-research.jXV79D`.
-The current verification snapshot is `/tmp/pi-advisor-compat-research.jXV79D/phase4`.
-The `baseline`, `phase1`, `phase2`, and `phase3` snapshots are preserved for comparison.
+The current release verification snapshot is `/tmp/pi-advisor-compat-research.jXV79D/release-0.5.0`.
+The `baseline`, `phase1`, `phase2`, `phase3`, and `phase4` snapshots are preserved for comparison.
 Host dependencies, credentials, home directories, and the Docker socket are not shared.
 
 Run these host commands from the repository root to refresh the snapshot:
 
 ```sh
 SANDBOX=pi-advisor-compat-research
-WORKSPACE=/tmp/pi-advisor-compat-research.jXV79D/phase4
+WORKSPACE=/tmp/pi-advisor-compat-research.jXV79D/release-0.5.0
 mkdir -p "$WORKSPACE"
 git ls-files --cached --others --exclude-standard -z \
   | while IFS= read -r -d '' file; do
@@ -87,7 +86,7 @@ Run the following host command for each required Node version:
 sbx exec --workdir "$WORKSPACE" "$SANDBOX" bash -lc '
   set -euo pipefail
   VERSION=22.22.3
-  test "$(pwd)" = /tmp/pi-advisor-compat-research.jXV79D/phase4
+  test "$(pwd)" = /tmp/pi-advisor-compat-research.jXV79D/release-0.5.0
   mkdir -p /tmp/pi-advisor-bin
   export PATH="/tmp/pi-advisor-node/node-v${VERSION}-linux-arm64/bin:/tmp/pi-advisor-bin:$PATH"
   corepack enable --install-directory /tmp/pi-advisor-bin
@@ -123,4 +122,4 @@ These command-line checks do not replace rendered-interface checks when UI chang
 Keep the upgrade PR draft until the agreed implementation and independent review gates pass.
 Report the tested Node and Pi versions, package checks, and remaining live-service limits separately.
 Do not change versions, tag, merge, or publish without the user's approval for that step.
-The release instructions describe later approved work, not authorization to perform it.
+Follow [Release approval](releasing.md) for version, archive-content, tag, and publication checks.

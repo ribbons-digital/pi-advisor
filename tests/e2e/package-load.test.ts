@@ -109,7 +109,7 @@ describe("packed Pi package", () => {
 				}),
 			) as PackResult;
 			const paths = pack.files.map((file) => file.path);
-			expect(pack).toMatchObject({ name: "@ribbons-digital/pi-advisor", version: "0.4.1" });
+			expect(pack).toMatchObject({ name: "@ribbons-digital/pi-advisor", version: "0.5.0" });
 			expect(paths).toContain("src/index.ts");
 			expect(paths).toContain("docs/configuration.md");
 			expect(paths).toContain("docs/assets/advisor-in-action.png");
@@ -595,9 +595,9 @@ export default function(pi) {
 			expect(explicit.stdout).toContain('"id":"explicit-state"');
 			expect(explicit.stdout).toContain('"messageCount":0');
 
-			// The package is unpublished and this E2E is intentionally offline, so the local
-			// package source exercises Pi's update and removal lifecycle. The release-surface
-			// contract separately pins the documented unversioned npm source and commands.
+			// A local package source exercises Pi's update and removal lifecycle without
+			// assuming a registry release. The release-surface contract separately pins
+			// the documented unversioned npm source and commands.
 			const update = runPi(["update", "--extensions"], root, env);
 			expect(update.status, update.stderr).toBe(0);
 
