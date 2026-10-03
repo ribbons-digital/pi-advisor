@@ -73,7 +73,7 @@ function runPi(args: string[], cwd: string, env: NodeJS.ProcessEnv, input?: stri
 
 describe("packed Pi package", () => {
 	it("uses the intended installed Pi version", () => {
-		expect(expectedPiVersion).toMatch(/^(?:0\.8[1-4]\.\d+|1\.0\.0)$/);
+		expect(expectedPiVersion).toBe("1.0.0");
 		// SAFETY: the installed package.json is controlled by pnpm.
 		const installedManifest = JSON.parse(
 			readFileSync(
@@ -218,28 +218,14 @@ process.stdout.write(JSON.stringify({ mode, constrainedSampling: tool.constraine
 				constrainedSampling?: unknown;
 				parameters: SchemaProbe;
 			};
-			if (expectedPiVersion === "0.81.1") {
-				expect(packagedProbe.mode).toBe("portable");
-				expect(packagedProbe).not.toHaveProperty("constrainedSampling");
-				expect(packagedProbe.parameters).not.toHaveProperty("additionalProperties");
-				expect(packagedProbe.parameters).toMatchObject({
-					type: "object",
-					required: ["note"],
-					properties: {
-						note: { type: "string", minLength: 1 },
-						intent: { type: "string", enum: ["review", "memory-suggestion"] },
-					},
-				});
-			} else {
-				expect(packagedProbe.mode).toBe("strict");
-				expect(packagedProbe.constrainedSampling).toEqual({
-					type: "json_schema",
-					strict: "prefer",
-				});
-				expect(packagedProbe.parameters).toMatchObject({
-					required: ["note", "intent", "severity", "findingKey", "memory"],
-				});
-			}
+			expect(packagedProbe.mode).toBe("strict");
+			expect(packagedProbe.constrainedSampling).toEqual({
+				type: "json_schema",
+				strict: "prefer",
+			});
+			expect(packagedProbe.parameters).toMatchObject({
+				required: ["note", "intent", "severity", "findingKey", "memory"],
+			});
 
 			const install = runPi(["install", installedPackageDir, "--approve"], root, env);
 			expect(install.status, install.stderr).toBe(0);
@@ -474,33 +460,31 @@ export default function(pi) {
 				expect(serialized).not.toMatch(/adviseSchemaMode|schemaMode|schemaVariant/iu);
 			}
 
-			if (expectedPiVersion !== "0.81.1") {
-				writeFileSync(
-					userYaml,
-					"version: 1\ndefaultEnabled: true\nmodel: packed-scripted/advisor-portable\neffort: off\ntools: []\n",
-				);
-				const portableModel = runPi(
-					[
-						"--mode",
-						"rpc",
-						"--no-session",
-						"--no-context-files",
-						"--no-skills",
-						"--no-prompt-templates",
-						"--no-themes",
-						"--no-tools",
-						"--extension",
-						scriptedExtension,
-						"--model",
-						"packed-scripted/primary",
-					],
-					root,
-					env,
-					`${JSON.stringify({ id: "portable-status", type: "prompt", message: "/advisor status full" })}\n`,
-				);
-				expect(portableModel.status, portableModel.stderr).toBe(0);
-				expect(portableModel.stdout).toContain("Advise schema: portable");
-			}
+			writeFileSync(
+				userYaml,
+				"version: 1\ndefaultEnabled: true\nmodel: packed-scripted/advisor-portable\neffort: off\ntools: []\n",
+			);
+			const portableModel = runPi(
+				[
+					"--mode",
+					"rpc",
+					"--no-session",
+					"--no-context-files",
+					"--no-skills",
+					"--no-prompt-templates",
+					"--no-themes",
+					"--no-tools",
+					"--extension",
+					scriptedExtension,
+					"--model",
+					"packed-scripted/primary",
+				],
+				root,
+				env,
+				`${JSON.stringify({ id: "portable-status", type: "prompt", message: "/advisor status full" })}\n`,
+			);
+			expect(portableModel.status, portableModel.stderr).toBe(0);
+			expect(portableModel.stdout).toContain("Advise schema: portable");
 
 			const defaultRecordingConfig =
 				"version: 1\ndefaultEnabled: true\nmodel: missing/provider\neffort: low\n";

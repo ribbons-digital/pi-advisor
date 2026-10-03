@@ -11,10 +11,11 @@ It stays silent when work is sound and delivers a bounded, actionable note when 
 > When Advisor is active, it sends bounded session content and allowed file content to the model provider you select, which can create additional usage and cost.
 
 > [!IMPORTANT]
-> Pi Advisor 0.4.1 requires Pi (`@earendil-works/pi-coding-agent`) **>=0.81.1 <0.85.0**.
-> Pi 0.82.0 is the primary tested Pi release, with compatibility coverage retained for Pi 0.81.1, Pi 0.83.0, and Pi 0.84.1.
-> Pi 0.80.x is not supported by this release.
-> On Pi 0.80.7, install the pinned legacy release `npm:@ribbons-digital/pi-advisor@0.1.3` instead.
+> This unreleased build targets Pi 1.0.0 and requires Node.js `>=22.19.0`.
+> Planned release: v0.5.0 (unreleased).
+> It has not been published; the package version remains 0.4.1 until release approval.
+> Published Pi Advisor 0.4.1 supports Pi `>=0.81.1 <0.85.0`; pin `npm:@ribbons-digital/pi-advisor@0.4.1` for those older versions.
+> On Pi 0.80.7, pin `npm:@ribbons-digital/pi-advisor@0.1.3` instead.
 
 ![Pi Advisor surfaces a concern about stale cache data after reviewing an Executor response](docs/assets/advisor-in-action.png)
 
@@ -37,19 +38,26 @@ _Pi Advisor reviewing a synthetic cache implementation in a privacy-safe demo se
 ## Requirements
 
 - Node.js >=22.19.0.
-- Pi (`@earendil-works/pi-coding-agent`) >=0.81.1 <0.85.0.
+- Pi (`@earendil-works/pi-coding-agent`) 1.0.0 for this unreleased build.
 
-Declared compatibility range: >=0.81.1 <0.85.0
+Supported Pi release for this build: 1.0.0
 
-Primary tested Pi release: 0.82.0
+Other Pi releases are not verified or supported by this build.
+Wildcard peers are a host-module loading contract, not a compatibility range.
+Development pins Pi 1.0.0 and TypeBox 1.3.27; Pi supplies the five host modules when loading the extension.
+Automated checks use scripted providers and local HTTP capture, not live external models.
+Live model-service compatibility remains unverified.
+Virtual Advisor models (`pi-virtual`) are rejected; select a physical provider/model instead.
 
-Compatibility-tested Pi releases: 0.81.1, 0.83.0, and 0.84.1
-
+Published Pi Advisor 0.4.1 retains its older Pi `>=0.81.1 <0.85.0` support; install the pinned version shown above rather than this build.
 Pi 0.80.x is not compatible with Pi Advisor 0.4.1.
 Pi Advisor 0.1.3 is the legacy release for Pi 0.80.7.
 Missing capabilities, unavailable models, missing credentials, or unverifiable provider parity leave Advisor inactive without fallback.
 
 ## Install
+
+The npm commands below install the published release, not this unreleased Pi 1.0 build.
+For the Pi 1.0 checkout and its verification commands, see [Development](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/development.md).
 
 Install the unpinned npm package through Pi:
 
@@ -77,8 +85,7 @@ The configuration flow selects an authenticated model, an independent Advisor re
 Advisor reasoning choices are derived from the selected model's supported levels, and unsupported levels are omitted.
 A model without reasoning support offers only `off`.
 If the current Advisor reasoning level is unsupported by the selected model, the flow warns and requires a new supported selection.
-On Pi 0.82, the reasoning prompt also shows the current Executor reasoning level as supplementary context, but the Advisor selection remains independent and is not automatically coupled to it.
-The Pi 0.81 compatibility path omits that supplementary Executor text without changing configuration behavior.
+The reasoning prompt also shows the current Executor reasoning level as supplementary context, but the Advisor selection remains independent and is not automatically coupled to it.
 In the TUI, the model picker is focused immediately and fuzzy-searches provider, model ID, and display name as you type; RPC clients retain their standard selection dialog.
 It shows a summary and asks for confirmation before atomically saving `~/.pi/agent/WATCHDOG.yml`.
 If that path is a symlink, the save writes through to the target file and leaves the link in place.
@@ -124,6 +131,10 @@ JSON and print runs always require explicit activation.
 
 ## Upgrade
 
+The planned v0.5.0 release changes the supported Pi target to 1.0.0.
+Update Pi before installing that release; v0.5.0 is not yet available on npm.
+Keep the pinned v0.4.1 installation if you need its older Pi support.
+
 Upgrade installed Pi packages, including an unpinned Pi Advisor installation, with:
 
 ```sh
@@ -164,6 +175,9 @@ Workflow or gate advice is checked against recent Executor actions, tool results
 The Advisor model must use one `findingKey` for paraphrases or severity changes of exactly one concrete defect and a different key for every materially different defect.
 The key, rather than note wording or severity, is authoritative for semantic suppression, so incorrect model key reuse can suppress a distinct note.
 A reused key still delivers a materially dissimilar note as a possible duplicate (64-bit SimHash similarity below the configured threshold), and a persisting defect re-delivers as re-raised when its severity strictly increases after the configured turn distance.
+Advisor observes current model-facing messages after context edits and the effective primary instructions, including forced overrides, under the existing redaction and size bounds.
+Replaced or omitted messages remain Pi audit history but are not current review evidence.
+Context edits and later instruction changes invalidate old review ownership; private re-prime preserves the current compaction summary and retained tail.
 Only an accepted Advisory note enters the Executor context.
 Private Advisor reasoning, rejected notes, duplicate notes, content-free responses, and ordinary silent reviews remain outside the Executor context.
 
@@ -192,6 +206,12 @@ If compatible capability is absent, no Memory suggestion is produced and ordinar
 Advice is marked potentially stale only when the Executor produced materially newer activity after the reviewed window: a non-read-only tool call or its result, a context-included user bash execution, or a compaction or branch-summary entry.
 User messages, plain assistant text, read-only tool calls and their results, and extension context never mark advice stale on their own, so the user prompt that triggers deferred materialization does not stale the emitted note.
 Restored advice still requires fresh verification.
+Saved lifecycle metadata includes a bounded instruction fingerprint, not an additional raw prompt.
+Changed instructions or a missing older fingerprint invalidate unfinished restored guidance before delivery; delivered-note counts and Memory cadence remain preserved.
+Unchanged instructions allow once-only delivery.
+Deferred batches stay pending until final prompt validation, and revoked message content is cleared before Pi persists it or uses it in branch or compaction summaries.
+Retained Pi steering after an RPC abort keeps one owner rather than creating a duplicate deferred note.
+Complete successful nested Memory-tool records can suppress duplicate proposals, but Advisor never executes those nested calls itself.
 Every Advisor card has a severity-colored left border so it remains visually distinct from native tool-call cards; Memory suggestion cards use the Advisor accent color.
 Cards render compact Markdown so a short lead stays above the supporting detail, and numbered or bullet actions stay on separate lines.
 While a review is in flight, the TUI footer shows a spinner next to `Advisor reviewing`.
@@ -229,7 +249,9 @@ Advisor estimates its private context before each bounded update and asks Pi's p
 If compaction fails or remains unsafe, Advisor clears only its private nested history and retries the same current bounded update once without replaying the full Executor branch.
 If that update still cannot fit fresh context, Advisor drops only that update, warns, and remains active for later updates.
 Reaching the hard per-update tool-call, turn, or review-attempt time limit skips only that review without retrying it, and automatic review continues with later eligible Executor updates.
-Nested review and nested compaction are bounded by `limits.maxReviewAttemptMs` and `limits.maxNestedCompactionMs`. Host compact and tree navigation signal Advisor abort and return immediately. Disable, shutdown, and the next review bound nested abort waits with `limits.maxLifecycleAbortMs` so those paths cannot hang on a provider that ignores abort.
+Nested review and nested compaction are bounded by `limits.maxReviewAttemptMs` and `limits.maxNestedCompactionMs`.
+Host compact and tree navigation signal Advisor abort and return immediately.
+Disable, shutdown, and the next review bound nested abort waits with `limits.maxLifecycleAbortMs` so those paths cannot hang on a provider that ignores abort.
 Accepted review advice retains its existing bounded delivery behavior, while provisional Memory suggestions from the rolled-back attempt remain discarded.
 `/advisor status` reports the cumulative governor-skipped review count and latest bounded outcome.
 Three consecutive ordinary updates that each exhaust their retry path pause Advisor with one warning that includes the final bounded, secret-redacted failure reason; handled per-update governor exhaustion clears rather than advances that streak.
@@ -258,7 +280,7 @@ Network requests to your explicitly selected model provider are necessary while 
 Pi Advisor provides automatic background observation.
 
 Both packages register `/advisor`.
-Pi 0.81.1 assigns `/advisor:1` and `/advisor:2` in extension load order when both are installed.
+Pi assigns `/advisor:1` and `/advisor:2` in extension load order when both are installed.
 Pi Advisor warns once when duplicate assigned commands are detectable and does not disable or modify the other package.
 Use Pi's command list to identify each suffix.
 Unless you intentionally want both review styles and their additional provider cost, disable or uninstall one package.
@@ -282,6 +304,8 @@ Pi Advisor intentionally:
 - [Configuration reference](docs/configuration.md)
 - [Security](docs/security.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
+
+Contributor instructions: [Development](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/development.md) and [Release approval](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/releasing.md).
 
 ## Attribution
 
