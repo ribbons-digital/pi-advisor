@@ -24,6 +24,7 @@ import { dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+	calculateContextTokens,
 	createAgentSession,
 	DefaultResourceLoader,
 	getAgentDir,
@@ -34,7 +35,6 @@ import {
 	type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
-import { calculateContextTokens } from "@earendil-works/pi-agent-core";
 
 import { createAdviseTool, type AdviceCollector } from "../../src/advice.js";
 import { loadAdvisorConfiguration } from "../../src/configuration.js";

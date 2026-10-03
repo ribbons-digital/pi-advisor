@@ -19,6 +19,7 @@ import { setRuntimeApiKeyWithoutNetwork } from "../../src/compatibility/model-ru
 import { registerScriptedProvider, type ScriptedProvider } from "./scripted-provider.js";
 
 export interface SessionHarnessOptions {
+	cwd?: string;
 	provider: ScriptedProvider;
 	advisorProvider?: ScriptedProvider;
 	extensions?: InlineExtension[];
@@ -28,6 +29,7 @@ export interface SessionHarnessOptions {
 	mode?: "tui" | "rpc" | "json" | "print";
 	setup?(cwd: string, agentDir: string): Promise<void> | void;
 	beforeBind?(modelRuntime: ModelRuntime): Promise<void> | void;
+	beforeSessionStart?(session: AgentSession): Promise<void> | void;
 }
 
 export interface SessionHarness {
@@ -43,7 +45,7 @@ export async function createSessionHarness(
 	options: SessionHarnessOptions,
 ): Promise<SessionHarness> {
 	const root = await mkdtemp(join(tmpdir(), "pi-advisor-"));
-	const cwd = join(root, "project");
+	const cwd = options.cwd ?? join(root, "project");
 	const agentDir = join(root, "agent");
 	let session: AgentSession | undefined;
 
@@ -108,6 +110,7 @@ export async function createSessionHarness(
 		if (options.customTools !== undefined) sessionOptions.customTools = options.customTools;
 		if (options.tools !== undefined) sessionOptions.tools = options.tools;
 		({ session } = await createAgentSession(sessionOptions));
+		await options.beforeSessionStart?.(session);
 		await session.bindExtensions({ mode: options.mode ?? "json" });
 
 		let disposed = false;

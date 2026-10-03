@@ -17,18 +17,18 @@ export interface ResolvedAdvisorModelRuntime {
 	model: Model<Api>;
 }
 
+// Pi 1.0 exposes this marker on catalog models, but does not export its virtual-model predicate.
+export function isAdvisorVirtualModel(model: Pick<Model<Api>, "api">): boolean {
+	return model.api === "pi-virtual";
+}
+
 export async function setRuntimeApiKeyWithoutNetwork(
 	runtime: Pick<ModelRuntime, "setRuntimeApiKey">,
 	providerId: string,
 	apiKey: string,
 ): Promise<void> {
-	// SAFETY: the compatibility check above confirms the runtime method signature used here.
-	const apply = runtime.setRuntimeApiKey.bind(runtime) as (
-		providerId: string,
-		apiKey: string,
-		options?: { allowNetwork?: boolean },
-	) => Promise<void>;
-	await apply(providerId, apiKey, { allowNetwork: false });
+	// Pi 1.0.0 synchronizes runtime credentials with allowNetwork:false internally.
+	await runtime.setRuntimeApiKey(providerId, apiKey);
 }
 
 export class ModelRuntimeCompatibilityError extends Error {
@@ -178,6 +178,11 @@ function mirrorRegistrations(host: ModelRegistry, nestedRuntime: ModelRuntime): 
 export async function resolveAdvisorModelRuntime(
 	options: ResolveAdvisorModelRuntimeOptions,
 ): Promise<ResolvedAdvisorModelRuntime> {
+	if (isAdvisorVirtualModel(options.model)) {
+		throw new ModelRuntimeCompatibilityError(
+			"virtual models are unsupported; select a physical model",
+		);
+	}
 	const agentDir = options.agentDir ?? getAgentDir();
 	let modelRuntime: ModelRuntime;
 	try {

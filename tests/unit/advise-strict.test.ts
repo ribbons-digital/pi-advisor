@@ -174,7 +174,7 @@ describe("strict advise wire contract", () => {
 			intent: null,
 			severity: null,
 			findingKey: null,
-			memory: { text: null, category: null, basis: null },
+			memory: null,
 		});
 		expect(
 			prepareAndValidate(tool, {
@@ -232,7 +232,7 @@ describe("strict advise wire contract", () => {
 		).not.toThrow();
 	});
 
-	it("passes Pi compilation with internally encoded null memory and complete memory", () => {
+	it("passes Pi compilation with native null memory and complete memory", () => {
 		const tool = createStrictAdviseTool(DEFAULT_ADVISOR_CONFIG, collector());
 		expect(() =>
 			prepareAndValidate(tool, {
@@ -256,13 +256,7 @@ describe("strict advise wire contract", () => {
 		).not.toThrow();
 	});
 
-	it("pins the TypeBox [object, null] compile workaround on the pinned TypeBox version", () => {
-		// Pinned TypeBox 1.1.38 compiles the object member of ["object", "null"] without a
-		// null guard, so a raw null memory throws during compiled validation instead of
-		// validating. prepareStrictAdviseArguments substitutes an equivalent
-		// { text: null, category: null, basis: null } encoding to keep Pi validation safe.
-		// When TypeBox fixes the compile behavior, this expectation fails and the workaround
-		// in src/advice.ts can be removed together with this test.
+	it("preserves native null memory through preparation and compiled TypeBox validation", () => {
 		const compiled = Compile(STRICT_ADVISE_WIRE_SCHEMA);
 		const nullMemory = {
 			note: "Verify the rollback path.",
@@ -271,7 +265,10 @@ describe("strict advise wire contract", () => {
 			findingKey: null,
 			memory: null,
 		};
-		expect(() => compiled.Check(nullMemory)).toThrow();
+		expect(compiled.Check(nullMemory)).toBe(true);
+		expect(
+			prepareAndValidate(createStrictAdviseTool(DEFAULT_ADVISOR_CONFIG, collector()), nullMemory),
+		).toEqual(nullMemory);
 		expect(
 			compiled.Check({ ...nullMemory, memory: { text: null, category: null, basis: null } }),
 		).toBe(true);

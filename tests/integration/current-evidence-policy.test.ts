@@ -1,3 +1,4 @@
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { defineTool, type InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
@@ -85,7 +86,7 @@ describe.sequential("current implementation evidence review policy", () => {
 			await harness.session.prompt("Continue the unfinished implementation.");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
 
-			const systemPrompt = advisor.requests[0]?.context.systemPrompt ?? "";
+			const systemPrompt = getCurrentSystemPrompt(advisor.requests[0]?.context.messages ?? []);
 			expect(systemPrompt).toContain(
 				"normally use no more than two or three read-only tool calls before advising or remaining silent",
 			);
@@ -336,13 +337,14 @@ describe.sequential("current implementation evidence review policy", () => {
 			expect(context).toContain("Current explicit workflow");
 			expect(context).toContain("Blaze skill");
 			expect(context).toContain("cancel writes WATCHDOG.yml");
-			expect(request?.context.systemPrompt).toContain(
+			const systemPrompt = getCurrentSystemPrompt(request?.context.messages ?? []);
+			expect(systemPrompt).toContain(
 				"Prioritize current code, UX, cancellation, atomicity, tests, safety, correctness, and scope evidence",
 			);
-			expect(request?.context.systemPrompt).toContain(
+			expect(systemPrompt).toContain(
 				"equivalent workflows need no remembered skill or process name",
 			);
-			expect(request?.context.systemPrompt).toContain(
+			expect(systemPrompt).toContain(
 				"The findingKey is authoritative for repeat suppression regardless of note wording or severity",
 			);
 
@@ -462,7 +464,7 @@ describe.sequential("current implementation evidence review policy", () => {
 					return match?.[1] === undefined ? [] : [match[1]];
 				}) ?? [];
 			expect(observedToolEvents).toEqual(["record_review", "create_pr"]);
-			expect(completedWorkflowReview?.context.systemPrompt).toContain(
+			expect(getCurrentSystemPrompt(completedWorkflowReview?.context.messages ?? [])).toContain(
 				"verify the latest User request and newest Executor actions, tool results, and review results",
 			);
 

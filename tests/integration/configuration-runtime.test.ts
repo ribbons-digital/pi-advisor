@@ -107,7 +107,15 @@ describe.sequential("Slice 5A runtime configuration apply", () => {
 			expect(runtime.getNestedMessageCount()).toBe(0);
 
 			await harness.session.prompt("third user request after configuration apply");
-			await waitFor(() => advisor.requests.length >= 3);
+			await waitFor(() =>
+				advisor.requests.some(
+					(request) =>
+						request.options?.reasoning === "low" &&
+						JSON.stringify(request.context).includes(
+							"third user request after configuration apply",
+						),
+				),
+			);
 			const latest = advisor.requests.at(-1);
 			expect(latest?.options?.reasoning).toBe("low");
 			const serialized = JSON.stringify(latest?.context);

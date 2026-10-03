@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { SessionManager, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import {
+	SessionManager,
+	type InlineExtension,
+	type TurnEndEvent,
+} from "@earendil-works/pi-coding-agent";
 
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import { createPrimaryProvider } from "../fixtures/scripted-provider.js";
@@ -153,7 +157,7 @@ describe.sequential("Pi 0.81.1 branch and lifecycle spikes", () => {
 	});
 
 	it("exposes an aborted stop reason but no public user-interrupt cause", async () => {
-		const observedTurnEnds: unknown[] = [];
+		const observedTurnEnds: TurnEndEvent[] = [];
 		const extension: InlineExtension = {
 			name: "abort-spike",
 			factory: (pi) => {
@@ -174,13 +178,27 @@ describe.sequential("Pi 0.81.1 branch and lifecycle spikes", () => {
 			await prompt;
 
 			expect(observedTurnEnds).toHaveLength(1);
-			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
-			const event = observedTurnEnds[0] as {
-				message: { stopReason: string };
-			};
-			expect(event.message.stopReason).toBe("aborted");
-			expect(Object.keys(event).sort()).toEqual(["message", "toolResults", "turnIndex", "type"]);
-			expect(JSON.stringify(event)).not.toMatch(/user|interrupt|cause/i);
+			const event = observedTurnEnds[0];
+			if (event === undefined) throw new Error("Expected the aborted turn boundary");
+			expect(event.message).toMatchObject({ stopReason: "aborted" });
+			expect(event.outcome).toBe("aborted");
+			expect(event.messageEntryId).toBeTypeOf("string");
+			expect(event.toolResultEntryIds).toEqual([]);
+			expect(event.continue).toBe(false);
+			expect(event.context.canContinue).toBe(false);
+			expect(Object.keys(event).sort()).toEqual([
+				"context",
+				"continue",
+				"entries",
+				"message",
+				"messageEntryId",
+				"outcome",
+				"toolResultEntryIds",
+				"toolResults",
+				"turnIndex",
+				"type",
+			]);
+			expect(JSON.stringify(event.message)).not.toMatch(/user|interrupt|cause/i);
 		} finally {
 			await harness.dispose();
 		}

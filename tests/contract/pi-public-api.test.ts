@@ -1,5 +1,9 @@
-import { estimateContextTokens } from "@earendil-works/pi-agent-core";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import {
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	InMemoryCredentialStore,
+	normalizeContext,
+} from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -80,7 +84,9 @@ describe("supported Pi public API contract", () => {
 	it("exports the required SDK constructors and methods", () => {
 		expect(createAgentSession).toBeTypeOf("function");
 		expect(calculateContextTokens).toBeTypeOf("function");
-		expect(estimateContextTokens).toBeTypeOf("function");
+		expect(getCurrentSystemPrompt).toBeTypeOf("function");
+		expect(getCurrentTools).toBeTypeOf("function");
+		expect(normalizeContext).toBeTypeOf("function");
 		expect(estimateTokens).toBeTypeOf("function");
 		expect(DefaultResourceLoader).toBeTypeOf("function");
 		expect(InMemoryCredentialStore).toBeTypeOf("function");
@@ -92,9 +98,15 @@ describe("supported Pi public API contract", () => {
 		expectMethod(ModelRuntime.prototype, "getAuth");
 		expectMethod(SessionManager, "inMemory");
 		expectMethod(SessionManager.prototype, "getBranch");
+		expectMethod(SessionManager.prototype, "getLeafId");
+		expectMethod(SessionManager.prototype, "branch");
+		expectMethod(SessionManager.prototype, "resetLeaf");
+		expectMethod(SessionManager.prototype, "buildSessionProjection");
 		expectMethod(SessionManager.prototype, "getEntries");
 		expectMethod(SessionManager.prototype, "buildContextEntries");
 		expectMethod(AgentSession.prototype, "prompt");
+		expectMethod(AgentSession.prototype, "refreshContext");
+		expectMethod(AgentSession.prototype, "getContextUsage");
 		expectMethod(AgentSession.prototype, "subscribe");
 		expectMethod(AgentSession.prototype, "compact");
 		expectMethod(AgentSession.prototype, "abortCompaction");
@@ -118,7 +130,7 @@ describe("supported Pi public API contract", () => {
 					.getAllTools()
 					.map((tool) => tool.name)
 					.sort(),
-			).toEqual(["bash", "edit", "find", "grep", "ls", "read", "write"]);
+			).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
 			expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
 		} finally {
 			await harness.dispose();

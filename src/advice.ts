@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { StringEnum, validateToolArguments } from "@earendil-works/pi-ai";
+import { StringEnum, validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
@@ -223,6 +223,10 @@ export function isAdviseWireInput<T>(input: T): input is T & AdviseWireInput {
 	) {
 		return false;
 	}
+	const arguments_: ToolCall["arguments"] = { note };
+	if (intent !== undefined) arguments_.intent = intent;
+	if (severity !== undefined) arguments_.severity = severity;
+	if (findingKey !== undefined) arguments_.findingKey = findingKey;
 	if (memory !== undefined) {
 		const nested = memory;
 		if (
@@ -232,6 +236,11 @@ export function isAdviseWireInput<T>(input: T): input is T & AdviseWireInput {
 		) {
 			return false;
 		}
+		const fields: ToolCall["arguments"] = {};
+		if (nested.text !== undefined) fields.text = nested.text;
+		if (nested.category !== undefined) fields.category = nested.category;
+		if (nested.basis !== undefined) fields.basis = nested.basis;
+		arguments_.memory = fields;
 	}
 	if (!hasValidLocalStringBounds(wire)) return false;
 	try {
@@ -239,7 +248,7 @@ export function isAdviseWireInput<T>(input: T): input is T & AdviseWireInput {
 			type: "toolCall",
 			id: "advise-wire-validation",
 			name: "advise",
-			arguments: wire,
+			arguments: arguments_,
 		});
 		return true;
 	} catch {
@@ -954,14 +963,7 @@ function prepareStrictAdviseArguments(raw: Parameters<typeof isObjectRecord>[0])
 		throw new Error("Advise arguments did not match the internal schema");
 	}
 
-	// TypeBox 1.1.38 compiles [object, null] property checks without a null guard, so a raw
-	// null memory throws during compiled Pi validation. The local gate above is authoritative;
-	// this equivalent encoding keeps Pi validation safe. Pinned by the TypeBox compile workaround
-	// test in tests/unit/advise-strict.test.ts; when that test fails on an upgraded TypeBox,
-	// this substitution and the pinned expectation can be removed together.
-	return memory === null
-		? { ...prepared, memory: { text: null, category: null, basis: null } }
-		: prepared;
+	return prepared;
 }
 
 function normalizeStrictAdviseWireInput(

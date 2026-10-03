@@ -1,3 +1,4 @@
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	SessionManager,
@@ -596,7 +597,7 @@ describe.sequential("Token-aware Advisor context through Slice 4B", () => {
 			);
 
 			const reviewRequests = advisor.requests.filter((request) =>
-				request.context.systemPrompt?.includes("You are Advisor"),
+				getCurrentSystemPrompt(request.context.messages).includes("You are Advisor"),
 			);
 			expect(reviewRequests).toHaveLength(3);
 			const compactedReview = JSON.stringify(reviewRequests[2]?.context.messages);

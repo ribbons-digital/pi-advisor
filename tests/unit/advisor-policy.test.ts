@@ -1,6 +1,10 @@
-import { estimateContextTokens } from "@earendil-works/pi-agent-core";
 import { validateToolArguments, type AssistantMessage } from "@earendil-works/pi-ai";
-import { SessionManager, type TurnEndEvent } from "@earendil-works/pi-coding-agent";
+import {
+	calculateContextTokens,
+	estimateTokens as estimatePiMessageTokens,
+	SessionManager,
+	type TurnEndEvent,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -509,14 +513,13 @@ describe("Usage estimation and bounded transcript serialization through Slice 4B
 			true,
 			toolSchemas,
 		);
-		const publicEstimate = estimateContextTokens([
-			...messages,
-			{ role: "user" as const, content: "next bounded update", timestamp: 3 },
-		]);
+		const trailingTokens =
+			messages.slice(2).reduce((sum, message) => sum + estimatePiMessageTokens(message), 0) +
+			estimatePiMessageTokens({ role: "user", content: "next bounded update", timestamp: 3 });
 		expect(estimate).toEqual({
-			tokens: publicEstimate.tokens,
-			usageTokens: publicEstimate.usageTokens,
-			trailingEstimateTokens: publicEstimate.trailingTokens,
+			tokens: calculateContextTokens(exact.usage) + trailingTokens,
+			usageTokens: calculateContextTokens(exact.usage),
+			trailingEstimateTokens: trailingTokens,
 			source: "usage-plus-estimate",
 		});
 		expect(estimate.usageTokens).toBe(115);
@@ -541,6 +544,42 @@ describe("Usage estimation and bounded transcript serialization through Slice 4B
 		expect(heuristic.source).toBe("estimate-only");
 		expect(heuristic.usageTokens).toBe(0);
 		expect(heuristic.tokens).toBeGreaterThan(heuristicWithoutTools.tokens);
+	});
+
+	it("ignores failed and zero usage anchors and replaces historical system prompts for fresh estimates", () => {
+		const exact = assistant([{ type: "text", text: "last successful response" }]);
+		exact.usage = { ...exact.usage, input: 80, output: 20, totalTokens: 0 };
+		const failed = assistant([{ type: "text", text: "failed response" }], "error");
+		failed.usage = { ...failed.usage, totalTokens: 9_000 };
+		const aborted = { ...failed, stopReason: "aborted" as const };
+		const zero = assistant([{ type: "text", text: "zero usage response" }]);
+		const messages = [
+			{ role: "system" as const, content: "OLD-POLICY-DO-NOT-COUNT".repeat(100), timestamp: 0 },
+			exact,
+			failed,
+			aborted,
+			zero,
+		];
+		const pending = { role: "user" as const, content: "next update", timestamp: 0 };
+		const trailing = [failed, aborted, zero, pending].reduce(
+			(sum, message) => sum + estimatePiMessageTokens(message),
+			0,
+		);
+		expect(estimateAdvisorContext(messages, pending.content, "current policy")).toEqual({
+			tokens: 100 + trailing,
+			usageTokens: 100,
+			trailingEstimateTokens: trailing,
+			source: "usage-plus-estimate",
+		});
+		const fresh = estimateAdvisorContext(messages, pending.content, "current policy", false);
+		expect(fresh.tokens).toBe(
+			estimatePiMessageTokens(exact) + trailing + estimateTokens("current policy"),
+		);
+		expect(fresh.usageTokens).toBe(0);
+		expect(fresh.source).toBe("estimate-only");
+		expect(estimateAdvisorContext(messages.slice(2), pending.content, "current policy")).toEqual(
+			estimateAdvisorContext(messages.slice(2), pending.content, "current policy", false),
+		);
 	});
 
 	it("redacts and independently bounds each large tool result before update and re-prime bounds", () => {
@@ -1058,7 +1097,7 @@ describe("Slice 1 transcript filtering and redaction", () => {
 			],
 			"toolUse",
 		);
-		manager.appendMessage(resumeAttempt);
+		const messageEntryId = manager.appendMessage(resumeAttempt);
 		const failedResult = {
 			role: "toolResult" as const,
 			toolCallId: "resume-worker",
@@ -1067,13 +1106,25 @@ describe("Slice 1 transcript filtering and redaction", () => {
 			isError: true,
 			timestamp: Date.now(),
 		};
-		manager.appendMessage(failedResult);
+		const failedResultEntryId = manager.appendMessage(failedResult);
 		const entries = manager.getBranch();
 		const event: TurnEndEvent = {
 			type: "turn_end",
 			turnIndex: 0,
 			message: resumeAttempt,
 			toolResults: [failedResult],
+			messageEntryId,
+			toolResultEntryIds: [failedResultEntryId],
+			entries: [],
+			continue: false,
+			outcome: "completed",
+			context: {
+				contextEntries: [],
+				contextMessages: [],
+				llmMessages: [],
+				pendingMessages: [],
+				canContinue: false,
+			},
 		};
 
 		expect(isMeaningfulExecutorTurn(event, entries)).toBe(true);
@@ -1090,6 +1141,18 @@ describe("Slice 1 transcript filtering and redaction", () => {
 			turnIndex: 0,
 			message: assistant([{ type: "text", text: "partial" }], "aborted"),
 			toolResults: [],
+			messageEntryId: "aborted-message",
+			toolResultEntryIds: [],
+			entries: [],
+			continue: false,
+			outcome: "aborted",
+			context: {
+				contextEntries: [],
+				contextMessages: [],
+				llmMessages: [],
+				pendingMessages: [],
+				canContinue: false,
+			},
 		};
 		const empty: TurnEndEvent = {
 			...aborted,

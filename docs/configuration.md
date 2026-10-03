@@ -25,8 +25,7 @@ Each section edits only its own values through Pi-native dialogs and returns to 
 The model step selects an authenticated model and an independent Advisor reasoning level.
 Advisor reasoning choices are derived from the selected model's supported levels, so unsupported levels are omitted and a model without reasoning support offers only `off`.
 If the current Advisor reasoning level is unsupported by the selected model, the workflow warns and requires a new supported selection.
-On Pi 0.82, the reasoning prompt shows the current Executor reasoning level as supplementary context for the user, but the Advisor selection remains independent and is not automatically coupled to it.
-The Pi 0.81 compatibility path omits the supplementary Executor text without changing selection or runtime behavior.
+The reasoning prompt shows the current Executor reasoning level as supplementary context for the user, but the Advisor selection remains independent and is not automatically coupled to it.
 The TUI model step starts focused and fuzzy-searches provider, model ID, and display name while RPC clients keep the standard selection dialog.
 After tool selection, a separate instructions step lets users continue without custom instructions or explicitly open the multiline editor to add them.
 When instructions already exist, that step offers deliberate keep, edit, and clear choices, and only edit opens the multiline editor.
@@ -51,20 +50,28 @@ Protected paths, activation, limits, Memory suggestions, persistence, and other 
 | `/advisor off`         | Disables this session   | Disables this session   | Available only where commands are processed | Available only where commands are processed | None               |
 
 Activation never chooses a model automatically.
-Pi Advisor 0.4.1 requires Node.js `>=22.19.0` and Pi `>=0.81.1 <0.85.0`.
-Pi 0.82.0 is the primary tested Pi release, with compatibility coverage retained for Pi 0.81.1, Pi 0.83.0, and Pi 0.84.1.
+This unreleased build targets Pi 1.0.0 and requires Node.js `>=22.19.0`.
+Planned release: v0.5.0 (unreleased).
+Pi 1.0.0 is the only verified and supported Pi target for this build.
+Wildcard peers are a host-module loading contract, not a compatibility range.
+Published Pi Advisor 0.4.1 supports Pi `>=0.81.1 <0.85.0`; pin `npm:@ribbons-digital/pi-advisor@0.4.1` for those older versions.
+The Pi 1.0 build has not been published, and its version remains 0.4.1 until release approval.
+Automated checks use scripted providers and local HTTP capture.
+Live model-service compatibility remains unverified.
+Virtual Advisor models (`pi-virtual`) are rejected without fallback; select a physical provider/model.
 Pi Advisor 0.1.3 remains the legacy release for Pi 0.80.7.
 A missing model, unavailable model, missing credentials, incompatible critical Pi API, or provider parity that cannot be verified leaves Advisor inactive without fallback.
 Project configuration can never activate Advisor.
 
 ## Advise schema selection
 
-Pi Advisor automatically selects strict constrained sampling only on Pi 0.82 or later when the selected model has an explicit compatible provider capability flag.
-Pi 0.81.x and models without that explicit capability continue to use the portable schema.
+Pi Advisor selects strict constrained sampling only when Pi exposes its resolver and the selected model has an explicit compatible provider capability flag.
+Models without that explicit capability use the portable schema.
 The selected mode is shown by `/advisor status` and is runtime-only; configuration and lifecycle state do not persist it.
 
 Strict mode uses Pi's `prefer` policy, which permits ordinary tool-calling fallback when the provider cannot enforce the schema and therefore never guarantees provider-side enforcement.
-Pi Advisor's local structural and semantic validation remains authoritative in both modes.
+The verified OpenAI and Anthropic serializers fall back to ordinary tool calling for the nullable Memory shape.
+Local validation preserves actual JSON null and remains authoritative in both modes.
 Private generated `advise` arguments are not added to diagnostics, activity records, or lifecycle persistence.
 
 ## Ownership and merge rules
@@ -147,7 +154,8 @@ tools: [read, grep]
 | `limits.maxNestedCompactionMs`        | Number from `1` through `300000` | `60000`         | `300000`     | User sets; Project may lower    | Wall-clock bound for Advisor's private nested `AgentSession.compact()`.                                        |
 | `limits.maxLifecycleAbortMs`          | Number from `0` through `30000`  | `2000`          | `30000`      | User sets; Project may lower    | Max wait for nested abort during disable, shutdown, and the next review after compact/tree. `0` does not wait. |
 
-Host `/compact` and tree navigation signal nested abort and return immediately. They never wait for the nested Advisor request to finish.
+Host `/compact` and tree navigation signal nested abort and return immediately.
+They never wait for the nested Advisor request to finish.
 Disable, shutdown, and the next Advisor review still bound nested abort waits with `maxLifecycleAbortMs` so those paths cannot hang unbounded on a provider that ignores abort.
 Host `retry.provider.timeoutMs` and `httpIdleTimeoutMs` do not apply to the nested Advisor session; these fields are the nested bounds.
 `maxLifecycleAbortMs: 0` returns immediately after signalling abort and lets the nested request finish in the background.
@@ -159,7 +167,7 @@ Input, output, cache-read, cache-write, total-token, and provider-reported cost 
 A trusted Project finite cap may narrow a User `off` value.
 A Project `off` value cannot disable or raise a finite User cap.
 Provider pricing or usage can be absent or incomplete, so explicitly enabled token and dollar caps remain independent safeguards.
-Pi 0.81.1 exposes nested compaction usage, but Pi Advisor does not yet consume it in its exact governor totals.
+Pi exposes nested compaction usage, but Pi Advisor does not yet consume it in its exact governor totals.
 
 ### Protected paths
 
@@ -256,6 +264,9 @@ Newer user or instruction-bearing input restores normal review or deferred deliv
 If capability is absent, no suggestion or extra completion is produced and ordinary review remains unchanged.
 If capability is lost before idle dispatch, no automatic follow-up starts and the accepted suggestion is retained with bounded `could-not-queue` presentation.
 Pi Advisor never calls that tool itself and never saves or approves a memory.
+Complete successful nested Memory calls can also suppress an exactly normalized duplicate proposal when Pi supplies their argument text.
+Failed, unfinished, incomplete, or oversized records do not establish successful evidence.
+A confirmed successful nested call still counts if its outer tool later fails.
 
 | YAML path                                       | Type                | Release default | Hard maximum   | Scope and Project merge                 | Effect                                                                       |
 | ----------------------------------------------- | ------------------- | --------------- | -------------- | --------------------------------------- | ---------------------------------------------------------------------------- |
@@ -305,14 +316,14 @@ In-memory and `--no-session` runs do not retain these entries across process exi
 Run `/advisor dump` to inspect a redacted preview bounded to 16 KiB.
 No diagnostic or persisted record is exported automatically.
 
-| Record class             | Stored when                                                            | Included fields                                                                                                                                                                                                                                                                                                                                                                         | Explicit exclusions                                                                                                                                                       | Retention and deletion                                                                    |
-| ------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Lifecycle state          | Independently of activity recording when append succeeds               | Version, Pi session ID, save time, branch cursor, durable active and queued review slots, review cadence, accepted active deliveries awaiting acknowledgement, retained deferred notes with bounded `findingKey` display labels, up to 128 dedupe hashes, the 128-entry recent-findings index with bounded display labels, delivery counts, and Memory suggestion cadence and cap state | Executor reasoning, Advisor reasoning, provider payloads, private Advisor transcript, protected Advisor tool output, suppressed or rejected notes, and raw failure text   | New snapshots follow the Pi session. Delete the Pi session file to delete them.           |
-| Deferred accepted advice | Retention is above `0` and the note is pending                         | Already bounded redacted note shape, optional opaque semantic finding hash, branch window, creation time, staleness, display, and resume markers                                                                                                                                                                                                                                        | Delivered, expired, branch-incompatible, suppressed, rejected, and unsafe notes                                                                                           | Default `24` hours on compatible resume. `0` prevents content in new lifecycle snapshots. |
-| Version 2 review start   | `persistence.transcript: true` when a review update starts             | Schema version, Pi session ID, save time, stable review ID, bounded update entry count, and whether the update was truncated                                                                                                                                                                                                                                                            | Executor update bodies, Executor reasoning, and provider payloads                                                                                                         | No time expiry. Delete the Pi session file.                                               |
-| Version 2 tool attempt   | Recording is enabled and Advisor attempts a read-only or internal tool | Stable review ID, deterministic ordinal, tool name, internal marker, bounded redacted path and pattern targets when applicable, completion and error markers, output byte count, and textual output line count                                                                                                                                                                          | Generic argument objects, read/search/list result bodies, image bodies, internal `advise` note or arguments, protected-path content, reasoning, and raw provider payloads | No time expiry. Delete the Pi session file.                                               |
-| Version 2 review outcome | A review reaches a handled terminal outcome                            | Stable review ID, silent, accepted, governor-skipped, or failed outcome, accepted delivery/staleness metadata, bounded failure or governor reason when applicable, stop reason, provider-reported usage, and cost                                                                                                                                                                       | Accepted note content, rejected or suppressed note content, internal semantic finding hashes, reasoning, file-content bodies, and raw provider payloads                   | No time expiry. Delete the Pi session file.                                               |
-| Legacy version 1 record  | Written by an earlier Pi Advisor release                               | The strict bounded content-bearing shape documented by that earlier release, including possible update, tool-result, or accepted-note bodies                                                                                                                                                                                                                                            | Invalid, oversized, wrong-session, unredacted-secret, and unsupported-version records are ignored                                                                         | Remains in the Pi session until that session file is deleted.                             |
+| Record class             | Stored when                                                            | Included fields                                                                                                                                                                                                                                                                                                                                                                                                                    | Explicit exclusions                                                                                                                                                       | Retention and deletion                                                                    |
+| ------------------------ | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Lifecycle state          | Independently of activity recording when append succeeds               | Version, Pi session ID, save time, branch cursor, bounded effective-instruction fingerprint, durable active and queued review slots, review cadence, accepted active deliveries awaiting acknowledgement, retained deferred notes with bounded `findingKey` display labels, up to 128 dedupe hashes, the 128-entry recent-findings index with bounded display labels, delivery counts, and Memory suggestion cadence and cap state | Executor reasoning, Advisor reasoning, provider payloads, private Advisor transcript, protected Advisor tool output, suppressed or rejected notes, and raw failure text   | New snapshots follow the Pi session. Delete the Pi session file to delete them.           |
+| Deferred accepted advice | Retention is above `0` and the note is pending                         | Already bounded redacted note shape, optional opaque semantic finding hash, branch window, creation time, staleness, display, and resume markers                                                                                                                                                                                                                                                                                   | Delivered, expired, branch-incompatible, suppressed, rejected, and unsafe notes                                                                                           | Default `24` hours on compatible resume. `0` prevents content in new lifecycle snapshots. |
+| Version 2 review start   | `persistence.transcript: true` when a review update starts             | Schema version, Pi session ID, save time, stable review ID, bounded update entry count, and whether the update was truncated                                                                                                                                                                                                                                                                                                       | Executor update bodies, Executor reasoning, and provider payloads                                                                                                         | No time expiry. Delete the Pi session file.                                               |
+| Version 2 tool attempt   | Recording is enabled and Advisor attempts a read-only or internal tool | Stable review ID, deterministic ordinal, tool name, internal marker, bounded redacted path and pattern targets when applicable, completion and error markers, output byte count, and textual output line count                                                                                                                                                                                                                     | Generic argument objects, read/search/list result bodies, image bodies, internal `advise` note or arguments, protected-path content, reasoning, and raw provider payloads | No time expiry. Delete the Pi session file.                                               |
+| Version 2 review outcome | A review reaches a handled terminal outcome                            | Stable review ID, silent, accepted, governor-skipped, or failed outcome, accepted delivery/staleness metadata, bounded failure or governor reason when applicable, stop reason, provider-reported usage, and cost                                                                                                                                                                                                                  | Accepted note content, rejected or suppressed note content, internal semantic finding hashes, reasoning, file-content bodies, and raw provider payloads                   | No time expiry. Delete the Pi session file.                                               |
+| Legacy version 1 record  | Written by an earlier Pi Advisor release                               | The strict bounded content-bearing shape documented by that earlier release, including possible update, tool-result, or accepted-note bodies                                                                                                                                                                                                                                                                                       | Invalid, oversized, wrong-session, unredacted-secret, and unsupported-version records are ignored                                                                         | Remains in the Pi session until that session file is deleted.                             |
 
 Lifecycle state format version `5` adds the bounded `findingKey` display label on retained review notes and the 128-entry recent-findings index (Q6-A1).
 Version `4` added per-key dedupe metadata; strict version `5` migration restores an empty recent-findings index, and a version `4` document carrying a `findingKey` label is rejected.
@@ -320,11 +331,11 @@ Lifecycle state format version `3` atomically stores the observed cursor with at
 Held-for-material-turn updates are excluded from persisted `queuedReview` snapshots.
 A restored pre-Q4-shape `queuedReview` keeps its existing cadence-scheduled behavior.
 Version `2` added the optional opaque semantic finding hash to deferred review advice.
-Versions `1` and `2` remain accepted and migrate in memory without losing compatible deferred advice, delivery counters, or Memory cadence state, but migration cannot reconstruct review evidence already lost by an older snapshot.
+Versions `1` and `2` remain accepted and migrate delivery counters and Memory cadence state in memory, but migration cannot reconstruct missing review evidence or prove compatibility for unfinished guidance without an instruction fingerprint.
 Version `1` dedupe hashes cannot be recalculated into the newer semantic identity, so their previously delivered suppression history starts fresh after migration.
 New activity records continue to use strict transcript schema version `2` and cannot be confused with lifecycle state version `5` or legacy content-bearing transcript version `1` records.
 Valid legacy transcript records remain readable for bounded diagnostics; malformed and unsupported versions are safely ignored.
-Downgrading to a build that does not understand lifecycle state version `5` is not supported; that build safely ignores the newer lifecycle snapshots.
+Downgrading to a build that does not understand lifecycle state version `5` or its instruction-fingerprint field cannot recover this build's unfinished work; that build safely rejects the newer lifecycle snapshots.
 
 The complete lifecycle snapshot is measured after `JSON.stringify` and is limited to 4 MiB.
 Each active or queued review slot and the complete accepted active-delivery field are independently limited to 1,000,000 serialized UTF-8 bytes.
@@ -332,13 +343,21 @@ Escape-heavy review content is compacted deterministically from the head so newe
 Under whole-snapshot pressure, oldest deferred advice is removed first, then oldest dedupe hashes, then older queued-review content, and only then older active-review content as a warned final fallback.
 Accepted active deliveries remain whole and outrank queued review evidence because their output has already been accepted for user-visible delivery.
 
-Compatible resume requires the same Pi session ID and compatible entry-ID windows for the observed cursor, review slots, and active deliveries.
-Recovery reconciles active deliveries before active review and queued cadence work.
+Compatible resume requires the same Pi session ID, compatible entry-ID windows, and matching effective primary instructions before unfinished work or advice is accepted.
+Lifecycle metadata stores a bounded SHA-256 fingerprint instead of an additional raw prompt; already bounded redacted review evidence can include observed instructions.
+A changed or missing fingerprint invalidates unfinished restored guidance before private dispatch or deferred acknowledgement, while delivered-note counts and Memory cadence remain preserved.
+A saved forced prompt may not match the initial base prompt, so recovery waits for Pi's prepared effective prompt when necessary.
+Unchanged instructions retain once-only delivery and the existing replay and cadence rules.
+Recovery then reconciles active deliveries before active review and queued cadence work.
 An active delivery already present in branch state is acknowledged without redisplay, while one absent after process restart becomes stale deferred advice for the next user turn.
 An uncompleted active review reuses its stable review ID and can be replayed after restart; a third restoration after two interrupted replays drops only that poison review and continues later queued work.
 Provider execution is necessarily at least once when the provider completes immediately before process death and before a terminal snapshot can be appended, but stable review and delivery IDs prevent duplicate visible advice whenever branch or state evidence proves completion.
 Restored deferred advice is marked restored and potentially stale, displays its age, and waits for the next user prompt.
-Clean shutdown preserves compatible unfinished review work, while branch navigation, primary compaction, disablement, confirmed configuration apply, and a new or incompatible session deliberately discard old-policy or old-branch work.
+Clean shutdown preserves compatible unfinished review work, while branch navigation, primary compaction, disablement, confirmed configuration apply, context edits, changed effective instructions, and a new or incompatible session discard old-policy or old-branch work.
+Review evidence follows current model-facing context edits, effective primary instructions including forced overrides, and the current compaction summary with its retained tail, rather than raw audit history.
+Deferred batches remain pending until the prepared prompt is checked at message acknowledgement.
+Invalid guidance is emptied and hidden before Pi persists its custom message or includes it in branch or compaction summaries.
+Retained Pi steering after RPC abort keeps one owner rather than creating a second deferred copy.
 Delivered, expired, incompatible, retention-disabled, and over-capacity deferred advice is discarded.
 The live in-memory deferred queue does not expire merely because the configured cross-exit retention interval passes.
 Long recording-enabled sessions can grow on disk by one bounded record per persisted event, with a maximum of 256 KiB per record.
@@ -363,7 +382,8 @@ Mutes are durable user data, not configuration:
 - The file is written atomically by the runtime, holds at most 128 entries with oldest-first replacement, and is never written by `/advisor configure` saves, so a package downgrade cannot erase mutes.
 - Mutes survive epoch changes, branch resets, compatible resumes, and new Pi sessions; the runtime caches the file per session and reloads it on configuration apply.
 - Every mute or unmute write reloads the file first, applies the single change on top of the fresh entries, and verifies the file is unchanged immediately before the atomic rename, so concurrent Pi sessions merge their mutes instead of clobbering each other.
-- A malformed or unreadable mutes file fails closed: no mutes are applied, one warning is shown, and the file is never overwritten. This includes a mid-session reload failure: any previously loaded mutes are dropped, so stale mutes do not stay in force while the file cannot be read; the run surfaces the failure through `/advisor mute list`, `mutesUnavailableReason()`, and the `mutesUnavailable` status field until the file is repaired.
+- A malformed or unreadable mutes file fails closed: no mutes are applied, one warning is shown, and the file is never overwritten.
+  This includes a mid-session reload failure: any previously loaded mutes are dropped, so stale mutes do not stay in force while the file cannot be read; the run surfaces the failure through `/advisor mute list`, `mutesUnavailableReason()`, and the `mutesUnavailable` status field until the file is repaired.
 - Raw `findingKey` text is display only and never command input; labels are redacted and bounded to 128 characters.
 - Labels are authored by the Advisor model, and pattern-based redaction cannot guarantee that every secret inside a model-authored key is removed; a key may therefore contain an unrecognized secret that is stored locally (mutes file mode `0600`) and rendered on advice cards.
 
@@ -392,7 +412,7 @@ Provider requests are necessary for the explicitly selected Advisor model, while
 
 Pi Advisor performs automatic background review.
 `@juicesharp/rpiv-advisor` provides an Executor-invoked consultation tool.
-Both can be installed, and Pi 0.81.1 assigns `/advisor:1` and `/advisor:2` according to extension load order.
+Both can be installed, and Pi assigns `/advisor:1` and `/advisor:2` according to extension load order.
 Pi Advisor warns once when duplicate assigned Advisor commands are detectable.
 It does not disable the other package, remove its tool, edit its configuration, or block startup.
 Use Pi's command list to identify each suffixed command.

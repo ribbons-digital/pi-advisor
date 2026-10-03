@@ -1,8 +1,10 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type {
-	SessionEntry,
-	SessionMessageEntry,
-	TurnEndEvent,
+import { getCurrentSystemMessage, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import {
+	buildSessionProjection,
+	type SessionEntry,
+	type SessionMessageEntry,
+	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 
 import { normalizeMemoryTextForDedupe } from "./advice.js";
@@ -40,19 +42,39 @@ export function cursorAtTail(branch: SessionEntry[]): AdvisorCursor {
 	return cursor;
 }
 
-export type AdvisorCursorValidation = "valid" | "transcript-shrunk" | "ancestry-mismatch";
+export type AdvisorCursorValidation =
+	| "valid"
+	| "transcript-shrunk"
+	| "ancestry-mismatch"
+	| "context-changed";
 
 export function validateCursor(
 	branch: SessionEntry[],
 	cursor: AdvisorCursor,
 ): AdvisorCursorValidation {
 	if (branch.length < cursor.expectedIndex) return "transcript-shrunk";
-	if (cursor.expectedIndex === 0) {
-		return cursor.lastEntryId === undefined ? "valid" : "ancestry-mismatch";
-	}
-	return branch[cursor.expectedIndex - 1]?.id === cursor.lastEntryId
-		? "valid"
-		: "ancestry-mismatch";
+	if (
+		cursor.expectedIndex === 0
+			? cursor.lastEntryId !== undefined
+			: branch[cursor.expectedIndex - 1]?.id !== cursor.lastEntryId
+	)
+		return "ancestry-mismatch";
+	const hadSystem = branch
+		.slice(0, cursor.expectedIndex)
+		.some((entry) => isMessageEntry(entry) && entry.message.role === "system");
+	return branch
+		.slice(cursor.expectedIndex)
+		.some(
+			(entry) =>
+				entry.type === "context_edit" ||
+				(hadSystem &&
+					isMessageEntry(entry) &&
+					entry.message.role === "system" &&
+					(Object.keys(entry.message.sections ?? {}).length > 0 ||
+						contentText(entry.message.content, false).trim().length > 0)),
+		)
+		? "context-changed"
+		: "valid";
 }
 
 export function cursorMatches(branch: SessionEntry[], cursor: AdvisorCursor): boolean {
@@ -66,13 +88,15 @@ export function branchHasNewerInstructionInput(
 	for (let index = window.expectedIndex; index < branch.length; index++) {
 		const entry = branch[index];
 		if (entry === undefined) continue;
+		if (entry.type === "context_edit") return true;
 		if (entry.type === "custom_message") {
 			if (entry.customType !== ADVISOR_CUSTOM_TYPE) return true;
 			continue;
 		}
 		if (!isMessageEntry(entry)) continue;
 		const message = entry.message;
-		if (message.role === "user" || message.role === "bashExecution") return true;
+		if (message.role === "system" || message.role === "user" || message.role === "bashExecution")
+			return true;
 		if (message.role === "custom" && message.customType !== ADVISOR_CUSTOM_TYPE) return true;
 	}
 	return false;
@@ -95,20 +119,34 @@ function messageContainsMaterialToolCall(message: AgentMessage): boolean {
  * True when entries after the window contain materially newer Executor activity.
  *
  * Materially newer activity means a non-read-only tool call or its tool result, a
- * context-included user bash execution, or a compaction or branch-summary entry.
- * User messages, plain assistant text and reasoning, read-only tool calls and their
- * results, and Advisor or other non-mutating extension context never count.
+ * context-included user bash execution, a context edit, a later system declaration,
+ * or a compaction or branch-summary entry.
+ * The first system declaration, user messages, plain assistant text and reasoning,
+ * read-only tools, and Advisor or other non-mutating extension context never count.
  */
 export function branchHasMateriallyNewerExecutorActivity(
 	branch: SessionEntry[],
 	window: AdvisorCursor,
 ): boolean {
+	let hadSystem = branch
+		.slice(0, window.expectedIndex)
+		.some((entry) => isMessageEntry(entry) && entry.message.role === "system");
 	for (let index = window.expectedIndex; index < branch.length; index++) {
 		const entry = branch[index];
 		if (entry === undefined) continue;
-		if (entry.type === "compaction" || entry.type === "branch_summary") return true;
+		if (
+			entry.type === "compaction" ||
+			entry.type === "branch_summary" ||
+			entry.type === "context_edit"
+		)
+			return true;
 		if (!isMessageEntry(entry)) continue;
 		const message = entry.message;
+		if (message.role === "system") {
+			if (hadSystem) return true;
+			hadSystem = true;
+			continue;
+		}
 		if (message.role === "toolResult") {
 			if (!isReadOnlyToolName(message.toolName)) return true;
 		} else if (message.role === "bashExecution") {
@@ -130,10 +168,6 @@ interface UnvalidatedMessageContentPart {
 	thinking?: unknown;
 	name?: unknown;
 	arguments?: unknown;
-}
-
-interface UnvalidatedMemoryToolArguments {
-	text?: unknown;
 }
 
 function contentText(
@@ -171,6 +205,11 @@ function serializeMessage(
 	includeReasoning: boolean,
 ): SerializedEntry | undefined {
 	switch (message.role) {
+		case "system":
+			return {
+				text: `[Executor system context]\n${getCurrentSystemPrompt([message])}\n[Executor tool declarations]\n${JSON.stringify(message.toolsAdded ?? [])}`,
+				toolResult: false,
+			};
 		case "user":
 			return {
 				text: `[Executor user]\n${contentText(message.content, includeReasoning)}`,
@@ -209,27 +248,6 @@ function isMessageEntry(entry: SessionEntry): entry is SessionMessageEntry {
 	return entry.type === "message";
 }
 
-function serializeEntry(
-	entry: SessionEntry,
-	includeReasoning: boolean,
-): SerializedEntry | undefined {
-	if (isMessageEntry(entry)) return serializeMessage(entry.message, includeReasoning);
-	if (entry.type === "custom_message") {
-		if (entry.customType === ADVISOR_CUSTOM_TYPE) return undefined;
-		return {
-			text: `[Executor extension context ${entry.customType}]\n${contentText(entry.content, includeReasoning)}`,
-			toolResult: false,
-		};
-	}
-	if (entry.type === "compaction") {
-		return { text: `[Executor compaction summary]\n${entry.summary}`, toolResult: false };
-	}
-	if (entry.type === "branch_summary") {
-		return { text: `[Executor branch summary]\n${entry.summary}`, toolResult: false };
-	}
-	return undefined;
-}
-
 interface BoundedText {
 	text: string;
 	truncated: boolean;
@@ -265,6 +283,7 @@ function renderBoundedEntries(
 	maximumTokens: number,
 	truncationMarker: string,
 	includeReasoning = true,
+	effectiveSystemPrompt?: string,
 ): RenderedAdvisorDelta {
 	const maximumBytes = Math.max(1, maximumTokens * 4);
 	const perToolResultBytes = Math.min(maximumBytes, MAX_ADVISOR_TOOL_RESULT_BYTES);
@@ -274,10 +293,25 @@ function renderBoundedEntries(
 	let overallTruncated = false;
 	let toolResultTruncated = false;
 
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry === undefined) continue;
-		const serialized = serializeEntry(entry, includeReasoning);
+	const projected = buildSessionProjection(entries).messages;
+	const system = getCurrentSystemMessage(projected);
+	const messages: AgentMessage[] = projected.filter((message) => message.role !== "system");
+	if (system !== undefined) {
+		messages.unshift(
+			effectiveSystemPrompt === undefined
+				? system
+				: {
+						role: "system",
+						content: effectiveSystemPrompt,
+						toolsAdded: system.toolsAdded ?? [],
+						timestamp: system.timestamp,
+					},
+		);
+	}
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message === undefined) continue;
+		const serialized = serializeMessage(message, includeReasoning);
 		if (serialized === undefined) continue;
 		const redacted = redactSecrets(serialized.text);
 		redactions += redacted.redactions;
@@ -332,7 +366,14 @@ export function isMeaningfulExecutorTurn(event: TurnEndEvent, entries: SessionEn
 	let latestAdvisorNoteIndex = -1;
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
-		if (entry?.type === "custom_message" && entry.customType === ADVISOR_CUSTOM_TYPE) {
+		if (
+			entry?.type === "custom_message" &&
+			entry.customType === ADVISOR_CUSTOM_TYPE &&
+			!(
+				isRecordValue<{ deliveryRevoked?: unknown }>(entry.details) &&
+				entry.details.deliveryRevoked === true
+			)
+		) {
 			latestAdvisorNoteIndex = index;
 			break;
 		}
@@ -370,60 +411,86 @@ export function successfulMemoryToolTexts(
 	}
 	const calls = new Map<string, Candidate>();
 	let candidateBytes = 0;
+	const successfulIds = new Set<string>();
+	const addCandidate = (
+		id: string,
+		toolName: Candidate["toolName"],
+		text: Parameters<typeof isStringValue>[0],
+		entryIndex: number,
+		successful = false,
+	): void => {
+		if (
+			!isStringValue(text) ||
+			text.length > MAX_MEMORY_TOOL_TEXT_INPUT_UTF16_UNITS ||
+			text.trim().length === 0
+		)
+			return;
+		const normalized = normalizeMemoryTextForDedupe(text);
+		const normalizedBytes = Buffer.byteLength(normalized, "utf8");
+		if (normalized.length === 0 || normalizedBytes > MAX_MEMORY_TOOL_CANDIDATE_BYTES) return;
+		const replaced = calls.get(id);
+		if (replaced !== undefined) {
+			calls.delete(id);
+			candidateBytes -= replaced.bytes;
+			successfulIds.delete(id);
+		}
+		while (
+			calls.size >= MAX_MEMORY_TOOL_CANDIDATE_ITEMS ||
+			candidateBytes + normalizedBytes > MAX_MEMORY_TOOL_CANDIDATE_BYTES
+		) {
+			const oldestId = calls.keys().next().value;
+			if (oldestId === undefined) break;
+			const oldest = calls.get(oldestId);
+			calls.delete(oldestId);
+			successfulIds.delete(oldestId);
+			if (oldest !== undefined) candidateBytes -= oldest.bytes;
+		}
+		calls.set(id, { text: normalized, bytes: normalizedBytes, toolName, entryIndex });
+		candidateBytes += normalizedBytes;
+		if (successful) successfulIds.add(id);
+	};
 	for (const [entryIndex, entry] of entries.entries()) {
-		if (!isMessageEntry(entry) || entry.message.role !== "assistant") continue;
-		for (const content of entry.message.content) {
-			if (
-				content.type !== "toolCall" ||
-				(content.name !== "memory_save" && content.name !== "memory_suggest")
-			) {
-				continue;
+		if (!isMessageEntry(entry)) continue;
+		const message = entry.message;
+		if (message.role === "assistant") {
+			for (const content of message.content) {
+				if (
+					content.type === "toolCall" &&
+					(content.name === "memory_save" || content.name === "memory_suggest")
+				) {
+					addCandidate(`direct:${content.id}`, content.name, content.arguments.text, entryIndex);
+				}
 			}
-			// SAFETY: the memory tool name check above selects the memory argument shape.
-			const text = (content.arguments as UnvalidatedMemoryToolArguments).text;
-			if (
-				!isStringValue(text) ||
-				text.length > MAX_MEMORY_TOOL_TEXT_INPUT_UTF16_UNITS ||
-				text.trim().length === 0
-			) {
-				continue;
+		} else if (
+			message.role === "toolResult" &&
+			message.nestedCalls?.complete === true &&
+			Array.isArray(message.nestedCalls.calls)
+		) {
+			for (const call of message.nestedCalls.calls.slice(-MAX_MEMORY_TOOL_CANDIDATE_ITEMS)) {
+				if (
+					isRecordValue(call) &&
+					isStringValue(call.id) &&
+					call.status === "ok" &&
+					(call.name === "memory_save" || call.name === "memory_suggest")
+				) {
+					addCandidate(
+						`nested:${JSON.stringify([message.toolCallId, call.id])}`,
+						call.name,
+						isRecordValue<{ text?: unknown }>(call.arguments) ? call.arguments.text : undefined,
+						entryIndex,
+						true,
+					);
+				}
 			}
-			const normalized = normalizeMemoryTextForDedupe(text);
-			const normalizedBytes = Buffer.byteLength(normalized, "utf8");
-			if (normalized.length === 0 || normalizedBytes > MAX_MEMORY_TOOL_CANDIDATE_BYTES) {
-				continue;
-			}
-			const replaced = calls.get(content.id);
-			if (replaced !== undefined) {
-				calls.delete(content.id);
-				candidateBytes -= replaced.bytes;
-			}
-			while (
-				calls.size >= MAX_MEMORY_TOOL_CANDIDATE_ITEMS ||
-				candidateBytes + normalizedBytes > MAX_MEMORY_TOOL_CANDIDATE_BYTES
-			) {
-				const oldestId = calls.keys().next().value;
-				if (oldestId === undefined) break;
-				const oldest = calls.get(oldestId);
-				calls.delete(oldestId);
-				if (oldest !== undefined) candidateBytes -= oldest.bytes;
-			}
-			calls.set(content.id, {
-				text: normalized,
-				bytes: normalizedBytes,
-				toolName: content.name,
-				entryIndex,
-			});
-			candidateBytes += normalizedBytes;
 		}
 	}
 
 	const resolved = new Set<string>();
-	const successfulIds = new Set<string>();
 	for (const [entryIndex, entry] of entries.entries()) {
 		if (!isMessageEntry(entry) || entry.message.role !== "toolResult") continue;
 		const message = entry.message;
-		const candidate = calls.get(message.toolCallId);
+		const candidateId = `direct:${message.toolCallId}`;
+		const candidate = calls.get(candidateId);
 		if (
 			candidate === undefined ||
 			resolved.has(message.toolCallId) ||
@@ -433,7 +500,7 @@ export function successfulMemoryToolTexts(
 		}
 		resolved.add(message.toolCallId);
 		if (!message.isError && message.toolName === candidate.toolName) {
-			successfulIds.add(message.toolCallId);
+			successfulIds.add(candidateId);
 		}
 	}
 
@@ -458,8 +525,15 @@ export function successfulMemoryToolTexts(
 export function renderAdvisorDelta(
 	entries: SessionEntry[],
 	maxUpdateTokens: number,
+	effectiveSystemPrompt?: string,
 ): RenderedAdvisorDelta {
-	return renderBoundedEntries(entries, maxUpdateTokens, UPDATE_TRUNCATION_MARKER);
+	return renderBoundedEntries(
+		entries,
+		maxUpdateTokens,
+		UPDATE_TRUNCATION_MARKER,
+		true,
+		effectiveSystemPrompt,
+	);
 }
 
 /**
@@ -468,6 +542,13 @@ export function renderAdvisorDelta(
 export function renderAdvisorReprimeSnapshot(
 	entries: SessionEntry[],
 	maxReprimeTokens: number,
+	effectiveSystemPrompt?: string,
 ): RenderedAdvisorDelta {
-	return renderBoundedEntries(entries, maxReprimeTokens, REPRIME_TRUNCATION_MARKER);
+	return renderBoundedEntries(
+		entries,
+		maxReprimeTokens,
+		REPRIME_TRUNCATION_MARKER,
+		true,
+		effectiveSystemPrompt,
+	);
 }

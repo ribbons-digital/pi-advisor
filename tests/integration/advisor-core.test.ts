@@ -1,8 +1,8 @@
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join, parse } from "node:path";
 
-import type { ToolCall } from "@earendil-works/pi-ai";
-import type { ExtensionContext, InlineExtension } from "@earendil-works/pi-coding-agent";
+import { getCurrentSystemPrompt, getCurrentTools, type ToolCall } from "@earendil-works/pi-ai";
+import type { ExtensionToolContext, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -98,6 +98,15 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 			expect(advisor.requests[0]?.context.messages).toEqual(
 				expect.arrayContaining([expect.objectContaining({ role: "user" })]),
 			);
+			const transcript = advisor.requests[0]?.context.messages ?? [];
+			expect(getCurrentSystemPrompt(transcript)).toContain("You are Advisor");
+			expect(
+				getCurrentTools(transcript)
+					.map((tool) => tool.name)
+					.sort(),
+			).toEqual(["advise", "find", "grep", "ls", "read"]);
+			expect(advisor.requests[0]?.context).not.toHaveProperty("systemPrompt");
+			expect(advisor.requests[0]?.context).not.toHaveProperty("tools");
 			expect(advisor.requests[0]?.options?.reasoning).toBe("high");
 			expect(JSON.stringify(harness.session.messages)).not.toContain("private silent review");
 			expect(runtime?.getStatus()).toMatchObject({
@@ -242,6 +251,47 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 		}
 	});
 
+	it("rejects virtual Advisor models clearly without a fallback or route call", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "ordinary answer" }] },
+		]);
+		const advisor = createAdvisorProvider([]);
+		const config = configFor(advisor);
+		config.model = `${advisor.model.provider}/virtual-advisor`;
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [advisorExtension(config, (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+			beforeBind(modelRuntime) {
+				modelRuntime.registerVirtualModel({
+					provider: advisor.model.provider,
+					id: "virtual-advisor",
+					name: "Virtual Advisor",
+					route: () => {
+						throw new Error("Advisor must not route virtual requests");
+					},
+				});
+			},
+		});
+		try {
+			expect(runtime?.getStatus()).toMatchObject({
+				enabled: true,
+				active: false,
+			});
+			expect(runtime?.getStatus().inactiveReason).toContain(
+				"Virtual models are not supported by Advisor. Select a physical provider/model",
+			);
+			await harness.session.prompt("Keep the Executor working without Advisor routing.");
+			expect(primary.requests).toHaveLength(1);
+			expect(advisor.requests).toHaveLength(0);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
 	it("disables recursive resources and exposes only read-only tools plus advise", async () => {
 		const primary = createPrimaryProvider([]);
 		const advisor = createAdvisorProvider([]);
@@ -308,7 +358,10 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 	});
 
 	it("invalidates delayed advice after an obvious branch mismatch and resets nested context", async () => {
-		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "branch answer" }] }]);
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "branch answer" }] },
+			{ content: [{ type: "text", text: "new branch answer" }] },
+		]);
 		const advisor = createAdvisorProvider([
 			{
 				delayMs: 100,
@@ -322,6 +375,7 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 				],
 				stopReason: "toolUse",
 			},
+			{ content: [{ type: "text", text: "silent new branch review" }] },
 		]);
 		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({
@@ -343,6 +397,14 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 			);
 			expect(runtime?.getStatus().notesDelivered).toBe(0);
 			expect(runtime?.getNestedMessageCount()).toBe(0);
+			await harness.session.prompt("NEW-BRANCH-REVIEW-AFTER-SUPERSESSION");
+			await waitFor(
+				() => advisor.requests.length === 2 && runtime?.getStatus().reviewsCompleted === 1,
+			);
+			const nextContext = JSON.stringify(advisor.requests[1]?.context.messages);
+			expect(nextContext).toContain("NEW-BRANCH-REVIEW-AFTER-SUPERSESSION");
+			expect(nextContext).not.toContain("create branch to abandon");
+			expect(nextContext).not.toContain("This belongs only to the abandoned branch.");
 		} finally {
 			await harness.dispose();
 		}
@@ -399,7 +461,7 @@ describe.sequential("Slice 1 automatic Advisor core", () => {
 			expect(await rootPolicy.allows("safe/visible.txt")).toBe(false);
 			const tools = createProtectedAdvisorTools(harness.cwd, config);
 			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
-			const ctx = {} as ExtensionContext;
+			const ctx = {} as ExtensionToolContext;
 			const execute = async (name: string, args: ToolCall["arguments"]) => {
 				const tool = tools.find((candidate) => candidate.name === name);
 				if (tool === undefined) throw new Error(`Missing ${name} tool`);

@@ -390,7 +390,7 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 		}
 	});
 
-	it("acknowledges RPC active advice after abort continuation without deferring a duplicate", async () => {
+	it("preserves RPC active advice after abort and delivers it once on explicit continuation", async () => {
 		const executorBarrier = createBarrier();
 		const note = "Deliver this active RPC note once.";
 		const primary = createPrimaryProvider([
@@ -400,6 +400,8 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			},
 			{ waitFor: executorBarrier.promise, content: [{ type: "text", text: "interrupted" }] },
 			{ content: [{ type: "text", text: "continued with active advice" }] },
+			{ content: [{ type: "text", text: "later answer after disablement" }] },
+			{ content: [{ type: "text", text: "delivered note branch summary" }] },
 		]);
 		const advisor = createAdvisorProvider([acceptedAdvice(note), { content: [] }]);
 		const hold = defineTool({
@@ -430,6 +432,13 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 			await harness.session.abort();
 			await activeTurn;
 
+			expect(primary.requests).toHaveLength(2);
+			expect(runtime?.getStatus()).toMatchObject({
+				activeNotesPending: 1,
+				deferredNotesPending: 0,
+				notesDelivered: 0,
+			});
+			await harness.session.prompt("Continue explicitly after the RPC abort.");
 			expect(primary.requests).toHaveLength(3);
 			const context = JSON.stringify(primary.requests[2]?.context);
 			expect(context.split(note).length - 1).toBe(1);
@@ -438,11 +447,178 @@ describe.sequential("Advisor delivery and safety behavior through Slice 2 Batch 
 				deferredNotesPending: 0,
 				notesDelivered: 1,
 			});
+			await harness.session.prompt("/advisor off");
+			await harness.session.prompt("Keep already delivered advice in conversation history.");
+			expect(JSON.stringify(primary.requests[3]?.context).split(note).length - 1).toBe(1);
+			expect(runtime?.getStatus().notesDelivered).toBe(1);
+			const firstUser = harness.sessionManager
+				.getEntries()
+				.find((entry) => entry.type === "message" && entry.message.role === "user");
+			if (firstUser === undefined) throw new Error("Expected original user entry");
+			const navigation = await harness.session.navigateTree(firstUser.id, { summarize: true });
+			expect(navigation.cancelled).toBe(false);
+			expect(navigation.summaryEntry?.summary).toContain("delivered note branch summary");
+			expect(JSON.stringify(primary.requests[4]?.context).split(note).length - 1).toBe(1);
+			expect(runtime?.getStatus().notesDelivered).toBe(1);
 		} finally {
 			executorBarrier.release();
 			await harness.dispose();
 		}
 	});
+
+	it.each(["disablement", "tree navigation", "configuration apply"] as const)(
+		"revokes RPC-retained advice after %s without clearing user queues",
+		async (action) => {
+			const executorBarrier = createBarrier();
+			const note = "REVOKED-ADVISOR-NOTE-MUST-NOT-REACH-EXECUTOR";
+			const primary = createPrimaryProvider([
+				{
+					content: [{ type: "toolCall", id: "hold-retained-note", name: "hold", arguments: {} }],
+					stopReason: "toolUse",
+				},
+				{ waitFor: executorBarrier.promise, content: [{ type: "text", text: "interrupted" }] },
+				{ content: [{ type: "text", text: "continued without revoked advice" }] },
+				{ content: [{ type: "text", text: "user follow-up completed" }] },
+				{ content: [{ type: "text", text: "later request completed" }] },
+				{ content: [{ type: "text", text: "final request completed" }] },
+				{ content: [{ type: "text", text: "safe branch summary" }] },
+				{ content: [{ type: "text", text: "safe compaction history summary" }] },
+				{ content: [{ type: "text", text: "safe compaction turn summary" }] },
+			]);
+			const advisor = createAdvisorProvider([
+				acceptedAdvice(note),
+				{ content: [] },
+				{ content: [] },
+				{ content: [] },
+			]);
+			const hold = defineTool({
+				name: "hold",
+				label: "hold",
+				description: "Hold a real Executor provider request behind a barrier.",
+				parameters: Type.Object({}),
+				execute: () =>
+					Promise.resolve({ content: [{ type: "text" as const, text: "held" }], details: {} }),
+			});
+			let runtime: AdvisorRuntime | undefined;
+			const harness = await createSessionHarness({
+				provider: primary,
+				advisorProvider: advisor,
+				extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+				customTools: [hold],
+				tools: ["hold"],
+				mode: "rpc",
+			});
+			try {
+				const activeTurn = harness.session.prompt("ORIGINAL-USER-REQUEST-FOR-RETAINED-ADVICE");
+				await waitFor(
+					() =>
+						primary.activeRequests === 1 &&
+						primary.requests.length === 2 &&
+						runtime?.getStatus().activeNotesPending === 1,
+				);
+				await harness.session.abort();
+				await activeTurn;
+				expect(runtime?.getStatus().activeNotesPending).toBe(1);
+				if (action === "disablement") {
+					await harness.session.prompt("/advisor off");
+				} else if (action === "tree navigation") {
+					const user = harness.sessionManager
+						.getBranch()
+						.find((entry) => entry.type === "message" && entry.message.role === "user");
+					if (user === undefined) throw new Error("Expected original user entry");
+					await harness.session.navigateTree(user.id);
+				} else {
+					if (runtime === undefined) throw new Error("Expected Advisor runtime");
+					const ctx = runtimeInternals(runtime).hostContext;
+					if (ctx === undefined) throw new Error("Expected Advisor context");
+					await runtime.applyConfiguration(configFor(advisor), ctx);
+				}
+				expect(runtime?.getStatus().activeNotesPending).toBe(0);
+				await harness.session.steer("KEEP-UNRELATED-USER-STEERING");
+				await harness.session.followUp("KEEP-UNRELATED-USER-FOLLOW-UP");
+				await harness.session.sendCustomMessage(
+					{
+						customType: "unrelated-user-note",
+						content: "KEEP-UNRELATED-CUSTOM-NOTE",
+						display: true,
+						details: { deliveryRevoked: true },
+					},
+					{ triggerTurn: false },
+				);
+				await harness.session.prompt("NEW-USER-REQUEST-AFTER-REVOCATION");
+				const resumedRequests = primary.requests.slice(2);
+				expect(resumedRequests.length).toBeGreaterThan(0);
+				for (const request of resumedRequests)
+					expect(JSON.stringify(request.context)).not.toContain(note);
+				const resumed = JSON.stringify(resumedRequests.at(-1)?.context);
+				expect(resumed).toContain("NEW-USER-REQUEST-AFTER-REVOCATION");
+				expect(resumed).toContain("KEEP-UNRELATED-USER-STEERING");
+				expect(resumed).toContain("KEEP-UNRELATED-USER-FOLLOW-UP");
+				expect(resumed).toContain("KEEP-UNRELATED-CUSTOM-NOTE");
+				if (action === "tree navigation")
+					expect(resumed).not.toContain("ORIGINAL-USER-REQUEST-FOR-RETAINED-ADVICE");
+				await harness.session.prompt("LATER-USER-REQUEST-AFTER-REVOCATION");
+				expect(JSON.stringify(primary.requests.at(-1)?.context)).toContain(
+					"LATER-USER-REQUEST-AFTER-REVOCATION",
+				);
+				expect(JSON.stringify(primary.requests.at(-1)?.context)).not.toContain(note);
+				expect(runtime?.getStatus().notesDelivered).toBe(0);
+				expect(
+					harness.sessionManager
+						.getEntries()
+						.find(
+							(entry) =>
+								entry.type === "custom_message" && JSON.stringify(entry.details).includes(note),
+						),
+				).toMatchObject({
+					content: [],
+					display: false,
+					details: { deliveryRevoked: true, note },
+				});
+				expect(harness.session.messages.at(-1)).toMatchObject({
+					role: "assistant",
+					stopReason: "stop",
+				});
+
+				const firstUser = harness.sessionManager
+					.getEntries()
+					.find((entry) => entry.type === "message" && entry.message.role === "user");
+				const oldLeaf = harness.sessionManager.getLeafId();
+				if (firstUser === undefined || oldLeaf === null)
+					throw new Error("Expected populated session tree");
+				const branchRequestStart = primary.requests.length;
+				const navigation = await harness.session.navigateTree(firstUser.id, { summarize: true });
+				expect(navigation.cancelled).toBe(false);
+				expect(navigation.summaryEntry?.summary).toContain("safe branch summary");
+				const branchRequests = primary.requests.slice(branchRequestStart);
+				expect(branchRequests).toHaveLength(1);
+				await harness.session.navigateTree(oldLeaf, { summarize: false });
+				harness.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
+				const compactionRequestStart = primary.requests.length;
+				const compacted = await harness.session.compact("Summarize the original branch safely.");
+				expect(compacted.summary).toContain("safe compaction history summary");
+				const compactionRequests = primary.requests.slice(compactionRequestStart);
+				expect(compactionRequests).toHaveLength(2);
+				const branchContext = JSON.stringify(branchRequests);
+				const compactionContext = JSON.stringify(compactionRequests);
+				expect({
+					branchSummaryContainsRevokedNote: branchContext.includes(note),
+					compactionSummaryContainsRevokedNote: compactionContext.includes(note),
+				}).toEqual({
+					branchSummaryContainsRevokedNote: false,
+					compactionSummaryContainsRevokedNote: false,
+				});
+				for (const context of [branchContext, compactionContext]) {
+					expect(context).toContain("KEEP-UNRELATED-CUSTOM-NOTE");
+					expect(context).toContain("KEEP-UNRELATED-USER-STEERING");
+					expect(context).toContain("KEEP-UNRELATED-USER-FOLLOW-UP");
+				}
+			} finally {
+				executorBarrier.release();
+				await harness.dispose();
+			}
+		},
+	);
 
 	it("clears active-pending advice on branch invalidation without recovering it", async () => {
 		const executorBarrier = createBarrier();

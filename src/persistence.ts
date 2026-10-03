@@ -176,6 +176,8 @@ export interface PersistedAdvisorRuntimeState {
 	sessionId: string;
 	savedAt: number;
 	cursor: AdvisorCursor;
+	/** SHA-256 of effective instructions; never the raw prompt. Absent in older snapshots. */
+	effectiveSystemPromptHash?: string;
 	activeReview?: PersistedAdvisorActiveReview;
 	queuedReview?: PersistedAdvisorReviewUpdate;
 	lastReviewSubmittedTurn?: number;
@@ -236,6 +238,7 @@ interface UnvalidatedPersistedRecord {
 	lastAdmittedAt?: number;
 	sessionCapReached?: boolean;
 	cursor?: UnvalidatedPersistedRecord;
+	effectiveSystemPromptHash?: unknown;
 	activeReview?: UnvalidatedPersistedRecord;
 	queuedReview?: UnvalidatedPersistedRecord;
 	lastReviewSubmittedTurn?: number;
@@ -666,13 +669,18 @@ export function parsePersistedAdvisorRuntimeState(
 				"activeDeliveries",
 				"deferredAdvice",
 				"dedupeHashes",
-				...(version === ADVISOR_RUNTIME_STATE_VERSION ? ["recentFindings"] : []),
+				...(version === ADVISOR_RUNTIME_STATE_VERSION
+					? ["recentFindings", "effectiveSystemPromptHash"]
+					: []),
 				"memorySuggestions",
 				"reviewFollowUpsTriggered",
 				"notesDelivered",
 			];
 	if (
 		!hasOnlyKeys(state, allowedKeys) ||
+		(state.effectiveSystemPromptHash !== undefined &&
+			(!isPersistedString(state.effectiveSystemPromptHash) ||
+				!/^[a-f0-9]{64}$/u.test(state.effectiveSystemPromptHash))) ||
 		state.sessionId !== expectedSessionId ||
 		!isPersistedString(state.sessionId) ||
 		state.sessionId.length === 0 ||

@@ -1,3 +1,4 @@
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
 import { createAdvisorProvider, createPrimaryProvider } from "../fixtures/scripted-provider.js";
@@ -12,9 +13,12 @@ describe("ScriptedProvider", () => {
 		]);
 
 		const events = [];
-		for await (const event of provider.streamSimple(provider.model, {
-			messages: [{ role: "user", content: "work", timestamp: 1 }],
-		})) {
+		for await (const event of provider.streamSimple(
+			provider.model,
+			normalizeContext({
+				messages: [{ role: "user", content: "work", timestamp: 1 }],
+			}),
+		)) {
 			events.push(event);
 		}
 
@@ -44,17 +48,17 @@ describe("ScriptedProvider", () => {
 				stopReason: "toolUse",
 			},
 		]);
-		const result = await toolProvider.streamSimple(toolProvider.model, { messages: [] }).result();
+		const result = await toolProvider
+			.streamSimple(toolProvider.model, normalizeContext({ messages: [] }))
+			.result();
 		expect(result.stopReason).toBe("toolUse");
 		expect(result.content[0]).toMatchObject({ name: "advise", arguments: { note: "Check it" } });
 
 		const delayed = createAdvisorProvider([{ delayMs: 10_000 }]);
 		const controller = new AbortController();
-		const stream = delayed.streamSimple(
-			delayed.model,
-			{ messages: [] },
-			{ signal: controller.signal },
-		);
+		const stream = delayed.streamSimple(delayed.model, normalizeContext({ messages: [] }), {
+			signal: controller.signal,
+		});
 		controller.abort();
 		const aborted = await stream.result();
 		expect(aborted.stopReason).toBe("aborted");
@@ -63,7 +67,9 @@ describe("ScriptedProvider", () => {
 		alreadyAbortedController.abort();
 		const immediate = createAdvisorProvider([{}]);
 		const immediatelyAborted = await immediate
-			.streamSimple(immediate.model, { messages: [] }, { signal: alreadyAbortedController.signal })
+			.streamSimple(immediate.model, normalizeContext({ messages: [] }), {
+				signal: alreadyAbortedController.signal,
+			})
 			.result();
 		expect(immediatelyAborted.stopReason).toBe("aborted");
 	});

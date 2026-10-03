@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 
-import type { Model } from "@earendil-works/pi-ai";
+import { normalizeContext, type Model, type Tool } from "@earendil-works/pi-ai";
 import { stream as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { stream as streamOpenAI } from "@earendil-works/pi-ai/api/openai-responses";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createStrictAdviseTool } from "../../src/advice.js";
@@ -80,10 +81,9 @@ function createTool() {
 	});
 }
 
-function expectStrictAdviseSchema(schema: Parameters<typeof JSON.stringify>[0]): void {
+function expectNullableAdviseSchema(schema: Parameters<typeof JSON.stringify>[0]): void {
 	expect(schema).toMatchObject({
 		type: "object",
-		additionalProperties: false,
 		required: ["note", "intent", "severity", "findingKey", "memory"],
 		properties: {
 			intent: {
@@ -119,11 +119,12 @@ function expectStrictAdviseSchema(schema: Parameters<typeof JSON.stringify>[0]):
 	);
 }
 
-const context = (tool: ReturnType<typeof createTool>) => ({
-	systemPrompt: "Return advice.",
-	messages: [{ role: "user" as const, content: "Review this.", timestamp: 1 }],
-	tools: [tool],
-});
+const context = (tool: Tool) =>
+	normalizeContext({
+		systemPrompt: "Return advice.",
+		messages: [{ role: "user" as const, content: "Review this.", timestamp: 1 }],
+		tools: [tool],
+	});
 
 const modelBase = {
 	id: "payload-contract-model",
@@ -150,7 +151,7 @@ afterEach(async () => {
 const runtimeSupportsConstrainedSampling = await probeConstrainedSamplingSupport();
 
 describe("strict advise provider payload contract", () => {
-	it("serializes the strict schema and strict flag through OpenAI Responses", async () => {
+	it("preserves nullable advise through OpenAI's preferred strict-sampling fallback", async () => {
 		if (!runtimeSupportsConstrainedSampling) return;
 		const capture = await startCaptureServer();
 		const model = {
@@ -171,11 +172,12 @@ describe("strict advise provider payload contract", () => {
 		// SAFETY: the captured request is emitted by the provider with its serialized tools array.
 		const tools = request.body.tools as CapturedToolPayload[];
 		expect(tools).toHaveLength(1);
-		expect(tools[0]).toMatchObject({ type: "function", name: "advise", strict: true });
-		expectStrictAdviseSchema(tools[0]?.parameters);
+		expect(tools[0]).toMatchObject({ type: "function", name: "advise", strict: false });
+		expect(tools[0]?.parameters).toHaveProperty("additionalProperties", false);
+		expectNullableAdviseSchema(tools[0]?.parameters);
 	});
 
-	it("serializes the strict schema and Anthropic strict-tool marker", async () => {
+	it("preserves nullable advise through Anthropic's preferred strict-sampling fallback", async () => {
 		if (!runtimeSupportsConstrainedSampling) return;
 		const capture = await startCaptureServer();
 		const model = {
@@ -192,11 +194,63 @@ describe("strict advise provider payload contract", () => {
 		const request = await capture.captured;
 		await result.result();
 
-		expect(request.url).toBe("/v1/messages");
+		expect(request.url).toBe("/v1/messages?beta=true");
 		// SAFETY: the captured request is emitted by the provider with its serialized tools array.
 		const tools = request.body.tools as CapturedToolPayload[];
 		expect(tools).toHaveLength(1);
-		expect(tools[0]).toMatchObject({ name: "advise", strict: true });
-		expectStrictAdviseSchema(tools[0]?.input_schema);
+		expect(tools[0]).toMatchObject({ name: "advise" });
+		expect(tools[0]).not.toHaveProperty("strict");
+		expect(tools[0]?.input_schema).not.toHaveProperty("additionalProperties");
+		expectNullableAdviseSchema(tools[0]?.input_schema);
 	});
+
+	it.each(["openai-responses", "anthropic-messages"] as const)(
+		"still enforces strict sampling for a supported scalar schema through %s",
+		async (api) => {
+			const capture = await startCaptureServer();
+			const scalarTool: Tool = {
+				name: "scalar-contract",
+				description: "A supported strict-schema control, not the Advisor payload.",
+				parameters: Type.Object({ note: Type.String() }, { additionalProperties: false }),
+				constrainedSampling: { type: "json_schema", strict: "prefer" },
+			};
+			const options = { apiKey: "dummy-contract-key", maxRetries: 0 };
+			const result =
+				api === "openai-responses"
+					? streamOpenAI(
+							{
+								...modelBase,
+								api,
+								baseUrl: `${capture.baseUrl}/v1`,
+								compat: { supportsStrictMode: true },
+							},
+							context(scalarTool),
+							options,
+						)
+					: streamAnthropic(
+							{
+								...modelBase,
+								api,
+								baseUrl: capture.baseUrl,
+								compat: { supportsStrictTools: true },
+							},
+							context(scalarTool),
+							options,
+						);
+			const request = await capture.captured;
+			await result.result();
+			// SAFETY: the captured request is emitted by the provider with its serialized tools array.
+			const tools = request.body.tools as CapturedToolPayload[];
+			expect(tools).toHaveLength(1);
+			expect(tools[0]).toMatchObject({ name: "scalar-contract", strict: true });
+			expect(
+				api === "openai-responses" ? tools[0]?.parameters : tools[0]?.input_schema,
+			).toMatchObject({
+				type: "object",
+				additionalProperties: false,
+				required: ["note"],
+				properties: { note: { type: "string" } },
+			});
+		},
+	);
 });

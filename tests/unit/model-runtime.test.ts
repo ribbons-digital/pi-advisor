@@ -60,26 +60,39 @@ function expectFieldFailure(cause: unknown, field: string): void {
 }
 
 describe("Advisor ModelRuntime compatibility resolver", () => {
-	it("always requests allowNetwork:false on a default-parameter setRuntimeApiKey", async () => {
+	it("uses the typed Pi 1.0 credential API without obsolete network options", async () => {
 		const received: unknown[] = [];
-		const runtime = {
-			setRuntimeApiKey(
-				_providerId: string,
-				_apiKey: string,
-				options: { allowNetwork?: boolean } = {},
-			): Promise<void> {
+		const runtime: Pick<ModelRuntime, "setRuntimeApiKey"> = {
+			setRuntimeApiKey(_providerId, _apiKey, options): Promise<void> {
 				received.push(options);
 				return Promise.resolve();
 			},
 		};
-		expect(runtime.setRuntimeApiKey.length).toBe(2);
-		await setRuntimeApiKeyWithoutNetwork(
-			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
-			runtime as Pick<ModelRuntime, "setRuntimeApiKey">,
-			"scripted",
-			"runtime-secret",
-		);
-		expect(received).toEqual([{ allowNetwork: false }]);
+		await setRuntimeApiKeyWithoutNetwork(runtime, "scripted", "runtime-secret");
+		expect(received).toEqual([undefined]);
+	});
+
+	it("rejects real virtual selections before mirroring providers or routing requests", async () => {
+		const provider = createAdvisorProvider([]);
+		const { runtime, registry } = await createHost(provider);
+		runtime.registerVirtualModel({
+			provider: provider.model.provider,
+			id: "virtual-advisor",
+			name: "Virtual Advisor",
+			route: () => {
+				throw new Error("Advisor must not route virtual requests");
+			},
+		});
+		const model = registry.find(provider.model.provider, "virtual-advisor");
+		if (model === undefined) throw new Error("Virtual model was not registered");
+		await expect(
+			resolveAdvisorModelRuntime({
+				modelRegistry: registry,
+				model,
+				agentDir: await temporaryAgentDir(),
+			}),
+		).rejects.toThrow("virtual models are unsupported; select a physical model");
+		expect(provider.requests).toHaveLength(0);
 	});
 
 	it("mirrors provider configuration, copies runtime auth, preserves the selected model, and dispatches the custom stream", async () => {

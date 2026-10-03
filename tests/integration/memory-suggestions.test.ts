@@ -1,4 +1,4 @@
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, type JsonValue } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type InlineExtension,
@@ -48,10 +48,10 @@ function extensionFor(
 const memoryRationale = "This verified project constraint will matter in future sessions.";
 
 interface MemorySuggestionOverrides {
-	severity?: unknown;
-	findingKey?: unknown;
-	rootUnknown?: unknown;
-	memory?: unknown;
+	severity?: JsonValue;
+	findingKey?: JsonValue;
+	rootUnknown?: JsonValue;
+	memory?: JsonValue;
 }
 
 function memorySuggestion(

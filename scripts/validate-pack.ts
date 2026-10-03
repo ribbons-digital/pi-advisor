@@ -22,6 +22,8 @@ interface PackageManifest {
 	pi?: { extensions?: string[] };
 	peerDependencies?: Record<string, string>;
 	dependencies?: Record<string, string>;
+	bundledDependencies?: string[] | boolean;
+	bundleDependencies?: string[] | boolean;
 	engines?: { node?: string };
 }
 
@@ -59,18 +61,25 @@ for (const name of [
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-coding-agent",
 	"@earendil-works/pi-tui",
+	"typebox",
 ] as const) {
-	if (manifest.peerDependencies?.[name] !== ">=0.81.1 <0.85.0") {
-		throw new Error(`Unsupported or missing Pi peer range for ${name}`);
+	if (manifest.peerDependencies?.[name] !== "*") {
+		throw new Error(`Host-provided ${name} must be a wildcard peer dependency`);
+	}
+	if (manifest.dependencies?.[name] !== undefined) {
+		throw new Error(`Host-provided ${name} must not be a runtime dependency`);
+	}
+	for (const bundled of [manifest.bundledDependencies, manifest.bundleDependencies]) {
+		if (Array.isArray(bundled) && bundled.includes(name)) {
+			throw new Error(`Host-provided ${name} must not be bundled`);
+		}
 	}
 }
 if (manifest.engines?.node !== ">=22.19.0") {
 	throw new Error("Node engine must be >=22.19.0");
 }
-for (const name of ["typebox", "yaml"] as const) {
-	if (manifest.dependencies?.[name] === undefined) {
-		throw new Error(`Runtime ${name} dependency is missing`);
-	}
+if (manifest.dependencies?.yaml === undefined) {
+	throw new Error("Runtime yaml dependency is missing");
 }
 
 const required = [
@@ -93,7 +102,10 @@ const forbidden = paths.filter(
 		path.startsWith("docs/slice-") ||
 		path.startsWith("tests/") ||
 		path.startsWith("scripts/") ||
-		path.startsWith(".github/"),
+		path.startsWith(".github/") ||
+		/^node_modules\/(?:@earendil-works\/pi-(?:agent-core|ai|coding-agent|tui)|typebox)(?:\/|$)/u.test(
+			path,
+		),
 );
 if (forbidden.length > 0) throw new Error(`Forbidden packed files: ${forbidden.join(", ")}`);
 

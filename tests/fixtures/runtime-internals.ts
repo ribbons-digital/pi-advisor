@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { ADVISOR_RUNTIME_STATE_ENTRY_TYPE } from "../../src/index.js";
+import { isRecordValue } from "../../src/value-guards.js";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type {
@@ -14,6 +17,7 @@ import type {
 	BoundedAdviceDedupe,
 	BoundedKeyedByteFifo,
 	PersistedAdvisorActiveReview,
+	PersistedAdvisorRuntimeState,
 	PersistedAdvisorToolAttempt,
 	RecentFindingsIndex,
 } from "../../src/index.js";
@@ -102,6 +106,22 @@ export interface AdvisorRuntimeTestInternals {
 		reviewId: string,
 	): AdviceDelivery | undefined;
 	updateBacklogStatus(): void;
+}
+
+/** Bind a hand-built recovery fixture to the exact prompt of the test session. */
+export function bindFixtureInstructions(session: AgentSession): void {
+	const entry = [...session.sessionManager.getBranch()]
+		.reverse()
+		.find(
+			(candidate) =>
+				candidate.type === "custom" && candidate.customType === ADVISOR_RUNTIME_STATE_ENTRY_TYPE,
+		);
+	if (entry?.type !== "custom" || !isRecordValue<PersistedAdvisorRuntimeState>(entry.data))
+		throw new Error("Expected hand-built recovery state");
+	session.sessionManager.appendCustomEntry(ADVISOR_RUNTIME_STATE_ENTRY_TYPE, {
+		...entry.data,
+		effectiveSystemPromptHash: createHash("sha256").update(session.systemPrompt).digest("hex"),
+	});
 }
 
 export function runtimeInternals(runtime: AdvisorRuntime): AdvisorRuntimeTestInternals;

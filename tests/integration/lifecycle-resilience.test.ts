@@ -21,7 +21,7 @@ import {
 	type AdvisorRuntime,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
-import { runtimeInternals } from "../fixtures/runtime-internals.js";
+import { bindFixtureInstructions, runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -229,7 +229,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 		}
 	});
 
-	it("eager compaction reset aborts an Advisor await and keeps the next review free of old context", async () => {
+	it("eager compaction reset aborts an Advisor await and re-primes from the canonical retained context", async () => {
 		const barrier = createBarrier();
 		const invalidated = "Compaction must invalidate this old transcript result.";
 		const primary = createPrimaryProvider([
@@ -271,7 +271,13 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			await waitFor(() => advisor.activeRequests === 0);
 			const nextAdvisorContext = JSON.stringify(advisor.requests[1]?.context.messages);
 			expect(nextAdvisorContext).toContain("NEW-TRANSCRIPT-VIEW");
-			expect(nextAdvisorContext).not.toContain("OLD-TRANSCRIPT-VIEW");
+			// Pi retains the recent answer; only summarized-away raw history and the aborted advice vanish.
+			expect(JSON.stringify(manager.buildSessionProjection().messages)).toContain(
+				"OLD-TRANSCRIPT-VIEW",
+			);
+			expect(nextAdvisorContext).toContain("OLD-TRANSCRIPT-VIEW");
+			expect(nextAdvisorContext).toContain("bounded compaction summary");
+			expect(nextAdvisorContext).not.toContain("compaction-history-0-");
 			expect(nextAdvisorContext).not.toContain(invalidated);
 			expect(runtime?.getStatus().notesDelivered).toBe(0);
 		} finally {
@@ -444,6 +450,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			if (runtime === undefined) throw new Error("Expected restored Advisor runtime");
@@ -552,6 +559,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			]);
 			let firstRuntime: AdvisorRuntime | undefined;
 			firstHarness = await createSessionHarness({
+				cwd: project,
 				provider: firstPrimary,
 				advisorProvider: firstAdvisor,
 				sessionManager: firstManager,
@@ -575,6 +583,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			const resumedAdvisor = createAdvisorProvider([{ content: [] }]);
 			let resumedRuntime: AdvisorRuntime | undefined;
 			secondHarness = await createSessionHarness({
+				cwd: project,
 				provider: resumedPrimary,
 				advisorProvider: resumedAdvisor,
 				sessionManager: resumedManager,
@@ -600,6 +609,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 	});
 
 	it("reviews cadence-throttled Executor evidence after reopening the same session", async () => {
+		const project = await mkdtemp(join(tmpdir(), "pi-advisor-cadence-reopen-"));
 		const manager = SessionManager.inMemory();
 		const firstPrimary = createPrimaryProvider([
 			{ content: [{ type: "text", text: "first completed answer" }] },
@@ -621,6 +631,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 				extensions: [extensionFor(cadenceConfig, (value) => (firstRuntime = value))],
 				tools: [],
 				mode: "rpc",
+				cwd: project,
 			});
 			await firstHarness.session.prompt("establish the cadence anchor");
 			await waitFor(() => firstAdvisor.requests.length === 1);
@@ -663,6 +674,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 				],
 				tools: [],
 				mode: "rpc",
+				cwd: project,
 			});
 			expect(resumedRuntime?.getStatus().restoredQueuedReviewPending).toBe(true);
 			await waitFor(() => resumedAdvisor.requests.length === 1);
@@ -674,10 +686,12 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 		} finally {
 			await firstHarness?.dispose();
 			await resumedHarness?.dispose();
+			await rm(project, { recursive: true, force: true });
 		}
 	});
 
 	it("restores later pending evidence that arrived while an active review was in flight", async () => {
+		const project = await mkdtemp(join(tmpdir(), "pi-advisor-active-reopen-"));
 		const barrier = createBarrier();
 		const manager = SessionManager.inMemory();
 		const firstPrimary = createPrimaryProvider([
@@ -704,6 +718,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 				],
 				tools: [],
 				mode: "rpc",
+				cwd: project,
 			});
 			await firstHarness.session.prompt("start active review before restart");
 			await waitFor(() => firstAdvisor.activeRequests === 1);
@@ -744,6 +759,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 				],
 				tools: [],
 				mode: "rpc",
+				cwd: project,
 			});
 			await waitFor(() => resumedAdvisor.requests.length === 2);
 			expect(JSON.stringify(resumedAdvisor.requests[0]?.context)).toContain(
@@ -756,6 +772,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			barrier.release();
 			await firstHarness?.dispose();
 			await resumedHarness?.dispose();
+			await rm(project, { recursive: true, force: true });
 		}
 	});
 
@@ -866,6 +883,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			expect(advisor.requests).toHaveLength(0);
@@ -921,6 +939,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			await waitFor(() => advisor.requests.length === 1);
@@ -1001,6 +1020,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			expect(advisor.requests).toHaveLength(0);
@@ -1073,6 +1093,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			expect(runtime?.getStatus()).toMatchObject({
@@ -1137,6 +1158,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			expect(runtime?.getStatus()).toMatchObject({
@@ -1204,6 +1226,7 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			await waitFor(() => advisor.requests.length === 1);

@@ -126,5 +126,6 @@ describe("Advisor searchable model picker", () => {
 		lines = component.render(24);
 		expect(lines.join("\n")).not.toContain(CURSOR_MARKER);
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(24);
+		expect(lines.join(" ")).toMatch(/Esc\s+cancel/u);
 	});
 });

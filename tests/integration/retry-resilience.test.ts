@@ -71,11 +71,18 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 	it("rolls back a failed provider turn, retries after a bounded delay, and resets recovery state", async () => {
 		const note = "Retry only from clean Advisor context.";
 		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "initial executor answer" }] },
 			{ content: [{ type: "text", text: "executor answer" }] },
+			{ content: [{ type: "text", text: "later executor answer" }] },
 		]);
 		const advisor = createAdvisorProvider([
-			{ errorMessage: "transient provider failure" },
+			{
+				content: [{ type: "text", text: "PRIVATE-HISTORY-TO-KEEP" }],
+				usage: { input: 12, output: 3 },
+			},
+			{ errorMessage: "transient provider failure", usage: { input: 7, output: 1 } },
 			acceptedAdvice(note),
+			{ content: [{ type: "text", text: "later silent review" }] },
 		]);
 		let runtime: AdvisorRuntime | undefined;
 		const harness = await createSessionHarness({
@@ -86,23 +93,27 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			mode: "rpc",
 		});
 		try {
-			await harness.session.prompt("trigger a retry");
+			await harness.session.prompt("KEEP-PRIOR-ADVISOR-CONTEXT");
 			await waitFor(() => runtime?.getStatus().reviewsCompleted === 1);
+			await harness.session.prompt("trigger a retry");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 2);
 
-			expect(advisor.requests).toHaveLength(2);
-			const firstRequest = advisor.requests[0];
-			const retryRequest = advisor.requests[1];
+			expect(advisor.requests).toHaveLength(3);
+			const firstRequest = advisor.requests[1];
+			const retryRequest = advisor.requests[2];
 			if (firstRequest === undefined || retryRequest === undefined) {
 				throw new Error("Expected initial and retry requests");
 			}
 			expect(retryRequest.startedAt - firstRequest.startedAt).toBeGreaterThanOrEqual(
 				ADVISOR_RETRY_DELAY_MS - 25,
 			);
-			const retryContext = JSON.stringify(advisor.requests[1]?.context.messages);
+			const retryContext = JSON.stringify(retryRequest.context.messages);
 			expect(retryContext).not.toContain("transient provider failure");
+			expect(retryContext).toContain("PRIVATE-HISTORY-TO-KEEP");
+			expect(retryContext.split("KEEP-PRIOR-ADVISOR-CONTEXT")).toHaveLength(2);
 			expect(retryContext.split("trigger a retry")).toHaveLength(2);
 			expect(runtime?.getStatus()).toMatchObject({
-				reviewsCompleted: 1,
+				reviewsCompleted: 2,
 				failedReviews: 1,
 				consecutiveFailures: 0,
 				retryAttempts: 1,
@@ -111,7 +122,17 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			});
 			expect(
 				runtime?.getNestedMessages().filter((message) => message.role === "user"),
-			).toHaveLength(1);
+			).toHaveLength(2);
+			expect(runtime?.getStatus().usage.total).toBe(23);
+			await harness.session.prompt("later review after recovery");
+			await waitFor(() => runtime?.getStatus().reviewsCompleted === 3);
+			const laterContext = JSON.stringify(advisor.requests[3]?.context.messages);
+			expect(laterContext).toContain("PRIVATE-HISTORY-TO-KEEP");
+			expect(laterContext.split("KEEP-PRIOR-ADVISOR-CONTEXT")).toHaveLength(2);
+			expect(runtime?.getStatus().usage.total).toBe(23);
+			expect(laterContext).toContain("later review after recovery");
+			expect(laterContext).not.toContain("transient provider failure");
+			expect(laterContext.split("trigger a retry")).toHaveLength(2);
 		} finally {
 			await harness.dispose();
 		}

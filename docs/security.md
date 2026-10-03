@@ -7,17 +7,20 @@ This document describes the defenses and residual risks around context sharing a
 ## Provider disclosure boundary
 
 When Advisor is active, the selected model provider receives bounded review context and content returned by allowed read-only tools.
-Observed Executor content and Pi-supplied project context are redacted before budgeting and submission.
+Observed Executor content, current effective primary instructions including forced overrides, and Pi-supplied project context are redacted before budgeting and submission.
+Context edits determine current model-facing evidence; replaced or omitted raw messages remain audit history, not current review evidence.
+Observed instructions are evidence, not new permissions for the isolated Advisor.
 Allowed file-tool results are bounded but are not transcript-redacted before the selected provider receives them.
 
 No redaction or path policy can guarantee that every secret is excluded.
 Use `tools: []` or a narrower tool set when the selected provider should not read repository files.
 Add sensitive repository locations to `security.additionalProtectedPaths`.
 
-On Pi 0.82 or later, Advisor automatically requests strict constrained sampling only for models with an explicit compatible provider capability flag.
-Pi 0.81.x and other models retain the portable schema.
+Advisor requests strict constrained sampling only when Pi exposes its resolver and the selected model has an explicit compatible provider capability flag.
+Other models retain the portable schema.
 The strict request uses Pi's `prefer` policy, so provider-side enforcement is not guaranteed and may fall back to ordinary tool calling.
-Local structural and semantic validation remains authoritative regardless of the selected mode.
+The verified OpenAI and Anthropic serializers fall back to ordinary tool calling for the nullable Memory shape.
+Local structural and semantic validation preserves actual JSON null and remains authoritative regardless of the selected mode.
 Private generated `advise` arguments are not added to diagnostics or persistence.
 
 ## Protected targets
@@ -106,12 +109,16 @@ Fixed Advisor policy and code-enforced safety controls remain higher authority t
 Advisor input, output, cache-read, cache-write, total-token, and provider-reported cost accounting remains visible for the lifetime of the runtime.
 The cumulative token and reported-cost caps default to `off` so private-context maintenance does not stop normal background review merely because cache-heavy lifetime totals grow.
 Users who require a spending stop can configure a positive token cap, reported-cost cap, or both.
-Provider reporting can be missing or incomplete, and Pi Advisor does not yet add the nested compaction usage exposed by Pi 0.81.1 to its exact governor totals, so these controls cannot guarantee a complete monetary bound.
+Provider reporting can be missing or incomplete, and Pi Advisor does not yet add nested compaction usage to its exact governor totals, so these controls cannot guarantee a complete monetary bound.
 Clearing private Advisor context does not reset or conceal lifetime usage totals.
 
 ## Persistence
 
 Lifecycle state and local redacted activity records use Pi custom entries outside model context.
+Lifecycle metadata stores a bounded instruction fingerprint instead of an additional raw prompt; bounded redacted review evidence can include observed instructions.
+A changed or missing restored fingerprint invalidates unfinished guidance before private dispatch or deferred acknowledgement, without erasing delivered-note counts or Memory cadence.
+Revoked guidance has empty hidden custom-message content before canonical persistence, keeping it out of ordinary requests and branch or compaction summaries.
+Retained Pi steering after RPC abort keeps one owner rather than creating duplicate deferred advice.
 The activity record is enabled by default for valid User configurations and can be disabled for future records with `persistence.transcript: false`.
 Existing explicit `false` configurations remain off, loading does not rewrite the User file, and malformed or unreadable User configuration fails privacy-safe with recording off.
 New version 2 records contain review grouping, ordered tool metadata, bounded redacted targets, completion and output-size metadata, final outcomes, provider-reported usage, cost, and stop reason.
@@ -123,9 +130,16 @@ See the [configuration reference](configuration.md#persistence-retention-inspect
 
 ## Runtime compatibility
 
-Pi Advisor 0.4.1 requires Node.js `>=22.19.0` and Pi `>=0.81.1 <0.85.0`.
-Pi 0.82.0 is the primary tested Pi release, with compatibility coverage retained for Pi 0.81.1, Pi 0.83.0, and Pi 0.84.1.
-Pi 0.80.x is incompatible with this release, and Pi Advisor 0.1.3 remains the legacy release for Pi 0.80.7.
+This unreleased build targets Pi 1.0.0 and requires Node.js `>=22.19.0`.
+Planned release: v0.5.0 (unreleased).
+Pi 1.0.0 is the only verified and supported Pi target for this build.
+Wildcard peers are a host-module loading contract, not a compatibility range.
+Published Pi Advisor 0.4.1 supports Pi `>=0.81.1 <0.85.0`; pin `npm:@ribbons-digital/pi-advisor@0.4.1` for those older versions.
+The Pi 1.0 build has not been published, and its version remains 0.4.1 until release approval.
+Pi Advisor 0.1.3 remains the legacy release for Pi 0.80.7.
+Automated checks use scripted providers and local HTTP capture.
+Live model-service compatibility remains unverified.
+Virtual Advisor models (`pi-virtual`) are rejected without fallback; select a physical provider/model.
 Advisor mirrors public provider registration inputs into an isolated runtime and requires strict effective authentication, headers, environment, base URL, and model-request parity before activation.
 Missing credentials, missing providers, or parity that cannot be verified leaves Advisor inactive without fallback or a nested provider request.
 Runtime-only credentials are copied only in memory and are never persisted by Advisor.

@@ -3,7 +3,7 @@ import {
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
-	type Context,
+	type TranscriptContext,
 	type Model,
 	type SimpleStreamOptions,
 	type StopReason,
@@ -44,7 +44,7 @@ export interface ScriptedResponse {
 
 export interface ObservedRequest {
 	modelId: string;
-	context: Context;
+	context: TranscriptContext;
 	options: SimpleStreamOptions | undefined;
 	startedAt: number;
 }
@@ -93,25 +93,6 @@ export function registerScriptedProvider(
 	if (options.name !== undefined) config.name = options.name;
 	if (options.providerHeaders !== undefined) config.headers = options.providerHeaders;
 	modelRuntime.registerProvider(provider.model.provider, config);
-}
-
-function copyContext(context: Context): Context {
-	const copied: Context =
-		context.systemPrompt === undefined
-			? { messages: structuredClone(context.messages) }
-			: {
-					systemPrompt: context.systemPrompt,
-					messages: structuredClone(context.messages),
-				};
-	if (context.tools !== undefined) {
-		copied.tools = context.tools.map((tool) => ({
-			name: tool.name,
-			description: tool.description,
-			// SAFETY: this test fixture deliberately supplies the asserted boundary shape.
-			parameters: JSON.parse(JSON.stringify(tool.parameters)) as typeof tool.parameters,
-		}));
-	}
-	return copied;
 }
 
 function toUsage(scripted: ScriptedUsage | undefined): Usage {
@@ -200,14 +181,14 @@ export class ScriptedProvider {
 
 	readonly streamSimple = (
 		model: Model<Api>,
-		context: Context,
+		context: TranscriptContext,
 		options?: SimpleStreamOptions,
 	): AssistantMessageEventStream => {
 		const stream = createAssistantMessageEventStream();
 		const response = this.responses[this.responseIndex++];
 		this.requests.push({
 			modelId: model.id,
-			context: copyContext(context),
+			context: structuredClone(context),
 			options: options === undefined ? undefined : { ...options },
 			startedAt: Date.now(),
 		});

@@ -18,7 +18,7 @@ import {
 	type AdvisorRuntimeHooks,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
-import { runtimeInternals } from "../fixtures/runtime-internals.js";
+import { bindFixtureInstructions, runtimeInternals } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -564,6 +564,7 @@ describe.sequential("Quality Slice Q4 review freshness and cost", () => {
 			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
 			tools: [],
 			mode: "rpc",
+			beforeSessionStart: bindFixtureInstructions,
 		});
 		try {
 			await waitFor(() => advisor.requests.length === 1);
