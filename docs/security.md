@@ -130,12 +130,10 @@ See the [configuration reference](configuration.md#persistence-retention-inspect
 
 ## Runtime compatibility
 
-This unreleased build targets Pi 1.0.0 and requires Node.js `>=22.19.0`.
-Planned release: v0.5.0 (unreleased).
-Pi 1.0.0 is the only verified and supported Pi target for this build.
+Pi Advisor 0.5.0 targets Pi 1.0.0 and requires Node.js `>=22.19.0`.
+Pi 1.0.0 is the only verified and supported Pi target for this version.
 Wildcard peers are a host-module loading contract, not a compatibility range.
 Published Pi Advisor 0.4.1 supports Pi `>=0.81.1 <0.85.0`; pin `npm:@ribbons-digital/pi-advisor@0.4.1` for those older versions.
-The Pi 1.0 build has not been published, and its version remains 0.4.1 until release approval.
 Pi Advisor 0.1.3 remains the legacy release for Pi 0.80.7.
 Automated checks use scripted providers and local HTTP capture.
 Live model-service compatibility remains unverified.

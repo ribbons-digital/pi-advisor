@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -49,10 +49,10 @@ const publicDocs = [
 ].map((path) => ({ path, content: readFileSync(path, "utf8") }));
 
 describe("public release surface", () => {
-	it("declares discoverable publishable 0.4.1 metadata", () => {
+	it("declares discoverable publishable 0.5.0 metadata", () => {
 		expect(manifest).toMatchObject({
 			name: "@ribbons-digital/pi-advisor",
-			version: "0.4.1",
+			version: "0.5.0",
 			publishConfig: { access: "public", provenance: true },
 			pi: {
 				extensions: ["./src/index.ts"],
@@ -105,6 +105,7 @@ describe("public release surface", () => {
 				"THIRD_PARTY_NOTICES.md",
 				"package.json",
 				"src/index.ts",
+				"docs/assets/advisor-in-action.png",
 				"docs/configuration.md",
 				"docs/security.md",
 			].map((path) => ({ path })),
@@ -138,6 +139,20 @@ describe("public release surface", () => {
 				pack: { ...pack, files: [...pack.files, { path: "node_modules/typebox/index.js" }] },
 				error: "Forbidden packed files: node_modules/typebox/index.js",
 			},
+			...[
+				"docs/development.md",
+				"docs/releasing.md",
+				"docs/f9-evaluation.md",
+				"docs/internal/CONTEXT.md",
+				"docs/handoff.md",
+				"docs/slice-3-plan.md",
+				"docs/review-notes.md",
+				"AGENTS.md",
+			].map((path) => ({
+				manifest,
+				pack: { ...pack, files: [...pack.files, { path }] },
+				error: `Forbidden packed files: ${path}`,
+			})),
 		];
 		try {
 			for (const fixture of cases) {
@@ -157,12 +172,64 @@ describe("public release surface", () => {
 		}
 	});
 
-	it("separates the unreleased Pi 1.0 target from pinned published releases", () => {
+	it("checks release wording inside the actual archive", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-advisor-packed-docs-"));
+		const files = [
+			"LICENSE",
+			"README.md",
+			"THIRD_PARTY_NOTICES.md",
+			"package.json",
+			"src/index.ts",
+			"docs/assets/advisor-in-action.png",
+			"docs/configuration.md",
+			"docs/security.md",
+		];
+		try {
+			for (const path of files) {
+				const destination = join(root, "package", path);
+				mkdirSync(dirname(destination), { recursive: true });
+				writeFileSync(destination, readFileSync(path));
+			}
+			writeFileSync(join(root, "package.json"), JSON.stringify(manifest));
+			writeFileSync(
+				join(root, "pack.json"),
+				JSON.stringify({
+					name: manifest.name,
+					version: manifest.version,
+					filename: "pi-advisor-package.tgz",
+					files: files.map((path) => ({ path })),
+				}),
+			);
+			for (const invalid of [false, true]) {
+				writeFileSync(
+					join(root, "package", "README.md"),
+					invalid ? `${readme}\nThis build is unreleased.\n` : readme,
+				);
+				const archive = spawnSync("tar", ["-czf", "pi-advisor-package.tgz", "package"], {
+					cwd: root,
+					encoding: "utf8",
+				});
+				expect(archive.status).toBe(0);
+				const result = spawnSync(
+					join(process.cwd(), "node_modules", ".bin", "tsx"),
+					[join(process.cwd(), "scripts", "validate-pack.ts"), "pack.json"],
+					{ cwd: root, encoding: "utf8", timeout: 10_000 },
+				);
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(invalid ? 1 : 0);
+				if (invalid)
+					expect(result.stderr).toContain("Release-preparation wording in packed README.md");
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("documents Pi Advisor 0.5.0 support and pinned older-Pi releases", () => {
 		expect(manifest.engines?.node).toBe(">=22.19.0");
 		for (const document of compatibilityDocs) {
 			expect(document.content, document.path).toContain(">=22.19.0");
-			expect(document.content, document.path).toContain("This unreleased build targets Pi 1.0.0");
-			expect(document.content, document.path).toContain("Planned release: v0.5.0 (unreleased).");
+			expect(document.content, document.path).toContain("Pi Advisor 0.5.0 targets Pi 1.0.0");
 			expect(document.content, document.path).toContain(
 				"Wildcard peers are a host-module loading contract, not a compatibility range.",
 			);
@@ -172,11 +239,9 @@ describe("public release surface", () => {
 				"Live model-service compatibility remains unverified.",
 			);
 		}
-		expect(readme).toContain("Supported Pi release for this build: 1.0.0");
+		expect(readme).toContain("Supported Pi release: 1.0.0");
 		expect(readme).not.toContain("Declared compatibility range: >=0.81.1 <0.85.0");
-		expect(readme).toContain(
-			"The npm commands below install the published release, not this unreleased Pi 1.0 build.",
-		);
+		expect(readme).toContain("Pi Advisor 0.5.0 requires Pi 1.0.0.");
 		expect(readme).toContain("Pi Advisor 0.1.3 is the legacy release for Pi 0.80.7");
 		expect(readme).toContain(
 			"unverifiable provider parity leave Advisor inactive without fallback",
@@ -250,10 +315,8 @@ describe("public release surface", () => {
 		const releasing = readFileSync("docs/releasing.md", "utf8");
 		expect(releasing).toContain("A clean review does not authorize a merge or publication.");
 		expect(releasing).toContain("Do not republish 0.4.1");
-		expect(releasing).toContain("Planned release: v0.5.0 (unreleased).");
-		expect(releasing).toContain(
-			"The planned release tag is `v0.5.0`; do not create it before approval.",
-		);
+		expect(releasing).toContain("Release target: v0.5.0.");
+		expect(releasing).toContain("tag the exact approved commit as `v0.5.0`");
 		expect(releasing).toContain("Live model-service compatibility remains unverified.");
 		expect(releasing).toContain("Verify Pi 1.0.0 on Node 22.19.0");
 		expect(releasing).toContain("Verify Pi 1.0.0 on Node 22.22.3");
@@ -267,6 +330,19 @@ describe("public release surface", () => {
 			expect(document.content, document.path).not.toMatch(/\bSlice\s+\d/i);
 			expect(document.content, document.path).not.toMatch(/^## Development$/m);
 			expect(document.content, document.path).not.toContain("docs/internal");
+			expect(document.content, document.path).not.toMatch(
+				/\b(?:unreleased|unpublished)\b|planned release|not yet available|until release approval/i,
+			);
+			expect(document.content, document.path).not.toContain("docs/f9-evaluation.md");
+		}
+		expect(readme).toContain(
+			"[Development](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/development.md)",
+		);
+		expect(readme).toContain(
+			"[Release approval](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/releasing.md)",
+		);
+		for (const path of ["docs/development.md", "docs/releasing.md", "docs/f9-evaluation.md"]) {
+			expect(readFileSync(path, "utf8"), path).not.toMatch(/\bunreleased\b/i);
 		}
 	});
 });

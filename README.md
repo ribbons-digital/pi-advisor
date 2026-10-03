@@ -11,9 +11,7 @@ It stays silent when work is sound and delivers a bounded, actionable note when 
 > When Advisor is active, it sends bounded session content and allowed file content to the model provider you select, which can create additional usage and cost.
 
 > [!IMPORTANT]
-> This unreleased build targets Pi 1.0.0 and requires Node.js `>=22.19.0`.
-> Planned release: v0.5.0 (unreleased).
-> It has not been published; the package version remains 0.4.1 until release approval.
+> Pi Advisor 0.5.0 targets Pi 1.0.0 and requires Node.js `>=22.19.0`.
 > Published Pi Advisor 0.4.1 supports Pi `>=0.81.1 <0.85.0`; pin `npm:@ribbons-digital/pi-advisor@0.4.1` for those older versions.
 > On Pi 0.80.7, pin `npm:@ribbons-digital/pi-advisor@0.1.3` instead.
 
@@ -38,26 +36,23 @@ _Pi Advisor reviewing a synthetic cache implementation in a privacy-safe demo se
 ## Requirements
 
 - Node.js >=22.19.0.
-- Pi (`@earendil-works/pi-coding-agent`) 1.0.0 for this unreleased build.
+- Pi (`@earendil-works/pi-coding-agent`) 1.0.0.
 
-Supported Pi release for this build: 1.0.0
+Supported Pi release: 1.0.0
 
-Other Pi releases are not verified or supported by this build.
+Other Pi releases are not verified or supported by Pi Advisor 0.5.0.
 Wildcard peers are a host-module loading contract, not a compatibility range.
-Development pins Pi 1.0.0 and TypeBox 1.3.27; Pi supplies the five host modules when loading the extension.
+Pi supplies the host modules when loading the extension.
 Automated checks use scripted providers and local HTTP capture, not live external models.
 Live model-service compatibility remains unverified.
 Virtual Advisor models (`pi-virtual`) are rejected; select a physical provider/model instead.
 
-Published Pi Advisor 0.4.1 retains its older Pi `>=0.81.1 <0.85.0` support; install the pinned version shown above rather than this build.
+Published Pi Advisor 0.4.1 retains its older Pi `>=0.81.1 <0.85.0` support; install the pinned version shown above if you use those Pi versions.
 Pi 0.80.x is not compatible with Pi Advisor 0.4.1.
 Pi Advisor 0.1.3 is the legacy release for Pi 0.80.7.
 Missing capabilities, unavailable models, missing credentials, or unverifiable provider parity leave Advisor inactive without fallback.
 
 ## Install
-
-The npm commands below install the published release, not this unreleased Pi 1.0 build.
-For the Pi 1.0 checkout and its verification commands, see [Development](https://github.com/ribbons-digital/pi-advisor/blob/main/docs/development.md).
 
 Install the unpinned npm package through Pi:
 
@@ -131,9 +126,10 @@ JSON and print runs always require explicit activation.
 
 ## Upgrade
 
-The planned v0.5.0 release changes the supported Pi target to 1.0.0.
-Update Pi before installing that release; v0.5.0 is not yet available on npm.
+Pi Advisor 0.5.0 requires Pi 1.0.0.
+Update Pi before updating Advisor to 0.5.0.
 Keep the pinned v0.4.1 installation if you need its older Pi support.
+For an existing Pi process, run `/reload` or restart Pi after updating Advisor so it loads the new extension code.
 
 Upgrade installed Pi packages, including an unpinned Pi Advisor installation, with:
 

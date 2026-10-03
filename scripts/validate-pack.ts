@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 interface PackManifest {
@@ -88,6 +89,7 @@ const required = [
 	"THIRD_PARTY_NOTICES.md",
 	"package.json",
 	"src/index.ts",
+	"docs/assets/advisor-in-action.png",
 	"docs/configuration.md",
 	"docs/security.md",
 ];
@@ -98,8 +100,8 @@ for (const path of required) {
 const forbidden = paths.filter(
 	(path) =>
 		path === "CONTEXT.md" ||
-		path.startsWith("docs/internal/") ||
-		path.startsWith("docs/slice-") ||
+		(path.startsWith("docs/") && !required.includes(path)) ||
+		(/\.md$/iu.test(path) && !required.includes(path)) ||
 		path.startsWith("tests/") ||
 		path.startsWith("scripts/") ||
 		path.startsWith(".github/") ||
@@ -108,6 +110,19 @@ const forbidden = paths.filter(
 		),
 );
 if (forbidden.length > 0) throw new Error(`Forbidden packed files: ${forbidden.join(", ")}`);
+
+for (const path of required.filter((file) => file.endsWith(".md"))) {
+	const content = execFileSync("tar", ["-xOf", pack.filename, `package/${path}`], {
+		encoding: "utf8",
+	});
+	if (
+		/\b(?:unreleased|unpublished)\b|planned release|not yet available|until release approval/iu.test(
+			content,
+		)
+	) {
+		throw new Error(`Release-preparation wording in packed ${path}`);
+	}
+}
 
 process.stdout.write(
 	`Validated publishable ${pack.name}@${pack.version} metadata and ${String(paths.length)} files in ${pack.filename}\n`,
