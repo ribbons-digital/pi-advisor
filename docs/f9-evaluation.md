@@ -1,6 +1,6 @@
 # F9 tiered-prompt experiment evaluation note
 
-Status: completed.
+Status: completed. Held behind the non-public `PI_ADVISOR_TIERED_PROMPT_EXPERIMENT=1` flag by user decision (2026-08-17): no default shipment; revisit only with additional measurement runs or a larger dataset and a separate user approval.
 This experiment never ships as default behavior without measurement review and separate user approval.
 
 ## Protocol (approved 2026-08-16)
